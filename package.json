@@ -1,0 +1,16 @@
+{
+  "name": "pratham-transcription",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local Streamlit UI for streamed Google Drive video transcription",
+  "scripts": {
+    "build": "(.venv/bin/python scripts/validate_build.py || python3.12 scripts/validate_build.py || python3 scripts/validate_build.py) && cd pitch-studio/frontend && npm install --no-audit --no-fund && npm run build && cd ../.. && (cd pitch-studio && PYTHONPATH=. ../.venv/bin/python -m compileall -q backend || cd pitch-studio && PYTHONPATH=. python3 -m compileall -q backend)",
+    "start": ".venv/bin/streamlit run app.py",
+    "start:studio": "cd pitch-studio && PYTHONPATH=. ../.venv/bin/uvicorn backend.main:app --reload --port 8000",
+    "test": ".venv/bin/python -m unittest tests.test_helpers -v",
+    "validate": "npm run build"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
