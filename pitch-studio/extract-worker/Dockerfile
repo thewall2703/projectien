@@ -13,10 +13,12 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-COPY requirements.txt .
+# RunPod GitHub builds use the repository root as the build context, even
+# when --file points at this Dockerfile. Paths below are relative to repo root.
+COPY pitch-studio/extract-worker/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY extractor.py handler.py ./
+COPY pitch-studio/extract-worker/extractor.py pitch-studio/extract-worker/handler.py ./
 
 # RunPod invokes the handler via the serverless runtime started in handler.py
 CMD ["python", "-u", "handler.py"]

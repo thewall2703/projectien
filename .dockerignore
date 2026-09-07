@@ -1,0 +1,22 @@
+# Keep RunPod / docker build context small (context is the repo root).
+.git
+.venv
+venv
+.tmp
+tmp
+output
+transcripts
+node_modules
+pitch-studio/frontend/node_modules
+pitch-studio/frontend/dist
+pitch-studio/data
+**/.DS_Store
+**/__pycache__
+**/*.pyc
+**/*.pdf
+.env
+.env.*
+credentials.json
+credentialss.json
+.token.json
+client_secret*.json

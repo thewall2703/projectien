@@ -61,10 +61,14 @@ The worker must be built for **linux/amd64** (RunPod GPUs/CPUs are x86).
 
 ### Option A — DigitalOcean Container Registry
 
+Build from the **repository root**. RunPod GitHub deploys do the same (they pass
+`--file pitch-studio/extract-worker/Dockerfile` with context `/`).
+
 ```bash
-cd pitch-studio/extract-worker
+# from the repository root
 doctl registry login
 docker buildx build --platform linux/amd64 \
+  -f pitch-studio/extract-worker/Dockerfile \
   -t registry.digitalocean.com/<your-registry>/pdf-extract-worker:latest \
   --push .
 ```
@@ -72,9 +76,10 @@ docker buildx build --platform linux/amd64 \
 ### Option B — Docker Hub
 
 ```bash
-cd pitch-studio/extract-worker
+# from the repository root
 docker login
 docker buildx build --platform linux/amd64 \
+  -f pitch-studio/extract-worker/Dockerfile \
   -t <dockerhub-user>/pdf-extract-worker:latest \
   --push .
 ```
