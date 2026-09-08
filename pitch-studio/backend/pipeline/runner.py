@@ -7,15 +7,15 @@ from sqlalchemy.orm import Session
 from backend.database import SessionLocal
 from backend.extract import pick_report_passages
 from backend.models import Asset, FounderQuote, Generation, LockedFact, Module, Objection
-from backend.pipeline.deck import (
-    expand_deck_from_script,
-    merge_deck_specs,
+from backend.pipeline.brand_deck import (
+    brand_deck_file_key,
+    deck_spec_from_plan,
+    plan_pages,
     render_pptx,
-    slide_count_for,
-    spec_from_dict,
 )
+from backend.pipeline.deck import slide_count_for
 from backend.pipeline.llm import chat_json
-from backend.pipeline.prompts import deck_messages, script_messages
+from backend.pipeline.prompts import script_messages
 from backend.pipeline.resolver import resolve_recipe
 from backend.pipeline.validator import align_script_to_recipe, validate_script
 from backend.schemas import ScriptPayload
@@ -69,7 +69,8 @@ def _select_assets(db: Session, sequence: list[str]) -> list[Asset]:
 
 def _select_founder_quotes(db: Session, sequence: list[str]) -> list[FounderQuote]:
     quotes = db.query(FounderQuote).filter(FounderQuote.status == "approved").all()
-    return pick_founder_quotes(quotes, sequence)
+    # More snippets = a richer tone reference for the spoken-voice prompt.
+    return pick_founder_quotes(quotes, sequence, limit=10)
 
 
 def _select_objections(db: Session, intent: str) -> list[Objection]:
@@ -161,20 +162,16 @@ def run(generation_id: int) -> None:
             return
 
         _set_status(db, generation, "generating_deck")
-        deck_payload = chat_json(
-            deck_messages(script, generation.duration, slide_count_for(generation.duration))
-        )
-        spec = merge_deck_specs(
-            spec_from_dict(deck_payload),
-            expand_deck_from_script(script, resolved.module_sequence),
-            resolved.module_sequence,
-        )
-        generation.deck_spec_json = spec.model_dump_json()
+        plan = plan_pages(resolved.module_sequence, slide_count_for(generation.duration))
+        generation.deck_spec_json = deck_spec_from_plan(plan).model_dump_json()
 
         _set_status(db, generation, "rendering")
         notes = {section["module_id"]: section.get("text", "") for section in script.get("sections", [])}
         generation.pptx_path = render_pptx(
-            spec, generation.id, resolved.module_sequence, notes_by_module=notes
+            plan,
+            generation.id,
+            notes_by_module=notes,
+            file_key=brand_deck_file_key(db),
         )
 
         assets = _select_assets(db, resolved.module_sequence)

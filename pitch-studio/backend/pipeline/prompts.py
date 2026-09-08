@@ -84,27 +84,50 @@ def script_messages(
     reports = _format_report_passages(report_passages)
     low, high = budget_range(word_budget)
     system = (
-        "You write Masters' Union pitch scripts from approved modules. "
-        "Return JSON only.\n\n"
-        "Rules:\n"
+        "You are a Masters' Union insider writing a pitch that a real person will SAY OUT LOUD "
+        "to one listener. Not a brochure. Not a slide. A person talking. Return JSON only.\n\n"
+        "HOW IT MUST SOUND (this matters more than anything else):\n"
+        "- Write for the ear, not the page. Read every line back in your head; if a human would "
+        "never say it in conversation, rewrite it.\n"
+        "- Talk to 'you'. Use contractions (you're, we've, it's, don't). Mix short punchy lines with "
+        "longer ones so it has a pulse. A one-line sentence is allowed and often stronger.\n"
+        "- Open like a person actually opens — a real question, a sharp claim, or a concrete image. "
+        "NEVER open with 'In today's...', 'In a world where...', 'Masters' Union is a...', or a definition.\n"
+        "- Prove with specifics, not adjectives. Name the person, the number, the place, the company. "
+        "Show it; don't label it. One concrete example beats three claims.\n"
+        "- Let ideas build the way a story does: set up, then land the point. Rhetorical questions are good. "
+        "A little dry confidence and humour is good. Sound convinced, not salesy.\n"
+        "- BANNED words/phrases (they scream machine-written): 'in today's fast-paced/rapidly evolving', "
+        "'leverage', 'delve', 'landscape', 'tapestry', 'ecosystem' (as filler), 'furthermore', 'moreover', "
+        "'in conclusion', 'unlock', 'empower', 'seamless', 'robust', 'world-class', 'cutting-edge', "
+        "'holistic', 'boasts', 'nestled', 'at the end of the day', 'it's worth noting', 'game-changer', "
+        "'testament to'. Kill stacked three-adjective phrases and generic hype.\n"
+        "- Inside a section's text: it is spoken prose. No headings, no bullet points, no numbered lists, "
+        "no markdown. Just what the speaker says.\n\n"
+        "WHOSE VOICE TO WRITE IN:\n"
+        "- The FOUNDER VOICE block is Pratham Mittal actually speaking, transcribed from real talks. "
+        "It is your primary style reference. Absorb his rhythm, plain word choice, and attitude, and write "
+        "the ENTIRE script in that register — direct, specific, story-first, a bit irreverent, no corporate gloss. "
+        "Match how he moves from a concrete thing to the point.\n"
+        "- Borrow the VOICE, not the sentences. Only reproduce his words as a short, clearly-attributed quote "
+        "to Pratham Mittal. Never present a number or claim from that block as fact — facts come from LOCKED "
+        "and REPORT EVIDENCE only.\n\n"
+        "HARD FACTUAL RULES:\n"
         "- Stay inside the hard word range given in the user message.\n"
         "- LOCKED facts must be used verbatim where relevant.\n"
         "- FORBIDDEN facts must never appear.\n"
         "- If you mention average CTC, the median CTC must appear in the same paragraph.\n"
         "- Never call EFMD, AACSB, BGA, BSIS or NSDC 'accreditations'. They are memberships or affiliations.\n"
-        "- FOUNDER VOICE is for tone, vision and student narrative only. "
-        "You MAY quote briefly with attribution to Pratham Mittal. "
-        "NEVER introduce any number, statistic, or claim from that block as fact — "
-        "all numbers must come from LOCKED facts or REPORT EVIDENCE.\n"
-        "- REPORT EVIDENCE is extracted from official Masters' Union reports. "
-        "Use at least one concrete detail from it in the relevant module "
-        "(recruiter, role, programme color, or named outcome) and attribute the report title. "
-        "If a number appears in both LOCKED and REPORT EVIDENCE and they conflict, use LOCKED.\n"
-        "- One CTA only, at the end.\n"
-        "- Follow the module sequence exactly. One section per module, in that order.\n"
+        "- REPORT EVIDENCE is from official Masters' Union reports. Use at least one concrete detail from it "
+        "in the relevant module (recruiter, role, programme, or named outcome) and attribute the report title "
+        "naturally, the way a person would. If LOCKED and REPORT EVIDENCE conflict on a number, use LOCKED.\n"
+        "- One ask only, at the end. Make it sound like a person asking, not a call-to-action button.\n"
+        "- Follow the module sequence exactly. One section per module, in that order. The 'text' is the spoken "
+        "words for that beat; 'heading' is a short internal label (2-4 words) only.\n"
         '- Output: {"sections":[{"module_id":"M01","heading":"...","text":"..."}], "cta":"..."}'
     )
     user = (
+        f"You are pitching to this person:\n"
         f"Audience: {_axis_line(AUDIENCE_CLUSTERS, audience_cluster)}\n"
         f"Duration: {_axis_line(DURATIONS, duration)}\n"
         f"Channel: {_axis_line(CHANNELS, channel)}\n"
@@ -113,42 +136,24 @@ def script_messages(
         f"Context note: {context_note or '(none)'}\n"
         f"Word budget: {word_budget} words. Hard range: {low}-{high} words.\n"
         f"Module sequence: {' > '.join(sequence)}\n\n"
+        f"FOUNDER VOICE — this is the exact tone, cadence, and vocabulary to write the whole pitch in "
+        f"(Pratham Mittal, transcribed):\n{voice}\n\n"
         f"LOCKED — use verbatim where relevant:\n{locked}\n\n"
         f"FORBIDDEN — never state these:\n{forbidden}\n\n"
-        f"FOUNDER VOICE (Pratham Mittal):\n{voice}\n\n"
         f"REPORT EVIDENCE:\n{reports}\n\n"
-        f"Modules:\n{_format_modules(modules, sequence)}"
+        f"Modules (the beats to hit, in order — the content is raw material, rewrite it in the spoken voice):\n"
+        f"{_format_modules(modules, sequence)}"
     )
     if draft:
         current = count_script_words(draft)
         user += (
             f"\n\nPrevious draft is {current} words. Rewrite THAT draft — do not start over. "
-            f"Keep the same module order and locked facts. Cut or add sentences until the "
-            f"total word count, including the CTA, is between {low} and {high}. "
+            f"Keep the same module order, the locked facts, and the spoken founder voice. "
+            f"Cut or add whole sentences (never pad with filler or hype) until the total word count, "
+            f"including the ask, is between {low} and {high}. It must still read like a person talking. "
             f"Return the full revised JSON.\n"
             f"{json.dumps(draft, ensure_ascii=False)}"
         )
     if corrections:
         user += "\n\nPrevious draft failed validation. Fix these issues:\n- " + "\n- ".join(corrections)
-    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
-
-
-def deck_messages(script: dict, duration: str, slide_count: int) -> list[dict[str, str]]:
-    system = (
-        "Convert a validated pitch script into a dense slide deck specification. "
-        "Return JSON only. Never invent numbers that are not in the script.\n"
-        f"Target about {slide_count} slides. Sparse decks are a failure.\n"
-        "Each module MUST produce: one section divider, then at least two content slides "
-        "(bullets and/or stat_pair). Do not stop at a title plus a divider.\n"
-        "Bullet slides: 4-6 bullets. Each bullet is one full argument from the script "
-        "(18-28 words), not a two-word label.\n"
-        "Put every number, rupee figure, percentage, and named outcome on a stat_pair slide.\n"
-        "If the script quotes someone, add a quote slide with attribution.\n"
-        "Layouts: title, agenda, section, stat_pair, bullets, profile, quote, inventory, cta.\n"
-        "Structure: slide 1 = title, slide 2 = agenda, then module blocks, end with cta.\n"
-        "Keep slide module_id values in the same order as the script sections.\n"
-        'Output: {"slides":[{"layout":"title","title":"...","subtitle":"...","module_id":"M01",'
-        '"bullets":[],"stats":[{"label":"...","value":"..."}],"quote":"","attribution":""}]}'
-    )
-    user = f"Duration code: {duration}\nScript JSON:\n{script}"
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]

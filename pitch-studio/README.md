@@ -1,6 +1,24 @@
 # Pitch Studio
 
-Web app for Masters' Union "One Company, One Story" pitches. Admins manage modules, locked facts, recipes, assets, and objections. Users pick five axes and receive a script, branded PPTX deck, and recommended assets.
+Web app for Masters' Union "One Company, One Story" pitches. Admins manage modules, locked facts, recipes, assets, and objections. Users pick five axes and receive a script, a deck, and recommended assets.
+
+## How a deck is built
+
+Slides are not written by the model. Every slide is a real page of the Masters'
+Union Brand Deck PDF, so the deck is on brand by construction. The recipe's
+module sequence decides which pages are used and the duration axis decides how
+many: the cover and closing bookend the deck, and the pages in between are
+dealt out round-robin across the modules so each one contributes its strongest
+page before any module gets a second.
+
+The page-to-module map lives in `backend/pipeline/brand_deck.py`, with each
+module's pages listed best first. Reorder that list to change what a short
+deck shows. Pages are rasterised once and cached under
+`data/files/brand-deck/pages/`.
+
+The brand deck PDF is resolved from the `Brand Deck` report asset, so run
+`python -m backend.sync_assets --types report` before generating. It is too
+large for git, and in production it is pulled from Spaces on first use.
 
 ## Local development
 

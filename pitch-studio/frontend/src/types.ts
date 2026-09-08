@@ -63,20 +63,13 @@ export type RecipeOption = {
   valid: boolean;
 };
 
-export type DeckStat = {
-  label: string;
-  value: string;
-};
-
 export type DeckSlide = {
   layout: string;
+  /** 1-based page in the Masters' Union brand deck. */
+  page?: number | null;
   title: string;
-  subtitle?: string | null;
-  bullets?: string[] | null;
-  stats?: DeckStat[] | null;
-  quote?: string | null;
-  attribution?: string | null;
   module_id: string;
+  image_url?: string | null;
 };
 
 export type DeckSpec = {

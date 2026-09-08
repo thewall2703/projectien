@@ -11,7 +11,12 @@ from backend.auth import get_current_user
 from backend.config import settings
 from backend.database import get_db
 from backend.models import Asset, FounderQuote, Generation, Objection, Recipe, User
-from backend.pipeline.deck import expand_deck_from_script
+from backend.pipeline.brand_deck import (
+    SOURCE_PAGE_COUNT,
+    BrandDeckUnavailable,
+    brand_deck_file_key,
+    page_image,
+)
 from backend.pipeline.resolver import is_valid_sequence, parse_sequence
 from backend.pipeline.runner import run as run_generation
 from backend.recipe_cache import list_recipe_options
@@ -83,17 +88,6 @@ def _enrich(db: Session, generation: Generation) -> GenerationOut:
             ]
         except (json.JSONDecodeError, ValueError):
             payload.report_passages = []
-    if payload.script:
-        sequence = [part for part in (generation.module_sequence or "").split(">") if part]
-        slides = (payload.deck_spec or {}).get("slides") if isinstance(payload.deck_spec, dict) else None
-        content = [
-            slide
-            for slide in (slides or [])
-            if slide.get("layout") not in {"title", "section", "agenda", "cta"}
-            and (slide.get("bullets") or slide.get("stats") or slide.get("quote"))
-        ]
-        if len(content) < max(len(sequence) * 2, 4):
-            payload.deck_spec = expand_deck_from_script(payload.script, sequence).model_dump()
     return payload
 
 
@@ -252,6 +246,27 @@ def download_asset_file(
         content=data,
         media_type=asset.content_type or "application/octet-stream",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/brand-deck/pages/{page}.jpg")
+def brand_deck_page(
+    page: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Serve one brand deck page as an image, for the in-app slide preview."""
+    _ = user
+    if page < 1 or page > SOURCE_PAGE_COUNT:
+        raise HTTPException(status_code=404, detail="Page not found")
+    try:
+        data = page_image(page, brand_deck_file_key(db))
+    except BrandDeckUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return Response(
+        content=data,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, max-age=86400"},
     )
 
 

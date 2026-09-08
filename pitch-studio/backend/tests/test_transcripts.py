@@ -102,10 +102,10 @@ class PromptVoiceTests(unittest.TestCase):
             founder_quotes=[quote],
         )
         user = messages[1]["content"]
-        self.assertIn("FOUNDER VOICE (Pratham Mittal)", user)
+        self.assertIn("FOUNDER VOICE", user)
         self.assertIn("Stay in India and ride the wave.", user)
         self.assertIn("C0005.MP4 @ 12:30", user)
-        self.assertIn("all numbers must come from LOCKED facts or REPORT EVIDENCE", messages[0]["content"])
+        self.assertIn("facts come from LOCKED", messages[0]["content"])
 
 
 class HashTests(unittest.TestCase):
