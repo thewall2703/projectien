@@ -2,13 +2,15 @@ name: pitch-studio
 region: sgp
 services:
   - name: web
-    image:
-      registry_type: DOCR
-      repository: web
-      tag: latest
+    github:
+      repo: thewall2703/projectien
+      branch: main
+      deploy_on_push: true
+    source_dir: /pitch-studio
+    dockerfile_path: Dockerfile
     http_port: 8080
     instance_count: 1
-    instance_size_slug: basic-xs
+    instance_size_slug: apps-s-1vcpu-1gb
     health_check:
       http_path: /api/health
     envs:
