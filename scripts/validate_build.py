@@ -98,6 +98,8 @@ def main() -> int:
                 "backend.tests.test_deck",
                 "backend.tests.test_sync_assets",
                 "backend.tests.test_transcripts",
+                "backend.tests.test_extract",
+                "backend.tests.test_resolver_persona",
             ],
             cwd=ROOT / "pitch-studio",
             env={**os.environ, "PYTHONPATH": str(ROOT / "pitch-studio")},

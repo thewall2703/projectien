@@ -87,6 +87,10 @@ class Asset(Base):
     audiences: Mapped[str] = mapped_column(String(255), default="")
     status: Mapped[str] = mapped_column(String(16), default="exists")
     notes: Mapped[str] = mapped_column(Text, default="")
+    extract_status: Mapped[str] = mapped_column(String(16), default="")
+    extract_error: Mapped[str] = mapped_column(Text, default="")
+    extract_json: Mapped[str] = mapped_column(Text, default="")
+    extracted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     edited: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
@@ -122,6 +126,8 @@ class Generation(Base):
     asset_ids: Mapped[str] = mapped_column(String(255), default="")
     objection_ids: Mapped[str] = mapped_column(String(255), default="")
     founder_quote_ids: Mapped[str] = mapped_column(String(255), default="")
+    report_asset_ids: Mapped[str] = mapped_column(String(255), default="")
+    report_passages_json: Mapped[str] = mapped_column(Text, default="")
     validation_report: Mapped[str] = mapped_column(Text, default="")
     error: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

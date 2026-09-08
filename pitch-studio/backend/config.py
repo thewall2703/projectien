@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     database_url: str = f"sqlite:///{DATA_DIR / 'app.db'}"
     secret_key: str = "dev-secret-change-me"
     openrouter_api_key: str = ""
-    openrouter_model: str = "anthropic/claude-sonnet-4.5"
+    openrouter_model: str = "openai/gpt-5.6-sol"
     admin_email: str = "admin@example.com"
     admin_password: str = "changeme"
     spaces_endpoint: str = ""
@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     runpod_endpoint_id: str = ""
     cookie_name: str = "pitch_session"
     cookie_max_age: int = 60 * 60 * 24 * 7
+    cookie_secure: bool = False
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
     @property
     def uses_spaces(self) -> bool:

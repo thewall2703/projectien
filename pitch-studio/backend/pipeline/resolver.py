@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
 from backend.models import Recipe
+
+_MODULE_RE = re.compile(r"^M\d+$")
 
 WORD_BUDGETS = {
     "T0": 90,
@@ -37,6 +40,10 @@ class ResolvedRecipe:
 
 def parse_sequence(raw: str) -> list[str]:
     return [part.strip() for part in raw.replace(" ", "").split(">") if part.strip()]
+
+
+def is_valid_sequence(seq: list[str]) -> bool:
+    return bool(seq) and all(_MODULE_RE.match(part) for part in seq)
 
 
 def _priority_key(recipe: Recipe) -> int:
@@ -75,7 +82,18 @@ def resolve_recipe(
     channel: str,
     intent: str,
     temperature: str = "X2",
+    recipe_ref: str | None = None,
 ) -> ResolvedRecipe:
+    if recipe_ref:
+        chosen = db.query(Recipe).filter(Recipe.ref == recipe_ref).first()
+        if chosen:
+            seq = parse_sequence(chosen.module_sequence)
+            if is_valid_sequence(seq):
+                return ResolvedRecipe(
+                    ref=chosen.ref,
+                    module_sequence=seq,
+                    word_budget=chosen.word_budget or WORD_BUDGETS.get(chosen.duration, 280),
+                )
     recipes = db.query(Recipe).all()
     exact = [
         recipe

@@ -50,6 +50,39 @@ export type RecipeRow = {
   edited: boolean;
 };
 
+export type RecipeOption = {
+  ref: string;
+  audience_label: string;
+  audience_cluster: string;
+  duration: string;
+  channel: string;
+  intent: string;
+  module_sequence: string;
+  priority: string;
+  word_budget: number;
+  valid: boolean;
+};
+
+export type DeckStat = {
+  label: string;
+  value: string;
+};
+
+export type DeckSlide = {
+  layout: string;
+  title: string;
+  subtitle?: string | null;
+  bullets?: string[] | null;
+  stats?: DeckStat[] | null;
+  quote?: string | null;
+  attribution?: string | null;
+  module_id: string;
+};
+
+export type DeckSpec = {
+  slides: DeckSlide[];
+};
+
 export type AssetRow = {
   id: number;
   type: string;
@@ -63,7 +96,17 @@ export type AssetRow = {
   audiences: string;
   status: string;
   notes: string;
+  extract_status?: string;
   edited: boolean;
+};
+
+export type ReportPassage = {
+  asset_id: number;
+  title: string;
+  module_ids?: string;
+  start_page?: number | null;
+  end_page?: number | null;
+  text: string;
 };
 
 export type ObjectionRow = {
@@ -116,13 +159,16 @@ export type Generation = {
   asset_ids: string;
   objection_ids: string;
   founder_quote_ids?: string;
+  report_asset_ids?: string;
   validation_report: string;
   error: string;
   created_at: string;
   script: { sections: ScriptSection[]; cta: string } | null;
+  deck_spec?: DeckSpec | null;
   assets: AssetRow[];
   objections: ObjectionRow[];
   founder_quotes?: FounderQuoteRow[];
+  report_passages?: ReportPassage[];
 };
 
 export type AxesResponse = {

@@ -32,7 +32,7 @@ Default admin: `admin@example.com` / `changeme`
 | Variable | Purpose |
 | --- | --- |
 | `OPENROUTER_API_KEY` | Required to generate scripts and decks |
-| `OPENROUTER_MODEL` | Defaults to `anthropic/claude-sonnet-4.5` |
+| `OPENROUTER_MODEL` | Defaults to `openai/gpt-5.6-sol` |
 | `SECRET_KEY` | Session cookie signing |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | Bootstrap admin if the user table is empty |
 | `DATABASE_URL` | Defaults to SQLite under `pitch-studio/data/app.db` |
@@ -40,10 +40,7 @@ Default admin: `admin@example.com` / `changeme`
 
 ## DigitalOcean
 
-1. Create an App Platform app from this `Dockerfile` (context: `pitch-studio/`).
-2. Set the env vars above as secrets.
-3. Create a Spaces bucket if you want durable PPTX storage and set `SPACES_ENDPOINT`, `SPACES_REGION`, `SPACES_KEY`, `SPACES_SECRET`, `SPACES_BUCKET`.
-4. Attach a persistent volume mounted at `/app/data` if you stay on SQLite.
+App Platform spec lives in `.do/app.yaml`. Deploy from a Container Registry image built from this `Dockerfile` (context: `pitch-studio/`). Set `DATABASE_URL`, `SECRET_KEY`, `OPENROUTER_API_KEY`, and Spaces keys as App Platform secrets. Attach the existing `mu-pitch-studio-pg` cluster so Trusted Sources allow the app.
 
 ```bash
 docker build -t pitch-studio .

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Link, Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
+import { Link, Navigate, NavLink, Route, Routes } from "react-router-dom";
 import { api } from "./api";
 import type { User } from "./types";
 import Login from "./pages/Login";
@@ -14,56 +14,98 @@ import FounderQuotes from "./pages/admin/FounderQuotes";
 import Objections from "./pages/admin/Objections";
 import Users from "./pages/admin/Users";
 
+function navClass({ isActive }: { isActive: boolean }) {
+  return `block rounded-lg px-3 py-2 text-sm ${
+    isActive ? "bg-accent/10 font-semibold text-accent" : "text-ink/70 hover:bg-paper hover:text-ink"
+  }`;
+}
+
 function Shell({ user, onLogout, children }: { user: User; onLogout: () => void; children: ReactNode }) {
-  const link = ({ isActive }: { isActive: boolean }) =>
-    `text-sm ${isActive ? "text-accent font-semibold" : "text-ink/70 hover:text-ink"}`;
   return (
-    <div className="min-h-screen">
-      <header className="border-b border-ink/10 bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-          <Link to="/" className="font-serif text-xl">
+    <div className="min-h-screen md:flex">
+      <header className="border-b border-line bg-surface md:hidden">
+        <div className="flex items-center justify-between px-5 py-4">
+          <Link to="/" className="font-display text-xl">
             Pitch Studio
           </Link>
-          <nav className="flex flex-wrap items-center gap-4">
-            <NavLink to="/" className={link} end>
-              Generate
-            </NavLink>
-            <NavLink to="/history" className={link}>
-              History
-            </NavLink>
-            {user.is_admin && (
-              <>
-                <NavLink to="/admin/modules" className={link}>
+          <span className="text-xs text-muted">{user.email}</span>
+        </div>
+        <nav className="flex flex-wrap gap-3 px-5 pb-4">
+          <NavLink to="/" className={navClass} end>
+            Generate
+          </NavLink>
+          <NavLink to="/history" className={navClass}>
+            History
+          </NavLink>
+          {user.is_admin && (
+            <>
+              <NavLink to="/admin/modules" className={navClass}>
+                Modules
+              </NavLink>
+              <NavLink to="/admin/recipes" className={navClass}>
+                Recipes
+              </NavLink>
+              <NavLink to="/admin/assets" className={navClass}>
+                Assets
+              </NavLink>
+            </>
+          )}
+        </nav>
+      </header>
+      <aside className="hidden w-64 shrink-0 flex-col border-r border-line bg-surface px-5 py-6 md:flex">
+        <Link to="/" className="font-display text-2xl leading-none">
+          Pitch Studio
+        </Link>
+        <p className="mt-1 text-xs uppercase tracking-[0.18em] text-muted">Masters' Union</p>
+        <nav className="mt-8 space-y-6">
+          <div>
+            <p className="kicker">Create</p>
+            <div className="mt-2 space-y-1">
+              <NavLink to="/" className={navClass} end>
+                Generate
+              </NavLink>
+              <NavLink to="/history" className={navClass}>
+                History
+              </NavLink>
+            </div>
+          </div>
+          {user.is_admin && (
+            <div>
+              <p className="kicker">Library</p>
+              <div className="mt-2 space-y-1">
+                <NavLink to="/admin/modules" className={navClass}>
                   Modules
                 </NavLink>
-                <NavLink to="/admin/facts" className={link}>
+                <NavLink to="/admin/facts" className={navClass}>
                   Facts
                 </NavLink>
-                <NavLink to="/admin/recipes" className={link}>
+                <NavLink to="/admin/recipes" className={navClass}>
                   Recipes
                 </NavLink>
-                <NavLink to="/admin/assets" className={link}>
+                <NavLink to="/admin/assets" className={navClass}>
                   Assets
                 </NavLink>
-                <NavLink to="/admin/founder-quotes" className={link}>
+                <NavLink to="/admin/founder-quotes" className={navClass}>
                   Founder voice
                 </NavLink>
-                <NavLink to="/admin/objections" className={link}>
+                <NavLink to="/admin/objections" className={navClass}>
                   Objections
                 </NavLink>
-                <NavLink to="/admin/users" className={link}>
+                <NavLink to="/admin/users" className={navClass}>
                   Users
                 </NavLink>
-              </>
-            )}
-            <span className="text-xs text-ink/50">{user.email}</span>
-            <button className="text-sm text-ink/70 hover:text-ink" onClick={onLogout} type="button">
-              Sign out
-            </button>
-          </nav>
+              </div>
+            </div>
+          )}
+        </nav>
+        <div className="mt-auto pt-8">
+          <p className="truncate text-xs text-muted">{user.email}</p>
+          <button className="mt-3 text-sm text-ink/70 hover:text-ink" onClick={onLogout} type="button">
+            Sign out
+          </button>
         </div>
-      </header>
-      <main className="mx-auto max-w-6xl px-6 py-8">{children}</main>
+      </aside>
+      <main className="min-w-0 flex-1 px-6 py-8">{children}</main>
     </div>
   );
 }
@@ -71,7 +113,6 @@ function Shell({ user, onLogout, children }: { user: User; onLogout: () => void;
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
-  const location = useLocation();
 
   useEffect(() => {
     api
@@ -79,10 +120,10 @@ export default function App() {
       .then((data) => setUser(data as User))
       .catch(() => setUser(null))
       .finally(() => setReady(true));
-  }, [location.pathname]);
+  }, []);
 
   if (!ready) {
-    return <div className="p-10 text-ink/50">Loading…</div>;
+    return <div className="p-10 text-muted">Loading…</div>;
   }
 
   const logout = async () => {

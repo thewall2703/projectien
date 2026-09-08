@@ -6,6 +6,60 @@ body {
   @apply bg-paper text-ink font-sans antialiased;
 }
 
+::selection {
+  background: #2439d933;
+}
+
 mark {
-  @apply bg-yellow-200 text-ink px-0.5;
+  @apply bg-gold/30 text-ink px-0.5;
+}
+
+.kicker {
+  @apply text-[11px] font-semibold uppercase tracking-[0.22em] text-accent;
+}
+
+.card {
+  @apply rounded-2xl border border-line bg-surface shadow-card;
+}
+
+.chip {
+  @apply inline-flex items-center rounded-full border border-line bg-paper px-2.5 py-1 text-[11px] uppercase tracking-[0.14em] text-muted;
+}
+
+.chip-active {
+  @apply border-accent bg-accent text-white;
+}
+
+.chip-warn {
+  @apply border-warn/30 bg-warn/10 text-warn;
+}
+
+.btn {
+  @apply rounded-lg border border-line bg-surface px-4 py-2 text-sm font-medium text-ink hover:border-accent/40;
+}
+
+.btn-accent {
+  @apply rounded-lg bg-accent px-5 py-2.5 text-sm font-medium text-white hover:bg-accent-dark disabled:opacity-50;
+}
+
+.field {
+  @apply w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none focus:border-accent;
+}
+
+.stage {
+  @apply relative aspect-[16/9] overflow-hidden rounded-2xl border border-line bg-surface shadow-card;
+}
+
+.brand-slide {
+  container-type: size;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d8d2c6;
+  border-radius: 999px;
 }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -9,10 +10,13 @@ from sqlalchemy.orm import Session
 from backend.auth import hash_password, require_admin
 from backend.config import DEFAULT_XLSX
 from backend.database import get_db
+from backend.extract import extract_asset
+from backend.recipe_cache import invalidate_recipe_cache
 from backend.models import Asset, FounderQuote, LockedFact, Module, Objection, Recipe, User
 from backend.schemas import (
     AssetIn,
     AssetOut,
+    ExtractResultOut,
     FactIn,
     FactOut,
     FounderQuoteIn,
@@ -133,6 +137,7 @@ def create_recipe(payload: RecipeIn, db: Session = Depends(get_db)) -> Recipe:
     db.add(item)
     db.commit()
     db.refresh(item)
+    invalidate_recipe_cache()
     return item
 
 
@@ -144,6 +149,7 @@ def update_recipe(recipe_id: int, payload: RecipeIn, db: Session = Depends(get_d
     _apply(item, payload.model_dump())
     db.commit()
     db.refresh(item)
+    invalidate_recipe_cache()
     return item
 
 
@@ -154,6 +160,7 @@ def delete_recipe(recipe_id: int, db: Session = Depends(get_db)) -> dict[str, bo
         raise HTTPException(status_code=404, detail="Recipe not found")
     db.delete(item)
     db.commit()
+    invalidate_recipe_cache()
     return {"ok": True}
 
 
@@ -273,7 +280,9 @@ def delete_user(user_id: int, db: Session = Depends(get_db)) -> dict[str, bool]:
 @router.post("/reseed", response_model=SeedCounts)
 def reseed(db: Session = Depends(get_db)) -> SeedCounts:
     path = Path(DEFAULT_XLSX)
-    return run_seed(path, db=db)
+    counts = run_seed(path, db=db)
+    invalidate_recipe_cache()
+    return counts
 
 
 @router.get("/founder-quotes", response_model=list[FounderQuoteOut])
@@ -351,4 +360,33 @@ def sync_library_assets(
         gap=raw.get("gap", 0),
         error=raw.get("error", 0),
         skipped=raw.get("skipped", 0),
+    )
+
+
+@router.post("/extract-assets/{asset_id}", response_model=ExtractResultOut)
+def extract_library_asset(
+    asset_id: int,
+    max_pages: int = Query(default=0),
+    ocr: bool = Query(default=True),
+    db: Session = Depends(get_db),
+) -> ExtractResultOut:
+    asset = db.get(Asset, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    extract_asset(db, asset, max_pages=max_pages or None, ocr=ocr)
+    payload: dict[str, Any] = {}
+    if asset.extract_json:
+        try:
+            payload = json.loads(asset.extract_json)
+        except json.JSONDecodeError:
+            payload = {}
+    return ExtractResultOut(
+        asset_id=asset.id,
+        title=asset.title,
+        extract_status=asset.extract_status,
+        page_count=int(payload.get("page_count") or 0),
+        ocr_pages=int(payload.get("ocr_pages") or 0),
+        char_count=int(payload.get("char_count") or 0),
+        chunk_count=len(payload.get("chunks") or []),
+        extract_error=asset.extract_error,
     )

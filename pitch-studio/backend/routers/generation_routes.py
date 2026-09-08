@@ -5,13 +5,16 @@ from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import RedirectResponse, Response
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from backend.auth import get_current_user
 from backend.config import settings
 from backend.database import get_db
-from backend.models import Asset, FounderQuote, Generation, Objection, User
+from backend.models import Asset, FounderQuote, Generation, Objection, Recipe, User
+from backend.pipeline.deck import expand_deck_from_script
+from backend.pipeline.resolver import is_valid_sequence, parse_sequence
 from backend.pipeline.runner import run as run_generation
+from backend.recipe_cache import list_recipe_options
 from backend.schemas import (
     AUDIENCE_CLUSTERS,
     CHANNELS,
@@ -24,6 +27,8 @@ from backend.schemas import (
     GenerationCreate,
     GenerationOut,
     ObjectionOut,
+    RecipeOption,
+    ReportPassageOut,
 )
 from backend.storage import get_url, read_file
 
@@ -46,6 +51,11 @@ def _enrich(db: Session, generation: Generation) -> GenerationOut:
             payload.script = json.loads(generation.script_json)
         except json.JSONDecodeError:
             payload.script = None
+    if generation.deck_spec_json:
+        try:
+            payload.deck_spec = json.loads(generation.deck_spec_json)
+        except json.JSONDecodeError:
+            payload.deck_spec = None
     asset_ids = _parse_ids(generation.asset_ids)
     objection_ids = _parse_ids(generation.objection_ids)
     quote_ids = _parse_ids(generation.founder_quote_ids)
@@ -65,7 +75,53 @@ def _enrich(db: Session, generation: Generation) -> GenerationOut:
         payload.founder_quotes = [
             FounderQuoteOut.model_validate(by_id[qid]) for qid in quote_ids if qid in by_id
         ]
+    if generation.report_passages_json:
+        try:
+            payload.report_passages = [
+                ReportPassageOut.model_validate(item)
+                for item in json.loads(generation.report_passages_json)
+            ]
+        except (json.JSONDecodeError, ValueError):
+            payload.report_passages = []
+    if payload.script:
+        sequence = [part for part in (generation.module_sequence or "").split(">") if part]
+        slides = (payload.deck_spec or {}).get("slides") if isinstance(payload.deck_spec, dict) else None
+        content = [
+            slide
+            for slide in (slides or [])
+            if slide.get("layout") not in {"title", "section", "agenda", "cta"}
+            and (slide.get("bullets") or slide.get("stats") or slide.get("quote"))
+        ]
+        if len(content) < max(len(sequence) * 2, 4):
+            payload.deck_spec = expand_deck_from_script(payload.script, sequence).model_dump()
     return payload
+
+
+def _list_item(generation: Generation) -> GenerationOut:
+    return GenerationOut(
+        id=generation.id,
+        user_id=generation.user_id,
+        audience_cluster=generation.audience_cluster,
+        duration=generation.duration,
+        channel=generation.channel,
+        intent=generation.intent,
+        temperature=generation.temperature,
+        context_note=generation.context_note,
+        recipe_ref=generation.recipe_ref,
+        module_sequence=generation.module_sequence,
+        status=generation.status,
+        script_json="",
+        deck_spec_json="",
+        pptx_path=generation.pptx_path,
+        asset_ids=generation.asset_ids,
+        objection_ids=generation.objection_ids,
+        founder_quote_ids=generation.founder_quote_ids,
+        report_asset_ids=generation.report_asset_ids,
+        report_passages_json="",
+        validation_report=generation.validation_report,
+        error=generation.error,
+        created_at=generation.created_at,
+    )
 
 
 @router.get("/axes", response_model=AxesResponse)
@@ -79,6 +135,11 @@ def axes() -> AxesResponse:
     )
 
 
+@router.get("/recipes", response_model=list[RecipeOption])
+def recipe_options(db: Session = Depends(get_db)) -> list[RecipeOption]:
+    return list_recipe_options(db)
+
+
 @router.post("/generations", response_model=GenerationOut)
 def create_generation(
     payload: GenerationCreate,
@@ -86,14 +147,34 @@ def create_generation(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> GenerationOut:
+    recipe_ref = payload.recipe_ref or ""
+    axes = {
+        "audience_cluster": payload.audience_cluster,
+        "duration": payload.duration,
+        "channel": payload.channel,
+        "intent": payload.intent,
+    }
+    if recipe_ref:
+        recipe = db.query(Recipe).filter(Recipe.ref == recipe_ref).first()
+        if recipe is None:
+            raise HTTPException(status_code=404, detail="Recipe not found")
+        if not is_valid_sequence(parse_sequence(recipe.module_sequence)):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Recipe {recipe_ref} has a non-module sequence and cannot be generated",
+            )
+        axes = {
+            "audience_cluster": recipe.audience_cluster,
+            "duration": recipe.duration,
+            "channel": recipe.channel,
+            "intent": recipe.intent,
+        }
     generation = Generation(
         user_id=user.id,
-        audience_cluster=payload.audience_cluster,
-        duration=payload.duration,
-        channel=payload.channel,
-        intent=payload.intent,
+        **axes,
         temperature=payload.temperature,
         context_note=payload.context_note,
+        recipe_ref=recipe_ref,
         status="queued",
     )
     db.add(generation)
@@ -111,7 +192,30 @@ def list_generations(
     query = db.query(Generation).order_by(Generation.created_at.desc())
     if not user.is_admin:
         query = query.filter(Generation.user_id == user.id)
-    return [_enrich(db, item) for item in query.all()]
+    rows = query.options(
+        load_only(
+            Generation.id,
+            Generation.user_id,
+            Generation.audience_cluster,
+            Generation.duration,
+            Generation.channel,
+            Generation.intent,
+            Generation.temperature,
+            Generation.context_note,
+            Generation.recipe_ref,
+            Generation.module_sequence,
+            Generation.status,
+            Generation.pptx_path,
+            Generation.asset_ids,
+            Generation.objection_ids,
+            Generation.founder_quote_ids,
+            Generation.report_asset_ids,
+            Generation.validation_report,
+            Generation.error,
+            Generation.created_at,
+        )
+    ).all()
+    return [_list_item(item) for item in rows]
 
 
 @router.get("/generations/{generation_id}", response_model=GenerationOut)

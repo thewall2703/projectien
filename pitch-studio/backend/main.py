@@ -1,25 +1,20 @@
 from __future__ import annotations
 
-from pathlib import Path
-
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.exc import OperationalError
 
-from backend.auth import bootstrap_admin
-from backend.config import DEFAULT_XLSX, PITCH_STUDIO_ROOT
-from backend.database import Base, SessionLocal, engine, ensure_schema
-from backend.models import Module
+from backend.config import PITCH_STUDIO_ROOT, settings
 from backend.routers import admin_routes, auth_routes, generation_routes
-from backend.seed import run_seed
 
 FRONTEND_DIST = PITCH_STUDIO_ROOT / "frontend" / "dist"
 
 app = FastAPI(title="Pitch Studio")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -29,17 +24,19 @@ app.include_router(admin_routes.router)
 app.include_router(generation_routes.router)
 
 
+@app.exception_handler(OperationalError)
+def database_unavailable(_request: Request, exc: OperationalError) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Database is temporarily unreachable"},
+    )
+
+
 @app.on_event("startup")
 def on_startup() -> None:
-    Base.metadata.create_all(bind=engine)
-    ensure_schema()
-    db = SessionLocal()
-    try:
-        bootstrap_admin(db)
-        if db.query(Module).count() == 0 and DEFAULT_XLSX.exists():
-            run_seed(DEFAULT_XLSX, db=db)
-    finally:
-        db.close()
+    # Schema/bootstrap is done once at deploy. Doing it on every reload blocks
+    # the API behind DigitalOcean Postgres and leaves /api/auth/me hanging.
+    return
 
 
 @app.get("/api/health")

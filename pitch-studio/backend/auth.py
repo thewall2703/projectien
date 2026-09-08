@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import Cookie, Depends, HTTPException, Response, status
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from passlib.context import CryptContext
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from backend.config import settings
@@ -28,6 +29,7 @@ def set_session_cookie(response: Response, user_id: int) -> None:
         token,
         httponly=True,
         samesite="lax",
+        secure=settings.cookie_secure,
         max_age=settings.cookie_max_age,
         path="/",
     )
@@ -55,7 +57,14 @@ def get_current_user(
     user_id = user_id_from_cookie(session_token)
     if user_id is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not signed in")
-    user = db.get(User, user_id)
+    try:
+        user = db.get(User, user_id)
+    except OperationalError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database is temporarily unreachable",
+        ) from exc
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not signed in")
     return user

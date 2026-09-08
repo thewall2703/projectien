@@ -34,6 +34,7 @@ export default function Assets() {
         { key: "type", label: "Type", type: "select", options: ["video", "photo", "report"] },
         { key: "title", label: "Title" },
         { key: "file_status", label: "File status" },
+        { key: "extract_status", label: "Extract" },
         { key: "matrix_ref", label: "Matrix" },
         { key: "url", label: "URL" },
         { key: "source_url", label: "Source URL" },

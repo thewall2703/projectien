@@ -1,7 +1,15 @@
 const jsonHeaders = { "Content-Type": "application/json" };
 
+let recipesCache: unknown = null;
+let recipesInflight: Promise<unknown> | null = null;
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, { credentials: "include", ...init });
+  const timeoutMs = path.includes("/auth/me") ? 25000 : 20000;
+  const response = await fetch(path, {
+    credentials: "include",
+    signal: AbortSignal.timeout(timeoutMs),
+    ...init,
+  });
   if (response.status === 401) {
     throw new Error("unauthorized");
   }
@@ -28,9 +36,27 @@ export const api = {
       headers: jsonHeaders,
       body: JSON.stringify({ email, password }),
     }),
-  logout: () => request("/api/auth/logout", { method: "POST" }),
+  logout: () => {
+    recipesCache = null;
+    recipesInflight = null;
+    return request("/api/auth/logout", { method: "POST" });
+  },
   me: () => request("/api/auth/me"),
   axes: () => request("/api/axes"),
+  recipes: () => {
+    if (recipesCache) return Promise.resolve(recipesCache);
+    if (!recipesInflight) {
+      recipesInflight = request("/api/recipes")
+        .then((data) => {
+          recipesCache = data;
+          return data;
+        })
+        .finally(() => {
+          recipesInflight = null;
+        });
+    }
+    return recipesInflight;
+  },
   list: <T>(path: string) => request<T[]>(path),
   create: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "POST", headers: jsonHeaders, body: JSON.stringify(body) }),
@@ -42,6 +68,8 @@ export const api = {
     request(`/api/admin/sync-assets?types=${encodeURIComponent(types)}`, { method: "POST" }),
   ingestTranscripts: (force = false) =>
     request(`/api/admin/ingest-transcripts?force=${force ? "true" : "false"}`, { method: "POST" }),
+  extractAsset: (assetId: number, maxPages = 0) =>
+    request(`/api/admin/extract-assets/${assetId}?max_pages=${maxPages}`, { method: "POST" }),
   createGeneration: (body: unknown) =>
     request("/api/generations", {
       method: "POST",

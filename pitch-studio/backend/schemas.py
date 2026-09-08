@@ -167,8 +167,19 @@ class AssetOut(AssetIn):
     id: int
     edited: bool = False
     synced_at: datetime | None = None
+    extract_status: str = ""
+    extract_error: str = ""
 
     model_config = {"from_attributes": True}
+
+
+class ReportPassageOut(BaseModel):
+    asset_id: int
+    title: str = ""
+    module_ids: str = ""
+    start_page: int | None = None
+    end_page: int | None = None
+    text: str = ""
 
 
 class ObjectionIn(BaseModel):
@@ -210,13 +221,27 @@ class FounderQuoteOut(FounderQuoteIn):
     model_config = {"from_attributes": True}
 
 
-class GenerationCreate(BaseModel):
+class RecipeOption(BaseModel):
+    ref: str
+    audience_label: str
     audience_cluster: str
     duration: str
     channel: str
     intent: str
+    module_sequence: str
+    priority: str = "P2"
+    word_budget: int = 0
+    valid: bool = True
+
+
+class GenerationCreate(BaseModel):
+    audience_cluster: str = ""
+    duration: str = ""
+    channel: str = ""
+    intent: str = ""
     temperature: str
     context_note: str = ""
+    recipe_ref: str = ""
 
 
 class ScriptSection(BaseModel):
@@ -248,13 +273,17 @@ class GenerationOut(BaseModel):
     asset_ids: str
     objection_ids: str
     founder_quote_ids: str = ""
+    report_asset_ids: str = ""
+    report_passages_json: str = ""
     validation_report: str
     error: str
     created_at: datetime
     script: dict[str, Any] | None = None
+    deck_spec: dict[str, Any] | None = None
     assets: list[AssetOut] = []
     objections: list[ObjectionOut] = []
     founder_quotes: list[FounderQuoteOut] = []
+    report_passages: list[ReportPassageOut] = []
 
     model_config = {"from_attributes": True}
 
@@ -281,3 +310,14 @@ class TranscriptIngestCounts(BaseModel):
     kept: int = 0
     skipped: int = 0
     dropped: int = 0
+
+
+class ExtractResultOut(BaseModel):
+    asset_id: int
+    title: str
+    extract_status: str
+    page_count: int = 0
+    ocr_pages: int = 0
+    char_count: int = 0
+    chunk_count: int = 0
+    extract_error: str = ""

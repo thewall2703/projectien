@@ -5,12 +5,19 @@ import json
 from sqlalchemy.orm import Session
 
 from backend.database import SessionLocal
+from backend.extract import pick_report_passages
 from backend.models import Asset, FounderQuote, Generation, LockedFact, Module, Objection
-from backend.pipeline.deck import render_pptx, slide_count_for, spec_from_dict
+from backend.pipeline.deck import (
+    expand_deck_from_script,
+    merge_deck_specs,
+    render_pptx,
+    slide_count_for,
+    spec_from_dict,
+)
 from backend.pipeline.llm import chat_json
 from backend.pipeline.prompts import deck_messages, script_messages
 from backend.pipeline.resolver import resolve_recipe
-from backend.pipeline.validator import validate_script
+from backend.pipeline.validator import align_script_to_recipe, validate_script
 from backend.schemas import ScriptPayload
 from backend.transcripts import pick_founder_quotes
 
@@ -86,6 +93,7 @@ def run(generation_id: int) -> None:
             generation.channel,
             generation.intent,
             generation.temperature,
+            recipe_ref=generation.recipe_ref or None,
         )
         generation.recipe_ref = resolved.ref
         generation.module_sequence = ">".join(resolved.module_sequence)
@@ -98,6 +106,7 @@ def run(generation_id: int) -> None:
         )
         facts = db.query(LockedFact).all()
         founder_quotes = _select_founder_quotes(db, resolved.module_sequence)
+        report_passages = pick_report_passages(db.query(Asset).all(), resolved.module_sequence)
 
         _set_status(db, generation, "generating_script")
         messages = script_messages(
@@ -112,29 +121,37 @@ def run(generation_id: int) -> None:
             facts=facts,
             word_budget=resolved.word_budget,
             founder_quotes=founder_quotes,
+            report_passages=report_passages,
         )
         script = chat_json(messages)
         ScriptPayload.model_validate(script)
+        script = align_script_to_recipe(script, resolved.module_sequence, modules)
 
         _set_status(db, generation, "validating")
         violations = validate_script(script, facts, resolved.module_sequence, resolved.word_budget)
-        if violations:
-            retry_messages = script_messages(
-                audience_cluster=generation.audience_cluster,
-                duration=generation.duration,
-                channel=generation.channel,
-                intent=generation.intent,
-                temperature=generation.temperature,
-                context_note=generation.context_note,
-                modules=modules,
-                sequence=resolved.module_sequence,
-                facts=facts,
-                word_budget=resolved.word_budget,
-                founder_quotes=founder_quotes,
-                corrections=violations,
+        for _attempt in range(2):
+            if not violations:
+                break
+            script = chat_json(
+                script_messages(
+                    audience_cluster=generation.audience_cluster,
+                    duration=generation.duration,
+                    channel=generation.channel,
+                    intent=generation.intent,
+                    temperature=generation.temperature,
+                    context_note=generation.context_note,
+                    modules=modules,
+                    sequence=resolved.module_sequence,
+                    facts=facts,
+                    word_budget=resolved.word_budget,
+                    founder_quotes=founder_quotes,
+                    report_passages=report_passages,
+                    corrections=violations,
+                    draft=script,
+                )
             )
-            script = chat_json(retry_messages)
             ScriptPayload.model_validate(script)
+            script = align_script_to_recipe(script, resolved.module_sequence, modules)
             violations = validate_script(script, facts, resolved.module_sequence, resolved.word_budget)
         generation.script_json = json.dumps(script, ensure_ascii=False)
         generation.validation_report = "\n".join(violations)
@@ -147,17 +164,28 @@ def run(generation_id: int) -> None:
         deck_payload = chat_json(
             deck_messages(script, generation.duration, slide_count_for(generation.duration))
         )
-        spec = spec_from_dict(deck_payload)
+        spec = merge_deck_specs(
+            spec_from_dict(deck_payload),
+            expand_deck_from_script(script, resolved.module_sequence),
+            resolved.module_sequence,
+        )
         generation.deck_spec_json = spec.model_dump_json()
 
         _set_status(db, generation, "rendering")
-        generation.pptx_path = render_pptx(spec, generation.id, resolved.module_sequence)
+        notes = {section["module_id"]: section.get("text", "") for section in script.get("sections", [])}
+        generation.pptx_path = render_pptx(
+            spec, generation.id, resolved.module_sequence, notes_by_module=notes
+        )
 
         assets = _select_assets(db, resolved.module_sequence)
         objections = _select_objections(db, generation.intent)
         generation.asset_ids = ",".join(str(asset.id) for asset in assets)
         generation.objection_ids = ",".join(str(item.id) for item in objections)
         generation.founder_quote_ids = ",".join(str(quote.id) for quote in founder_quotes)
+        generation.report_asset_ids = ",".join(
+            str(item) for item in dict.fromkeys(passage["asset_id"] for passage in report_passages)
+        )
+        generation.report_passages_json = json.dumps(report_passages, ensure_ascii=False)
         generation.error = ""
         _set_status(db, generation, "done")
     except Exception as exc:  # noqa: BLE001

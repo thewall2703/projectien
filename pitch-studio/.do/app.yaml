@@ -1,0 +1,25 @@
+name: pitch-studio
+region: sgp
+services:
+  - name: web
+    image:
+      registry_type: DOCR
+      repository: web
+      tag: latest
+    http_port: 8080
+    instance_count: 1
+    instance_size_slug: basic-xs
+    health_check:
+      http_path: /api/health
+    envs:
+      - key: COOKIE_SECURE
+        scope: RUN_TIME
+        value: "true"
+      - key: OPENROUTER_MODEL
+        scope: RUN_TIME
+        value: openai/gpt-5.6-sol
+databases:
+  - name: pitch-studio-pg
+    engine: PG
+    production: true
+    cluster_name: mu-pitch-studio-pg
