@@ -1,4 +1,4 @@
-import type { MediaIndexList, MediaIndexRow } from "./types";
+import type { DeckTopicList, DeckTopicRow, MediaIndexList, MediaIndexRow } from "./types";
 
 const jsonHeaders = { "Content-Type": "application/json" };
 
@@ -8,7 +8,7 @@ let recipesInflight: Promise<unknown> | null = null;
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const timeoutMs = path.includes("/auth/me")
     ? 25000
-    : /\/(describe|reindex|sync|prepare)(\?|$)/.test(path) || path.includes("/sync-assets")
+    : /\/(describe|reindex|sync|prepare)(\?|$)/.test(path) || path.includes("/sync-assets") || path.includes("/deck-topics/prepare")
       ? 1200000
       : 20000;
   const response = await fetch(path, {
@@ -133,4 +133,34 @@ export const api = {
     request<MediaIndexRow>(`/api/admin/media-index/${id}/unfreeze`, { method: "POST" }),
   syncAsset: (assetId: number, force = false) =>
     request(`/api/admin/assets/${assetId}/sync?force=${force ? "true" : "false"}`, { method: "POST" }),
+  deckTopicList: () => request<DeckTopicList>("/api/admin/deck-topics"),
+  deckTopicGet: (id: number) => request<DeckTopicRow>(`/api/admin/deck-topics/${id}`),
+  prepareDeckTopics: (force = false) =>
+    request<DeckTopicList>(`/api/admin/deck-topics/prepare?force=${force ? "true" : "false"}`, {
+      method: "POST",
+    }),
+  saveDeckTopicVision: (id: number, vision: string) =>
+    request<DeckTopicRow>(`/api/admin/deck-topics/${id}/vision`, {
+      method: "PUT",
+      headers: jsonHeaders,
+      body: JSON.stringify({ vision }),
+    }),
+  reindexDeckTopic: (id: number) =>
+    request<DeckTopicRow>(`/api/admin/deck-topics/${id}/reindex`, { method: "POST" }),
+  sendDeckTopicFeedback: (id: number, recipeRef: string, verdict: "yes" | "no", note = "") =>
+    request<DeckTopicRow>(`/api/admin/deck-topics/${id}/feedback`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ recipe_ref: recipeRef, verdict, note }),
+    }),
+  addDeckTopicUsecase: (id: number, recipeRef: string, note = "") =>
+    request<DeckTopicRow>(`/api/admin/deck-topics/${id}/add-usecase`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ recipe_ref: recipeRef, note }),
+    }),
+  freezeDeckTopic: (id: number) =>
+    request<DeckTopicRow>(`/api/admin/deck-topics/${id}/freeze`, { method: "POST" }),
+  unfreezeDeckTopic: (id: number) =>
+    request<DeckTopicRow>(`/api/admin/deck-topics/${id}/unfreeze`, { method: "POST" }),
 };

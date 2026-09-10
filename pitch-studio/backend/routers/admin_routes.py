@@ -10,6 +10,19 @@ from sqlalchemy.orm import Session
 from backend.auth import hash_password, require_admin
 from backend.config import DEFAULT_XLSX
 from backend.database import get_db
+from backend.deck_topic_index import (
+    DeckTopicError,
+    apply_recommendations as apply_deck_recommendations,
+    enqueue_deck_prepare,
+    find_brand_deck_asset,
+    has_extract as deck_has_extract,
+    is_stale as deck_is_stale,
+    latest_deck_job,
+    list_deck_topics,
+    require_editable as require_deck_editable,
+    serialize as serialize_deck_topic,
+    touch as touch_deck,
+)
 from backend.extract import extract_asset
 from backend.media_index import (
     JOB_DESCRIBE,
@@ -30,13 +43,15 @@ from backend.media_index import (
     sha256_text,
     touch,
 )
-from backend.models import Asset, FounderQuote, LockedFact, MediaIndex, Module, Objection, Recipe, User, utc_now
+from backend.models import Asset, DeckTopic, FounderQuote, LockedFact, MediaIndex, Module, Objection, Recipe, User, utc_now
 from backend.pipeline.llm import LLMError
 from backend.recipe_cache import invalidate_recipe_cache, list_recipe_options
 from backend.schemas import (
     AddUsecaseIn,
     AssetIn,
     AssetOut,
+    DeckTopicListOut,
+    DeckTopicOut,
     ExtractResultOut,
     FactIn,
     FactOut,
@@ -641,3 +656,185 @@ def unfreeze_media_index(media_id: int, db: Session = Depends(get_db)) -> MediaI
     db.commit()
     db.refresh(item)
     return serialize(item, db)
+
+
+def _deck_error(exc: DeckTopicError) -> HTTPException:
+    message = str(exc)
+    lowered = message.lower()
+    if "not found" in lowered:
+        return HTTPException(status_code=404, detail=message)
+    if "frozen" in lowered:
+        return HTTPException(status_code=409, detail=message)
+    return HTTPException(status_code=400, detail=message)
+
+
+def _get_deck_topic(db: Session, topic_id: int) -> DeckTopic:
+    item = db.get(DeckTopic, topic_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Deck topic not found")
+    return item
+
+
+def _save_deck_feedback(db: Session, item: DeckTopic, payload: dict[str, Any]) -> DeckTopicOut:
+    item.feedback_json = json.dumps(payload, ensure_ascii=False)
+    touch_deck(item)
+    db.commit()
+    db.refresh(item)
+    asset = find_brand_deck_asset(db)
+    return serialize_deck_topic(item, latest_deck_job(db, asset.id))
+
+
+@router.get("/deck-topics", response_model=DeckTopicListOut)
+def list_brand_deck_topics(db: Session = Depends(get_db)) -> DeckTopicListOut:
+    return list_deck_topics(db)
+
+
+@router.post("/deck-topics/prepare", response_model=DeckTopicListOut)
+def prepare_brand_deck_topics(
+    force: bool = Query(default=False),
+    db: Session = Depends(get_db),
+) -> DeckTopicListOut:
+    try:
+        asset = find_brand_deck_asset(db)
+        if force:
+            for row in db.query(DeckTopic).all():
+                row.source_hash = ""
+            db.commit()
+        enqueue_deck_prepare(db, asset.id)
+    except DeckTopicError as exc:
+        raise _deck_error(exc) from exc
+    return list_deck_topics(db)
+
+
+@router.get("/deck-topics/{topic_id}", response_model=DeckTopicOut)
+def get_brand_deck_topic(topic_id: int, db: Session = Depends(get_db)) -> DeckTopicOut:
+    item = _get_deck_topic(db, topic_id)
+    try:
+        asset = find_brand_deck_asset(db)
+        job = latest_deck_job(db, asset.id)
+    except DeckTopicError:
+        job = None
+    return serialize_deck_topic(item, job)
+
+
+@router.put("/deck-topics/{topic_id}/vision", response_model=DeckTopicOut)
+def save_deck_topic_vision(
+    topic_id: int,
+    payload: VisionIn,
+    db: Session = Depends(get_db),
+) -> DeckTopicOut:
+    item = _get_deck_topic(db, topic_id)
+    try:
+        require_deck_editable(item)
+    except DeckTopicError as exc:
+        raise _deck_error(exc) from exc
+    item.vision = payload.vision
+    item.vision_hash = sha256_text(payload.vision)
+    if item.status == "frozen":
+        item.status = "indexed"
+    if item.vision.strip() and deck_has_extract(item):
+        try:
+            apply_deck_recommendations(db, item)
+        except LLMError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+    else:
+        touch_deck(item)
+    db.commit()
+    db.refresh(item)
+    asset = find_brand_deck_asset(db)
+    return serialize_deck_topic(item, latest_deck_job(db, asset.id))
+
+
+@router.post("/deck-topics/{topic_id}/reindex", response_model=DeckTopicOut)
+def reindex_deck_topic(topic_id: int, db: Session = Depends(get_db)) -> DeckTopicOut:
+    item = _get_deck_topic(db, topic_id)
+    try:
+        require_deck_editable(item)
+    except DeckTopicError as exc:
+        raise _deck_error(exc) from exc
+    if not item.vision.strip():
+        raise HTTPException(status_code=400, detail="Enter a vision note before re-indexing")
+    if not item.summary.strip():
+        raise HTTPException(status_code=400, detail="Prepare the Brand Deck topics before re-indexing")
+    try:
+        apply_deck_recommendations(db, item)
+    except LLMError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    db.commit()
+    db.refresh(item)
+    asset = find_brand_deck_asset(db)
+    return serialize_deck_topic(item, latest_deck_job(db, asset.id))
+
+
+@router.post("/deck-topics/{topic_id}/feedback", response_model=DeckTopicOut)
+def save_deck_topic_feedback(
+    topic_id: int,
+    payload: FeedbackIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+) -> DeckTopicOut:
+    item = _get_deck_topic(db, topic_id)
+    verdict = payload.verdict.strip().lower()
+    if verdict not in VALID_VERDICTS:
+        raise HTTPException(status_code=400, detail="Verdict must be yes or no")
+    feedback = parse_feedback(item.feedback_json)
+    feedback["verdicts"][payload.recipe_ref] = {
+        "verdict": verdict,
+        "note": payload.note,
+        "by": user.email,
+        "at": utc_now().isoformat(),
+    }
+    return _save_deck_feedback(db, item, feedback)
+
+
+@router.post("/deck-topics/{topic_id}/add-usecase", response_model=DeckTopicOut)
+def add_deck_topic_usecase(
+    topic_id: int,
+    payload: AddUsecaseIn,
+    db: Session = Depends(get_db),
+) -> DeckTopicOut:
+    item = _get_deck_topic(db, topic_id)
+    refs = {option.ref for option in list_recipe_options(db)}
+    if payload.recipe_ref not in refs:
+        raise HTTPException(status_code=400, detail="Unknown recipe_ref")
+    feedback = parse_feedback(item.feedback_json)
+    already = any(entry.get("recipe_ref") == payload.recipe_ref for entry in feedback["added"])
+    if not already:
+        feedback["added"].append(
+            {
+                "recipe_ref": payload.recipe_ref,
+                "note": payload.note,
+                "at": utc_now().isoformat(),
+            }
+        )
+    return _save_deck_feedback(db, item, feedback)
+
+
+@router.post("/deck-topics/{topic_id}/freeze", response_model=DeckTopicOut)
+def freeze_deck_topic(topic_id: int, db: Session = Depends(get_db)) -> DeckTopicOut:
+    item = _get_deck_topic(db, topic_id)
+    if not item.vision.strip():
+        raise HTTPException(status_code=400, detail="Enter a vision note before freezing")
+    if not item.recommendations_json:
+        raise HTTPException(status_code=400, detail="Re-index before freezing")
+    if deck_is_stale(item):
+        raise HTTPException(status_code=400, detail="Vision changed. Re-index before freezing")
+    item.vision_frozen = True
+    item.status = "frozen"
+    touch_deck(item)
+    db.commit()
+    db.refresh(item)
+    asset = find_brand_deck_asset(db)
+    return serialize_deck_topic(item, latest_deck_job(db, asset.id))
+
+
+@router.post("/deck-topics/{topic_id}/unfreeze", response_model=DeckTopicOut)
+def unfreeze_deck_topic(topic_id: int, db: Session = Depends(get_db)) -> DeckTopicOut:
+    item = _get_deck_topic(db, topic_id)
+    item.vision_frozen = False
+    item.status = "indexed" if item.recommendations_json else "ready"
+    touch_deck(item)
+    db.commit()
+    db.refresh(item)
+    asset = find_brand_deck_asset(db)
+    return serialize_deck_topic(item, latest_deck_job(db, asset.id))

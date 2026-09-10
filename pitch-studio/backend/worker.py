@@ -8,6 +8,7 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from backend.database import SessionLocal, ensure_schema
+from backend.deck_topic_index import JOB_DECK_PREPARE, prepare_deck_topics
 from backend.media_index import JOB_DESCRIBE, JOB_PREPARE, describe_media, prepare_media
 from backend.models import Job, utc_now
 
@@ -106,6 +107,8 @@ def _run_job(job_id: int) -> None:
             prepare_media(db, job.asset_id, on_stage=on_stage)
         elif job.job_type == JOB_DESCRIBE:
             describe_media(db, job.media_id, on_stage=on_stage)
+        elif job.job_type == JOB_DECK_PREPARE:
+            prepare_deck_topics(db, on_stage=on_stage)
         else:
             raise RuntimeError(f"Unknown job type: {job.job_type}")
 

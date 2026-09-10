@@ -14,6 +14,7 @@ import FounderQuotes from "./pages/admin/FounderQuotes";
 import Objections from "./pages/admin/Objections";
 import Users from "./pages/admin/Users";
 import MediaTesting from "./pages/admin/MediaTesting";
+import BrandDeckTesting from "./pages/admin/BrandDeckTesting";
 import { Spinner } from "./components/ui";
 
 function navClass({ isActive }: { isActive: boolean }) {
@@ -52,6 +53,9 @@ function Shell({ user, onLogout, children }: { user: User; onLogout: () => void;
               </NavLink>
               <NavLink to="/admin/media-testing" className={navClass}>
                 Media
+              </NavLink>
+              <NavLink to="/admin/brand-deck-testing" className={navClass}>
+                Brand deck
               </NavLink>
             </>
           )}
@@ -92,6 +96,9 @@ function Shell({ user, onLogout, children }: { user: User; onLogout: () => void;
                 </NavLink>
                 <NavLink to="/admin/media-testing" className={navClass}>
                   Media testing
+                </NavLink>
+                <NavLink to="/admin/brand-deck-testing" className={navClass}>
+                  Brand deck testing
                 </NavLink>
                 <NavLink to="/admin/founder-quotes" className={navClass}>
                   Founder voice
@@ -165,6 +172,7 @@ export default function App() {
                     <Route path="/admin/recipes" element={<Recipes />} />
                     <Route path="/admin/assets" element={<Assets />} />
                     <Route path="/admin/media-testing" element={<MediaTesting />} />
+                    <Route path="/admin/brand-deck-testing" element={<BrandDeckTesting />} />
                     <Route path="/admin/founder-quotes" element={<FounderQuotes />} />
                     <Route path="/admin/objections" element={<Objections />} />
                     <Route path="/admin/users" element={<Users />} />

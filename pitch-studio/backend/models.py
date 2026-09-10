@@ -177,6 +177,28 @@ class MediaIndex(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class DeckTopic(Base):
+    __tablename__ = "deck_topics"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    title: Mapped[str] = mapped_column(String(255), default="")
+    pages_json: Mapped[str] = mapped_column(Text, default="[]")
+    summary: Mapped[str] = mapped_column(Text, default="")
+    module_ids: Mapped[str] = mapped_column(String(255), default="")
+    vision: Mapped[str] = mapped_column(Text, default="")
+    vision_hash: Mapped[str] = mapped_column(String(64), default="")
+    indexed_vision_hash: Mapped[str] = mapped_column(String(64), default="")
+    recommendations_json: Mapped[str] = mapped_column(Text, default="")
+    recommended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    feedback_json: Mapped[str] = mapped_column(Text, default="")
+    vision_frozen: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str] = mapped_column(String(16), default="draft")
+    source_hash: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class Job(Base):
     __tablename__ = "jobs"
 

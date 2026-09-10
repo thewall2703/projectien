@@ -244,3 +244,47 @@ export type MediaIndexList = {
   items: MediaIndexRow[];
   candidates: MediaCandidate[];
 };
+
+export type DeckTopicPage = {
+  page: number;
+  label: string;
+  module_id: string;
+  image_url: string;
+};
+
+export type DeckTopicRow = {
+  id: number;
+  sort_order: number;
+  title: string;
+  pages: number[];
+  page_items: DeckTopicPage[];
+  summary: string;
+  module_ids: string;
+  vision: string;
+  vision_hash: string;
+  indexed_vision_hash: string;
+  recommended_at: string | null;
+  vision_frozen: boolean;
+  status: string;
+  stale: boolean;
+  source_hash: string;
+  job_status?: string;
+  job_stage?: string;
+  job_error?: string;
+  job_type?: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+  context_index?: string;
+  recommendations: { generated_at: string; vision_hash: string; items: MediaRecommendation[] };
+  feedback: MediaFeedback;
+};
+
+export type DeckTopicList = {
+  items: DeckTopicRow[];
+  asset_id: number;
+  asset_title: string;
+  job_status?: string;
+  job_stage?: string;
+  job_error?: string;
+  job_type?: string;
+};

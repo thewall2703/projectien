@@ -429,3 +429,47 @@ class MediaCandidate(BaseModel):
 class MediaIndexListOut(BaseModel):
     items: list[MediaIndexOut]
     candidates: list[MediaCandidate]
+
+
+class DeckTopicPageOut(BaseModel):
+    page: int
+    label: str = ""
+    module_id: str = ""
+    image_url: str = ""
+
+
+class DeckTopicOut(BaseModel):
+    id: int
+    sort_order: int = 0
+    title: str = ""
+    pages: list[int] = []
+    page_items: list[DeckTopicPageOut] = []
+    summary: str = ""
+    module_ids: str = ""
+    vision: str = ""
+    vision_hash: str = ""
+    indexed_vision_hash: str = ""
+    recommended_at: datetime | None = None
+    vision_frozen: bool = False
+    status: str = "draft"
+    stale: bool = False
+    source_hash: str = ""
+    job_status: str = ""
+    job_stage: str = ""
+    job_error: str = ""
+    job_type: str = ""
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    context_index: str = ""
+    recommendations: MediaRecommendations = MediaRecommendations()
+    feedback: MediaFeedback = MediaFeedback()
+
+
+class DeckTopicListOut(BaseModel):
+    items: list[DeckTopicOut]
+    asset_id: int = 0
+    asset_title: str = ""
+    job_status: str = ""
+    job_stage: str = ""
+    job_error: str = ""
+    job_type: str = ""

@@ -244,7 +244,8 @@ class PrepareMediaTests(unittest.TestCase):
                             visual_description="Students walk through campus.",
                         ),
                     ):
-                        prepared = prepare_media(db, 4)
+                        with mock.patch("backend.media_index.delete_file"):
+                            prepared = prepare_media(db, 4)
         sync.assert_called_once_with(asset)
         self.assertEqual(prepared.transcript, "Welcome to campus.")
         self.assertEqual(prepared.visual_description, "Students walk through campus.")
