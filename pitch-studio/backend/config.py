@@ -8,7 +8,9 @@ PITCH_STUDIO_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = PITCH_STUDIO_ROOT / "data"
 FILES_DIR = DATA_DIR / "files"
 REPO_ROOT = PITCH_STUDIO_ROOT.parent
-DEFAULT_XLSX = REPO_ROOT / "One Company - One Story (1).xlsx"
+DEFAULT_XLSX = REPO_ROOT / "One Company - One Story (2).xlsx"
+if not DEFAULT_XLSX.exists():
+    DEFAULT_XLSX = REPO_ROOT / "One Company - One Story (1).xlsx"
 if not DEFAULT_XLSX.exists():
     DEFAULT_XLSX = REPO_ROOT / "One Company - One Story.xlsx"
 

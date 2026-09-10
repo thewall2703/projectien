@@ -103,6 +103,7 @@ def main() -> int:
                 "backend.tests.test_media_index",
                 "backend.tests.test_worker",
                 "backend.tests.test_thumbnails",
+                "backend.tests.test_seed",
                 "backend.tests.test_database",
                 "backend.tests.test_youtube_apify",
             ],

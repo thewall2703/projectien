@@ -261,13 +261,27 @@ def _asset_sheet_rows(path: Path) -> list[list[tuple[str, str]]]:
     try:
         sheet = workbook["Videos  Photos  Reports"]
         rows: list[list[tuple[str, str]]] = []
-        for row in sheet.iter_rows(min_row=2, max_col=3):
-            cells: list[tuple[str, str]] = []
-            for cell in row:
+        for row in sheet.iter_rows(min_row=2, max_col=5):
+            drive_video, photo, report = row[1], row[3], row[4]
+
+            video_title = "" if drive_video.value is None else str(drive_video.value).strip()
+            video_link = (
+                str(drive_video.hyperlink.target).strip()
+                if drive_video.hyperlink and drive_video.hyperlink.target
+                else ""
+            )
+            if "drive.google.com" not in video_link.lower() and "docs.google.com" not in video_link.lower():
+                video_title = ""
+                video_link = ""
+
+            cells = [(video_title, video_link)]
+            for cell in (photo, report):
                 title = "" if cell.value is None else str(cell.value).strip()
-                link = ""
-                if cell.hyperlink and cell.hyperlink.target:
-                    link = str(cell.hyperlink.target).strip()
+                link = (
+                    str(cell.hyperlink.target).strip()
+                    if cell.hyperlink and cell.hyperlink.target
+                    else ""
+                )
                 cells.append((title, link))
             rows.append(cells)
         return rows
