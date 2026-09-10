@@ -41,6 +41,7 @@ PREVIEW_FILE_MAX_BYTES = 700 * 1024 * 1024
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp"}
 VIDEO_SUFFIXES = {".mp4", ".webm", ".mov", ".mkv"}
 YOUTUBE_FILE_MAX_BYTES = 5 * 1024 * 1024 * 1024
+DRIVE_FILE_MAX_BYTES = 5 * 1024 * 1024 * 1024
 
 
 def classify_link(url: str) -> str:
@@ -261,35 +262,44 @@ def _drive_creds():
     raise RuntimeError("Drive OAuth token expired. Refresh it via the transcription app.")
 
 
-def _read_limited(response, name: str, limit: int = 700 * 1024 * 1024) -> bytes:
-    chunks: list[bytes] = []
+def _stream_limited(
+    response,
+    destination: Path,
+    name: str,
+    limit: int = DRIVE_FILE_MAX_BYTES,
+) -> None:
+    content_length = int(response.headers.get("content-length") or 0)
+    if content_length > limit:
+        raise RuntimeError(f"{name} exceeds {limit // (1024 * 1024)} MB")
     total = 0
-    for chunk in response.iter_content(chunk_size=1024 * 1024):
-        if not chunk:
-            continue
-        chunks.append(chunk)
-        total += len(chunk)
-        if total > limit:
-            raise RuntimeError(f"{name} exceeds {limit // (1024 * 1024)} MB")
+    with destination.open("wb") as handle:
+        for chunk in response.iter_content(chunk_size=1024 * 1024):
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > limit:
+                raise RuntimeError(f"{name} exceeds {limit // (1024 * 1024)} MB")
+            handle.write(chunk)
     if total == 0:
         raise RuntimeError(f"Empty download for {name}")
-    return b"".join(chunks)
 
 
-def _download_public_drive(file_id: str) -> tuple[bytes, str]:
+def _download_public_drive(file_id: str, destination: Path) -> tuple[str, str]:
     from drive_auth import get_public_file_metadata, open_public_drive_stream
 
     meta = get_public_file_metadata(file_id, timeout=15)
     name = meta.get("name") or f"{file_id}.pdf"
     response, session = open_public_drive_stream(file_id, timeout=30)
     try:
-        return _read_limited(response, name), name
+        content_type = response.headers.get("content-type", "")
+        _stream_limited(response, destination, name)
+        return name, content_type
     finally:
         response.close()
         session.close()
 
 
-def _download_oauth_drive(file_id: str) -> tuple[bytes, str, str]:
+def _download_oauth_drive(file_id: str, destination: Path) -> tuple[str, str]:
     from google.auth.transport.requests import AuthorizedSession
 
     from drive_auth import build_drive_service, get_file_metadata
@@ -311,7 +321,8 @@ def _download_oauth_drive(file_id: str) -> tuple[bytes, str, str]:
         )
         if response.status_code >= 400:
             raise RuntimeError(f"OAuth Drive download failed ({response.status_code}) for {name}")
-        return _read_limited(response, name), name, mime
+        _stream_limited(response, destination, name)
+        return name, mime
     finally:
         session.close()
 
@@ -321,20 +332,25 @@ def sync_drive_file(asset: Asset, file_id: str | None = None) -> None:
     if not file_id:
         raise RuntimeError(f"Could not parse Drive file id from {asset.source_url}")
     errors: list[str] = []
-    try:
-        data, name = _download_public_drive(file_id)
-        _store_bytes(asset, data, name, _content_type(name, "", asset.source_url), asset.source_url)
-        return
-    except Exception as exc:  # noqa: BLE001
-        errors.append(f"public: {exc}")
-        print(f"  public download failed for {asset.title}: {exc}", flush=True)
-    print(f"  trying OAuth download for {asset.title}", flush=True)
-    try:
-        data, name, mime = _download_oauth_drive(file_id)
-        _store_bytes(asset, data, name, _content_type(name, mime, asset.source_url), asset.source_url)
-    except Exception as exc:  # noqa: BLE001
-        errors.append(f"oauth: {exc}")
-        raise RuntimeError("; ".join(errors)) from exc
+    with tempfile.TemporaryDirectory(prefix=f"pitch-drive-{asset.id}-") as temp_dir:
+        destination = Path(temp_dir) / "download"
+        try:
+            name, header = _download_public_drive(file_id, destination)
+            content_type = _content_type(name, header, asset.source_url)
+            _store_path(asset, destination, name, content_type)
+            return
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"public: {exc}")
+            print(f"  public download failed for {asset.title}: {exc}", flush=True)
+        destination.unlink(missing_ok=True)
+        print(f"  trying OAuth download for {asset.title}", flush=True)
+        try:
+            name, mime = _download_oauth_drive(file_id, destination)
+            content_type = _content_type(name, mime, asset.source_url)
+            _store_path(asset, destination, name, content_type)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"oauth: {exc}")
+            raise RuntimeError("; ".join(errors)) from exc
 
 
 def _list_folder_page(service, folder_id: str) -> list[dict]:
