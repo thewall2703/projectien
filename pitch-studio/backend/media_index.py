@@ -263,8 +263,15 @@ def build_recommendation_messages(
     recipe_options: list[RecipeOption],
     feedback: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
-    extracted = transcript.strip() if kind == "video" else visual_description.strip()
-    extracted_label = "Transcript" if kind == "video" else "Visual description"
+    if kind == "video":
+        extracted = (
+            f"Audio transcript:\n{transcript.strip() or '(none)'}\n\n"
+            f"Visual narrative and relevance:\n{visual_description.strip() or '(none)'}"
+        )
+        extracted_label = "Combined video analysis"
+    else:
+        extracted = visual_description.strip()
+        extracted_label = "Visual description"
     system = (
         "You match Masters' Union media (a video or a photo set) to pitch personas. "
         "Combine the extracted content with the human vision note. "
@@ -485,10 +492,13 @@ def require_editable(row: MediaIndex) -> None:
 
 def build_context_index(row: MediaIndex) -> str:
     parts: list[str] = []
-    extracted = row.transcript.strip() if row.media_kind == "video" else row.visual_description.strip()
-    if extracted:
-        label = "Transcript" if row.media_kind == "video" else "Visual description"
-        parts.append(f"{label}:\n{extracted}")
+    if row.media_kind == "video":
+        if row.transcript.strip():
+            parts.append(f"Audio transcript:\n{row.transcript.strip()}")
+        if row.visual_description.strip():
+            parts.append(f"Visual narrative and relevance:\n{row.visual_description.strip()}")
+    elif row.visual_description.strip():
+        parts.append(f"Visual description:\n{row.visual_description.strip()}")
     if (row.vision or "").strip():
         parts.append(f"Vision:\n{row.vision.strip()}")
     return "\n\n".join(parts)
@@ -496,7 +506,7 @@ def build_context_index(row: MediaIndex) -> str:
 
 def has_extract(row: MediaIndex) -> bool:
     if row.media_kind == "video":
-        return bool(row.transcript.strip())
+        return bool(row.transcript.strip() or row.visual_description.strip())
     return bool(row.visual_description.strip())
 
 
@@ -582,7 +592,7 @@ def get_or_create_media_index(db: Session, asset_id: int) -> MediaIndex:
 def prepare_media(db: Session, asset_id: int, on_stage: StageCallback | None = None) -> MediaIndex:
     from backend.sync_assets import classify_link, sync_one, sync_youtube
     from backend.thumbnails import ensure_thumbnails
-    from backend.transcription import transcribe_asset
+    from backend.transcription import analyze_video_asset
 
     row = get_or_create_media_index(db, asset_id)
     require_editable(row)
@@ -602,11 +612,13 @@ def prepare_media(db: Session, asset_id: int, on_stage: StageCallback | None = N
             sync_one(db, asset)
         else:
             _emit_stage(on_stage, "Video already stored")
-        if not row.transcript.strip():
+        if not row.transcript.strip() or not row.visual_description.strip():
             if asset.file_status != "stored" or not asset.file_key:
                 detail = asset.sync_error or "Video download did not complete"
                 raise MediaIndexError(detail)
-            row.transcript = normalize_transcript(transcribe_asset(asset, on_stage))
+            analysis = analyze_video_asset(asset, row.transcript, on_stage)
+            row.transcript = normalize_transcript(analysis.transcript)
+            row.visual_description = analysis.visual_description
     else:
         _emit_stage(on_stage, "Syncing photo folder…")
         sync_one(db, asset)

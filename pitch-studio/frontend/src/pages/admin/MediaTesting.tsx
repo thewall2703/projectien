@@ -24,7 +24,7 @@ function youtubeEmbed(url: string): string | null {
 }
 
 function videoPrepareLabel(fileStatus: string) {
-  return fileStatus === "stored" ? "Transcribe & index video" : "Download, transcribe & index";
+  return fileStatus === "stored" ? "Analyze & index video" : "Download, analyze & index";
 }
 
 function isActiveJob(row?: Pick<MediaIndexRow, "job_status"> | null) {
@@ -346,7 +346,8 @@ export default function MediaTesting() {
                   <StatusBadge status={displayStatus(current)} />
                 </div>
                 <MediaPreview row={current} onSync={() => prepare(current.asset_id)} busy={preparing} />
-                {(current.media_kind === "video" && !current.transcript.trim()) ||
+                {(current.media_kind === "video" &&
+                  (!current.transcript.trim() || !current.visual_description.trim())) ||
                 (current.media_kind === "photo" && current.image_assets.length === 0) ? (
                   <Button variant="accent" loading={preparing} onClick={() => prepare(current.asset_id)}>
                     {current.media_kind === "photo"
@@ -364,34 +365,43 @@ export default function MediaTesting() {
               </div>
 
               {current.media_kind === "video" ? (
-                <div className="card space-y-3 p-6">
-                  <h3 className="font-display text-xl">Transcript</h3>
-                  <textarea
-                    className="field min-h-40"
-                    value={transcriptDraft}
-                    disabled={current.vision_frozen}
-                    onChange={(event) => setTranscriptDraft(event.target.value)}
-                  />
-                  <div className="flex flex-wrap items-center gap-3">
-                    <Button loading={busy === "transcript"} disabled={current.vision_frozen} onClick={saveTranscript}>
-                      Save transcript
-                    </Button>
-                    <label className={`btn cursor-pointer ${current.vision_frozen ? "opacity-50" : ""}`}>
-                      Upload .txt / .json
-                      <input
-                        className="hidden"
-                        type="file"
-                        accept=".txt,.json,text/plain,application/json"
-                        disabled={current.vision_frozen}
-                        onChange={(event) => {
-                          const file = event.target.files?.[0];
-                          if (file) void loadTranscriptFile(file);
-                          event.target.value = "";
-                        }}
-                      />
-                    </label>
+                <>
+                  <div className="card space-y-3 p-6">
+                    <h3 className="font-display text-xl">Audio transcript</h3>
+                    <textarea
+                      className="field min-h-40"
+                      value={transcriptDraft}
+                      disabled={current.vision_frozen}
+                      onChange={(event) => setTranscriptDraft(event.target.value)}
+                    />
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Button loading={busy === "transcript"} disabled={current.vision_frozen} onClick={saveTranscript}>
+                        Save transcript
+                      </Button>
+                      <label className={`btn cursor-pointer ${current.vision_frozen ? "opacity-50" : ""}`}>
+                        Upload .txt / .json
+                        <input
+                          className="hidden"
+                          type="file"
+                          accept=".txt,.json,text/plain,application/json"
+                          disabled={current.vision_frozen}
+                          onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            if (file) void loadTranscriptFile(file);
+                            event.target.value = "";
+                          }}
+                        />
+                      </label>
+                    </div>
                   </div>
-                </div>
+                  <div className="card space-y-3 p-6">
+                    <h3 className="font-display text-xl">Visual narrative & relevance</h3>
+                    <p className="whitespace-pre-wrap text-sm leading-6">
+                      {current.visual_description ||
+                        "No visual analysis yet. Prepare the video to analyze representative frames."}
+                    </p>
+                  </div>
+                </>
               ) : (
                 <div className="card space-y-3 p-6">
                   <h3 className="font-display text-xl">Visual description</h3>
@@ -565,8 +575,8 @@ function PrepareProgress({
           {kind === "photo"
             ? "Syncing the folder, then describing the images. Login and other pages stay available while this runs."
             : isYoutube
-              ? "Downloading the YouTube source if needed, then creating its transcript."
-              : "Downloading the Drive video if needed, extracting its audio, then creating its transcript."}
+              ? "Downloading the YouTube source if needed, then analyzing its audio and representative frames."
+              : "Downloading the Drive video if needed, then analyzing its audio, visuals, and story relevance."}
         </p>
       </div>
     </div>

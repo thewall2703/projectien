@@ -187,10 +187,22 @@ class ContextIndexTests(unittest.TestCase):
             vision="Show this to families deciding on a school.",
         )
         context = build_context_index(row)
-        self.assertIn("Transcript:", context)
+        self.assertIn("Audio transcript:", context)
         self.assertIn("Welcome to campus.", context)
         self.assertIn("Vision:", context)
         self.assertIn("families deciding", context)
+
+    def test_combines_video_audio_and_visual_context(self):
+        row = SimpleNamespace(
+            media_kind="video",
+            transcript="[No spoken audio detected in this video.]",
+            visual_description="Students collaborate in a classroom and celebrate at graduation.",
+            vision="",
+        )
+        context = build_context_index(row)
+        self.assertIn("Audio transcript:", context)
+        self.assertIn("Visual narrative and relevance:", context)
+        self.assertIn("graduation", context)
 
 
 class PrepareMediaTests(unittest.TestCase):
@@ -215,15 +227,29 @@ class PrepareMediaTests(unittest.TestCase):
         )
         db = mock.Mock()
         db.get.return_value = asset
+
+        def sync_youtube(stored_asset):
+            stored_asset.file_status = "stored"
+            stored_asset.file_key = "videos/campus.mp4"
+            return "Welcome to campus."
+
         with mock.patch("backend.media_index.get_or_create_media_index", return_value=row):
-            with mock.patch("backend.sync_assets.sync_youtube", return_value="Welcome to campus.") as sync:
+            with mock.patch("backend.sync_assets.sync_youtube", side_effect=sync_youtube) as sync:
                 with mock.patch("backend.sync_assets.classify_link", return_value="youtube"):
-                    prepared = prepare_media(db, 4)
+                    with mock.patch(
+                        "backend.transcription.analyze_video_asset",
+                        return_value=SimpleNamespace(
+                            transcript="Welcome to campus.",
+                            visual_description="Students walk through campus.",
+                        ),
+                    ):
+                        prepared = prepare_media(db, 4)
         sync.assert_called_once_with(asset)
         self.assertEqual(prepared.transcript, "Welcome to campus.")
+        self.assertEqual(prepared.visual_description, "Students walk through campus.")
         db.commit.assert_called()
 
-    def test_transcribes_already_stored_drive_video(self):
+    def test_analyzes_already_stored_drive_video(self):
         asset = SimpleNamespace(
             id=8,
             type="video",
@@ -248,12 +274,16 @@ class PrepareMediaTests(unittest.TestCase):
         with mock.patch("backend.media_index.get_or_create_media_index", return_value=row):
             with mock.patch("backend.sync_assets.classify_link", return_value="drive_file"):
                 with mock.patch(
-                    "backend.transcription.transcribe_asset",
-                    return_value="Welcome to the campus.",
-                ) as transcribe:
+                    "backend.transcription.analyze_video_asset",
+                    return_value=SimpleNamespace(
+                        transcript="Welcome to the campus.",
+                        visual_description="A guided campus tour.",
+                    ),
+                ) as analyze:
                     prepared = prepare_media(db, 8)
-        transcribe.assert_called_once_with(asset, None)
+        analyze.assert_called_once_with(asset, "", None)
         self.assertEqual(prepared.transcript, "Welcome to the campus.")
+        self.assertEqual(prepared.visual_description, "A guided campus tour.")
         db.commit.assert_called()
 
 
