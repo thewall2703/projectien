@@ -25,6 +25,7 @@ MAX_VOLUME_RE = re.compile(r"max_volume:\s*(-?(?:\d+(?:\.\d+)?|inf))\s*dB", re.I
 SILENT_TRANSCRIPT = "[No spoken audio detected in this video.]"
 DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
 FRAME_COUNT = 10
+MAX_VISUAL_DESCRIPTION_CHARS = 500
 
 
 class TranscriptionError(RuntimeError):
@@ -168,14 +169,34 @@ def extract_video_frames(video_path: Path, frames_dir: Path, count: int = FRAME_
 def describe_video_frames(frames: list[bytes], transcript: str) -> str:
     prompt = (
         "These are representative frames sampled in chronological order from a Masters' Union "
-        "video. Explain what happens across the video, including the setting, people, actions, "
-        "events, visible text or branding, emotional tone, and story arc. Then explain why the "
-        "video is relevant as communications or marketing material and what audiences or messages "
-        "it best supports. Combine the visuals with the audio transcript below; do not assume the "
-        "transcript alone describes the video. Be concrete and concise.\n\n"
+        "video. Summarize what happens, the overall story and tone, important visible branding, "
+        "and why the video is relevant as communications or marketing material. Combine the "
+        "visuals with the audio transcript; do not assume audio alone describes the video. "
+        "Return exactly one plain-text paragraph with no Markdown, headings, bullets, or labels. "
+        "The complete response must be at most 500 characters. Prioritize the overall narrative "
+        "and relevance over listing every scene.\n\n"
         f"Audio transcript:\n{transcript.strip() or SILENT_TRANSCRIPT}"
     )
-    return chat_text_multimodal(prompt, frames, timeout=300.0)
+    return normalize_visual_description(chat_text_multimodal(prompt, frames, timeout=300.0))
+
+
+def normalize_visual_description(text: str) -> str:
+    lines: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        line = re.sub(r"^(?:[-*+]|\d+[.)])\s+", "", line)
+        line = line.replace("**", "").replace("__", "").replace("`", "")
+        lines.append(line)
+    plain = re.sub(r"\s+", " ", " ".join(lines)).strip()
+    if len(plain) <= MAX_VISUAL_DESCRIPTION_CHARS:
+        return plain
+    clipped = plain[: MAX_VISUAL_DESCRIPTION_CHARS + 1]
+    boundary = max(clipped.rfind(". "), clipped.rfind("! "), clipped.rfind("? "))
+    if boundary >= 300:
+        return clipped[: boundary + 1].strip()
+    return clipped[:MAX_VISUAL_DESCRIPTION_CHARS].rsplit(" ", 1)[0].rstrip(" ,;:-") + "…"
 
 
 def transcribe_audio(audio_path: Path, timeout: float = 600.0) -> str:
