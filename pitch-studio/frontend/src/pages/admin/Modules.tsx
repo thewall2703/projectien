@@ -1,11 +1,14 @@
 import { useState } from "react";
 import { api } from "../../api";
+import { Button } from "../../components/ui";
 import DataTable from "./DataTable";
 
 export default function Modules() {
   const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
   const reseed = async () => {
-    setMessage("Seeding…");
+    setBusy(true);
+    setMessage("");
     try {
       const counts = (await api.reseed()) as {
         modules: number;
@@ -19,6 +22,8 @@ export default function Modules() {
       );
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Reseed failed");
+    } finally {
+      setBusy(false);
     }
   };
   return (
@@ -26,9 +31,9 @@ export default function Modules() {
       title="Modules"
       path="/api/admin/modules"
       extra={
-        <button className="rounded border border-ink/15 px-3 py-2 text-sm" type="button" onClick={reseed}>
+        <Button loading={busy} onClick={reseed}>
           {message || "Reseed from workbook"}
-        </button>
+        </Button>
       }
       fields={[
         { key: "id", label: "ID" },

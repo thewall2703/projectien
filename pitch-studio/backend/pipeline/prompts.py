@@ -8,6 +8,10 @@ from backend.pipeline.validator import budget_range, count_script_words
 from backend.schemas import AUDIENCE_CLUSTERS, CHANNELS, DURATIONS, INTENTS, TEMPERATURES
 from backend.transcripts import format_founder_line
 
+UNIVERSITY_STATUS_LINE = (
+    "Masters' Union is becoming a university, following approval from the Government of Haryana."
+)
+
 
 def _format_report_passages(passages: list[dict] | None) -> str:
     if not passages:
@@ -27,6 +31,43 @@ def _axis_line(options, code: str) -> str:
     if not match:
         return code
     return f"{match.code} — {match.label}: {match.description}"
+
+
+_DURATION_FRAMEWORK = {
+    "T0": (
+        "30–60 seconds: Be precise, specific, and factual. Make one clear point, "
+        "support it with one memorable proof, and ask for one next step. Do not attempt a full story."
+    ),
+    "T1": (
+        "2 minutes: Establish the listener's need or tension, then position Masters' Union as the "
+        "specific solution. Use only the strongest proof needed to make that connection credible."
+    ),
+    "T2": (
+        "5 minutes: Build a story. Infer the audience's likely emotional state from the audience, "
+        "intent, temperature, channel, and context; meet them there without naming or diagnosing it. "
+        "Choose the information, example, or approved asset they will be most receptive to, and use "
+        "it to create genuine desire for Masters' Union."
+    ),
+    "T3": (
+        "10 minutes: Use the same audience-aware story arc as the 5-minute pitch, with room for richer "
+        "storytelling. Address the most relevant FAQs or objection, and use concrete anecdotes or "
+        "student case studies. Depth must come from specificity, not repetition."
+    ),
+    "T4": (
+        "30 minutes: Extend the 10-minute audience-aware story into a deck-led conversation. Let the "
+        "approved assets carry evidence and structure; connect them with anecdotes, relevant FAQs, "
+        "and pauses for dialogue. Do not turn the script into a continuous lecture."
+    ),
+    "T5": (
+        "90 minutes: Treat this as a guided campus experience, not a 90-minute monologue. Read the "
+        "audience's emotional state, use each physical stop or approved asset as proof, tell relevant "
+        "student stories, and answer FAQs as they naturally arise."
+    ),
+}
+
+
+def duration_framework(duration: str) -> str:
+    return _DURATION_FRAMEWORK.get(duration, _DURATION_FRAMEWORK["T2"])
 
 
 def _format_modules(modules: list[Module], sequence: list[str]) -> str:
@@ -53,7 +94,8 @@ def _format_facts(facts: list[LockedFact], sequence: list[str]) -> tuple[str, st
     for fact in facts:
         ids = {part.strip() for part in (fact.module_ids or "").split(",") if part.strip()}
         relevant = not ids or bool(ids & sequence_set)
-        line = f"- {fact.fact}: {fact.value} (source: {fact.source})"
+        value = UNIVERSITY_STATUS_LINE if fact.fact.strip().lower() == "university status" else fact.value
+        line = f"- {fact.fact}: {value} (source: {fact.source})"
         if fact.status == "verified" and relevant:
             locked.append(line)
         elif fact.status in {"conflict", "do_not_use", "needs_source", "needs_decision"}:
@@ -112,6 +154,15 @@ def script_messages(
         "- Borrow the VOICE, not the sentences. Only reproduce his words as a short, clearly-attributed quote "
         "to Pratham Mittal. Never present a number or claim from that block as fact — facts come from LOCKED "
         "and REPORT EVIDENCE only.\n\n"
+        "IMPACT MUST BE PROPORTIONAL TO TIME:\n"
+        "- 30–60 seconds: precise, specific, factual; one point and one proof.\n"
+        "- 2 minutes: highlight the listener's need and position Masters' Union as the solution.\n"
+        "- 5 minutes: build a story; read the audience's likely emotional state, match it to the information "
+        "or approved asset they will receive best, and create desire for Masters' Union.\n"
+        "- 10 minutes: use the same audience-aware story with richer storytelling, relevant FAQs, anecdotes, "
+        "and student case studies.\n"
+        "- Longer sessions extend the 10-minute approach through dialogue, assets, and physical experience — "
+        "never through padding or repetition.\n\n"
         "HARD FACTUAL RULES:\n"
         "- Stay inside the hard word range given in the user message.\n"
         "- LOCKED facts must be used verbatim where relevant.\n"
@@ -134,6 +185,7 @@ def script_messages(
         f"Intent: {_axis_line(INTENTS, intent)}\n"
         f"Temperature: {_axis_line(TEMPERATURES, temperature)}\n"
         f"Context note: {context_note or '(none)'}\n"
+        f"Duration strategy — follow this as the governing narrative brief:\n{duration_framework(duration)}\n"
         f"Word budget: {word_budget} words. Hard range: {low}-{high} words.\n"
         f"Module sequence: {' > '.join(sequence)}\n\n"
         f"FOUNDER VOICE — this is the exact tone, cadence, and vocabulary to write the whole pitch in "

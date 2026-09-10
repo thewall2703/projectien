@@ -1,0 +1,228 @@
+from __future__ import annotations
+
+import unittest
+from types import SimpleNamespace
+from unittest import mock
+
+from backend.media_index import (
+    build_context_index,
+    build_recommendation_messages,
+    derive_status,
+    enqueue_job,
+    is_stale,
+    normalize_transcript,
+    prepare_media,
+    recommend,
+    sha256_text,
+)
+from backend.schemas import RecipeOption
+
+
+def recipe(
+    ref: str = "A1-1",
+    label: str = "School student",
+    cluster: str = "A",
+    duration: str = "T1",
+    channel: str = "CH3",
+    intent: str = "I2",
+) -> RecipeOption:
+    return RecipeOption(
+        ref=ref,
+        audience_label=label,
+        audience_cluster=cluster,
+        duration=duration,
+        channel=channel,
+        intent=intent,
+        module_sequence="M01>M14",
+    )
+
+
+class HashAndTranscriptTests(unittest.TestCase):
+    def test_sha256_is_stable(self):
+        self.assertEqual(sha256_text("campus walk"), sha256_text("campus walk"))
+        self.assertNotEqual(sha256_text("campus walk"), sha256_text("campus walk "))
+
+    def test_parakeet_json_uses_text_field(self):
+        raw = '{"text": "Welcome to campus.", "sentences": [{"text": "Welcome to campus."}]}'
+        self.assertEqual(normalize_transcript(raw), "Welcome to campus.")
+
+    def test_plain_transcript_is_unchanged(self):
+        self.assertEqual(normalize_transcript("  spoken words  "), "  spoken words  ")
+
+
+class StaleFlagTests(unittest.TestCase):
+    def test_stale_when_vision_changes(self):
+        row = SimpleNamespace(
+            vision="show to demand",
+            vision_hash=sha256_text("show to demand"),
+            indexed_vision_hash=sha256_text("old vision"),
+            recommendations_json='{"items":[]}',
+        )
+        self.assertTrue(is_stale(row))
+        row.indexed_vision_hash = row.vision_hash
+        self.assertFalse(is_stale(row))
+
+
+class RecommendationPromptTests(unittest.TestCase):
+    def test_prompt_includes_axes_persona_vision_and_feedback(self):
+        messages = build_recommendation_messages(
+            "video",
+            "This is the campus film.",
+            "",
+            "show this to families",
+            [recipe()],
+            {
+                "verdicts": {"A1-1": {"verdict": "yes", "note": "right audience"}},
+                "added": [{"recipe_ref": "F5-1", "note": "alumni should see it"}],
+            },
+        )
+        user = messages[1]["content"]
+        self.assertIn("Demand", user)
+        self.assertIn("A1-1", user)
+        self.assertIn("School student", user)
+        self.assertIn("show this to families", user)
+        self.assertIn("This is the campus film.", user)
+        self.assertIn("Human marked YES for A1-1", user)
+        self.assertIn("ALSO applies to F5-1", user)
+
+
+class RecommendValidationTests(unittest.TestCase):
+    def test_drops_unknown_refs_and_fills_axes(self):
+        options = [recipe()]
+        row = SimpleNamespace(
+            media_kind="video",
+            transcript="hello campus",
+            visual_description="",
+            vision="show to demand",
+            vision_hash="abc",
+            feedback_json="",
+        )
+
+        def fake_chat(_messages):
+            return {
+                "items": [
+                    {"recipe_ref": "A1-1", "temperatures": ["X2", "NOPE"], "confidence": 0.9, "rationale": "fit"},
+                    {"recipe_ref": "NOPE", "temperatures": ["X1"], "confidence": 0.8, "rationale": "bad"},
+                ]
+            }
+
+        with mock.patch("backend.media_index.list_recipe_options", return_value=options):
+            with mock.patch("backend.media_index.chat_json", side_effect=fake_chat):
+                result = recommend(mock.Mock(), row)
+        self.assertEqual(len(result["items"]), 1)
+        item = result["items"][0]
+        self.assertEqual(item["recipe_ref"], "A1-1")
+        self.assertEqual(item["audience_cluster"], "A")
+        self.assertEqual(item["duration"], "T1")
+        self.assertEqual(item["temperatures"], ["X2"])
+        self.assertEqual(result["vision_hash"], "abc")
+
+
+class DeriveStatusTests(unittest.TestCase):
+    def test_ready_when_extract_exists_and_not_indexed(self):
+        row = SimpleNamespace(
+            status="draft",
+            media_kind="photo",
+            transcript="",
+            visual_description="Politicians visiting campus.",
+        )
+        self.assertEqual(derive_status(row), "ready")
+
+    def test_draft_when_no_extract(self):
+        row = SimpleNamespace(status="draft", media_kind="video", transcript="", visual_description="")
+        self.assertEqual(derive_status(row), "draft")
+
+    def test_indexed_stays_indexed(self):
+        row = SimpleNamespace(
+            status="indexed",
+            media_kind="video",
+            transcript="Welcome to campus.",
+            visual_description="",
+        )
+        self.assertEqual(derive_status(row), "indexed")
+
+    def test_processing_when_job_active(self):
+        row = SimpleNamespace(
+            status="draft",
+            media_kind="video",
+            transcript="",
+            visual_description="",
+        )
+        self.assertEqual(derive_status(row, SimpleNamespace(status="queued")), "processing")
+        self.assertEqual(derive_status(row, SimpleNamespace(status="running")), "processing")
+        self.assertEqual(derive_status(row, SimpleNamespace(status="done")), "draft")
+
+
+class EnqueueJobTests(unittest.TestCase):
+    def test_creates_queued_job(self):
+        db = mock.Mock()
+        db.query.return_value.filter.return_value.order_by.return_value.first.return_value = None
+        with mock.patch("backend.media_index._ensure_media_schema"):
+            job = enqueue_job(db, "media_prepare", 3, 9)
+        db.add.assert_called()
+        added = db.add.call_args[0][0]
+        self.assertEqual(added.job_type, "media_prepare")
+        self.assertEqual(added.status, "queued")
+        self.assertEqual(added.media_id, 3)
+        self.assertEqual(added.asset_id, 9)
+        db.commit.assert_called()
+        self.assertIs(job, added)
+
+    def test_returns_existing_active_job(self):
+        existing = SimpleNamespace(id=9, status="running", media_id=1)
+        db = mock.Mock()
+        db.query.return_value.filter.return_value.order_by.return_value.first.return_value = existing
+        with mock.patch("backend.media_index._ensure_media_schema"):
+            job = enqueue_job(db, "media_prepare", 1, 4)
+        self.assertIs(job, existing)
+        db.add.assert_not_called()
+
+
+class ContextIndexTests(unittest.TestCase):
+    def test_attaches_vision_to_transcript(self):
+        row = SimpleNamespace(
+            media_kind="video",
+            transcript="Welcome to campus.",
+            visual_description="",
+            vision="Show this to families deciding on a school.",
+        )
+        context = build_context_index(row)
+        self.assertIn("Transcript:", context)
+        self.assertIn("Welcome to campus.", context)
+        self.assertIn("Vision:", context)
+        self.assertIn("families deciding", context)
+
+
+class PrepareMediaTests(unittest.TestCase):
+    def test_downloads_transcribes_and_stores_on_prepare(self):
+        asset = SimpleNamespace(
+            id=4,
+            type="video",
+            source_url="https://www.youtube.com/watch?v=abc",
+            file_status="pending",
+            file_key="",
+        )
+        row = SimpleNamespace(
+            asset_id=4,
+            media_kind="video",
+            transcript="",
+            visual_description="",
+            vision="",
+            vision_frozen=False,
+            vision_hash="",
+            recommendations_json="",
+            status="draft",
+        )
+        db = mock.Mock()
+        db.get.return_value = asset
+        with mock.patch("backend.media_index.get_or_create_media_index", return_value=row):
+            with mock.patch("backend.sync_assets.sync_youtube", return_value="Welcome to campus.") as sync:
+                with mock.patch("backend.sync_assets.classify_link", return_value="youtube"):
+                    prepared = prepare_media(db, 4)
+        sync.assert_called_once_with(asset)
+        self.assertEqual(prepared.transcript, "Welcome to campus.")
+        db.commit.assert_called()
+
+
+if __name__ == "__main__":
+    unittest.main()

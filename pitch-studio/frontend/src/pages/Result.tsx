@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../api";
 import DeckPreview from "../components/DeckPreview";
+import { ErrorBanner, Skeleton, Spinner } from "../components/ui";
 import { generationAxisLabels, personaLabel } from "../labels";
 import { formatModuleSequence, moduleName } from "../modules";
 import type { FactRow, Generation, RecipeOption } from "../types";
@@ -24,8 +25,10 @@ export default function Result() {
   const [generation, setGeneration] = useState<Generation | null>(null);
   const [recipes, setRecipes] = useState<RecipeOption[]>([]);
   const [facts, setFacts] = useState<FactRow[]>([]);
+  const [factsLoading, setFactsLoading] = useState(false);
   const [open, setOpen] = useState<number | null>(null);
   const [tab, setTab] = useState<(typeof TABS)[number]>("Deck");
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
     if (!id) return;
@@ -40,10 +43,14 @@ export default function Result() {
       }
       return data;
     };
-    tick();
+    tick().catch((err) => setLoadError(err instanceof Error ? err.message : "Failed to load generation"));
     const timer = window.setInterval(async () => {
-      const data = await tick();
-      if (data.status === "done" || data.status === "failed") {
+      try {
+        const data = await tick();
+        if (data.status === "done" || data.status === "failed") {
+          window.clearInterval(timer);
+        }
+      } catch {
         window.clearInterval(timer);
       }
     }, 2000);
@@ -59,7 +66,12 @@ export default function Result() {
 
   useEffect(() => {
     if (tab !== "Script" || !generation?.script || facts.length) return;
-    api.list<FactRow>("/api/admin/facts").then(setFacts).catch(() => setFacts([]));
+    setFactsLoading(true);
+    api
+      .list<FactRow>("/api/admin/facts")
+      .then(setFacts)
+      .catch(() => setFacts([]))
+      .finally(() => setFactsLoading(false));
   }, [tab, generation?.script, facts.length]);
 
   const factValues = useMemo(
@@ -67,7 +79,22 @@ export default function Result() {
     [facts],
   );
 
-  if (!generation) return <p className="text-muted">Loading generation…</p>;
+  if (!generation) {
+    return (
+      <div className="space-y-6">
+        <ErrorBanner message={loadError} />
+        <Skeleton className="h-4 w-24" />
+        <Skeleton className="h-10 w-72" />
+        <div className="grid gap-3 sm:grid-cols-2">
+          {Array.from({ length: 6 }).map((_, index) => (
+            <Skeleton key={index} className="h-12 w-full" />
+          ))}
+        </div>
+        <Skeleton className="h-1.5 w-full" />
+        <Skeleton className="aspect-[16/9] w-full" />
+      </div>
+    );
+  }
 
   const currentIndex = STEPS.indexOf(generation.status);
   const progress = generation.status === "failed" ? 100 : Math.max(8, ((currentIndex + 1) / STEPS.length) * 100);
@@ -138,6 +165,16 @@ export default function Result() {
         ))}
       </div>
 
+      {tab === "Script" && !generation.script && (
+        <p className="flex items-center gap-2 text-sm text-muted">
+          <Spinner /> Writing the script…
+        </p>
+      )}
+      {tab === "Script" && factsLoading && (
+        <p className="flex items-center gap-2 text-sm text-muted">
+          <Spinner /> Loading locked facts…
+        </p>
+      )}
       {tab === "Script" && generation.script && (
         <section className="space-y-6 animate-slide-up">
           {generation.script.sections.map((section) => (

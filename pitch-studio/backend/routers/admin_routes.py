@@ -11,16 +11,41 @@ from backend.auth import hash_password, require_admin
 from backend.config import DEFAULT_XLSX
 from backend.database import get_db
 from backend.extract import extract_asset
-from backend.recipe_cache import invalidate_recipe_cache
-from backend.models import Asset, FounderQuote, LockedFact, Module, Objection, Recipe, User
+from backend.media_index import (
+    JOB_DESCRIBE,
+    JOB_PREPARE,
+    MediaIndexError,
+    VALID_VERDICTS,
+    create_media_index,
+    enqueue_job,
+    get_or_create_media_index,
+    is_stale,
+    list_media_index,
+    normalize_transcript,
+    parse_feedback,
+    apply_recommendations,
+    has_extract,
+    require_editable,
+    serialize,
+    sha256_text,
+    touch,
+)
+from backend.models import Asset, FounderQuote, LockedFact, MediaIndex, Module, Objection, Recipe, User, utc_now
+from backend.pipeline.llm import LLMError
+from backend.recipe_cache import invalidate_recipe_cache, list_recipe_options
 from backend.schemas import (
+    AddUsecaseIn,
     AssetIn,
     AssetOut,
     ExtractResultOut,
     FactIn,
     FactOut,
+    FeedbackIn,
     FounderQuoteIn,
     FounderQuoteOut,
+    MediaIndexCreate,
+    MediaIndexListOut,
+    MediaIndexOut,
     ModuleIn,
     ModuleOut,
     ObjectionIn,
@@ -29,13 +54,15 @@ from backend.schemas import (
     RecipeOut,
     SeedCounts,
     SyncCounts,
+    TranscriptIn,
     TranscriptIngestCounts,
     UserCreate,
     UserOut,
     UserUpdate,
+    VisionIn,
 )
 from backend.seed import run_seed
-from backend.sync_assets import run_sync
+from backend.sync_assets import run_sync, sync_one
 from backend.transcripts import ingest_transcripts, quote_hash
 
 router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(require_admin)])
@@ -390,3 +417,227 @@ def extract_library_asset(
         chunk_count=len(payload.get("chunks") or []),
         extract_error=asset.extract_error,
     )
+
+
+def _media_error(exc: MediaIndexError) -> HTTPException:
+    message = str(exc)
+    lowered = message.lower()
+    if "not found" in lowered:
+        return HTTPException(status_code=404, detail=message)
+    if "already exists" in lowered or "frozen" in lowered:
+        return HTTPException(status_code=409, detail=message)
+    return HTTPException(status_code=400, detail=message)
+
+
+def _get_media_index(db: Session, media_id: int) -> MediaIndex:
+    item = db.get(MediaIndex, media_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Media index not found")
+    return item
+
+
+def _save_feedback(db: Session, item: MediaIndex, payload: dict[str, Any]) -> MediaIndexOut:
+    item.feedback_json = json.dumps(payload, ensure_ascii=False)
+    touch(item)
+    db.commit()
+    db.refresh(item)
+    return serialize(item, db)
+
+
+@router.post("/assets/{asset_id}/sync", response_model=AssetOut)
+def sync_library_asset(
+    asset_id: int,
+    force: bool = Query(default=False),
+    db: Session = Depends(get_db),
+) -> Asset:
+    asset = db.get(Asset, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    sync_one(db, asset, force=force)
+    db.commit()
+    db.refresh(asset)
+    return asset
+
+
+@router.get("/media-index", response_model=MediaIndexListOut)
+def list_media_indexes(db: Session = Depends(get_db)) -> MediaIndexListOut:
+    return list_media_index(db)
+
+
+@router.post("/media-index/prepare", response_model=MediaIndexOut)
+def prepare_media_index(payload: MediaIndexCreate, db: Session = Depends(get_db)) -> MediaIndexOut:
+    try:
+        item = get_or_create_media_index(db, payload.asset_id)
+        require_editable(item)
+        job = enqueue_job(db, JOB_PREPARE, item.id, payload.asset_id)
+    except MediaIndexError as exc:
+        raise _media_error(exc) from exc
+    return serialize(item, db, job)
+
+
+@router.post("/media-index", response_model=MediaIndexOut)
+def create_media_index_row(payload: MediaIndexCreate, db: Session = Depends(get_db)) -> MediaIndexOut:
+    try:
+        item = create_media_index(db, payload.asset_id)
+    except MediaIndexError as exc:
+        raise _media_error(exc) from exc
+    return serialize(item, db)
+
+
+@router.get("/media-index/{media_id}", response_model=MediaIndexOut)
+def get_media_index_row(media_id: int, db: Session = Depends(get_db)) -> MediaIndexOut:
+    return serialize(_get_media_index(db, media_id), db)
+
+
+@router.put("/media-index/{media_id}/transcript", response_model=MediaIndexOut)
+def save_media_transcript(
+    media_id: int,
+    payload: TranscriptIn,
+    db: Session = Depends(get_db),
+) -> MediaIndexOut:
+    item = _get_media_index(db, media_id)
+    try:
+        require_editable(item)
+    except MediaIndexError as exc:
+        raise _media_error(exc) from exc
+    if item.media_kind != "video":
+        raise HTTPException(status_code=400, detail="Transcripts apply to video assets")
+    item.transcript = normalize_transcript(payload.transcript)
+    touch(item)
+    db.commit()
+    db.refresh(item)
+    return serialize(item, db)
+
+
+@router.post("/media-index/{media_id}/describe", response_model=MediaIndexOut)
+def describe_media_images(media_id: int, db: Session = Depends(get_db)) -> MediaIndexOut:
+    item = _get_media_index(db, media_id)
+    try:
+        require_editable(item)
+    except MediaIndexError as exc:
+        raise _media_error(exc) from exc
+    if item.media_kind != "photo":
+        raise HTTPException(status_code=400, detail="Visual descriptions apply to photo sets")
+    job = enqueue_job(db, JOB_DESCRIBE, item.id, item.asset_id)
+    return serialize(item, db, job)
+
+
+@router.put("/media-index/{media_id}/vision", response_model=MediaIndexOut)
+def save_media_vision(
+    media_id: int,
+    payload: VisionIn,
+    db: Session = Depends(get_db),
+) -> MediaIndexOut:
+    item = _get_media_index(db, media_id)
+    try:
+        require_editable(item)
+    except MediaIndexError as exc:
+        raise _media_error(exc) from exc
+    item.vision = payload.vision
+    item.vision_hash = sha256_text(payload.vision)
+    if item.status == "frozen":
+        item.status = "indexed"
+    if item.vision.strip() and has_extract(item):
+        try:
+            apply_recommendations(db, item)
+        except LLMError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+    else:
+        touch(item)
+    db.commit()
+    db.refresh(item)
+    return serialize(item, db)
+
+
+@router.post("/media-index/{media_id}/reindex", response_model=MediaIndexOut)
+def reindex_media(media_id: int, db: Session = Depends(get_db)) -> MediaIndexOut:
+    item = _get_media_index(db, media_id)
+    try:
+        require_editable(item)
+    except MediaIndexError as exc:
+        raise _media_error(exc) from exc
+    if not item.vision.strip():
+        raise HTTPException(status_code=400, detail="Enter a vision note before re-indexing")
+    if item.media_kind == "video" and not item.transcript.strip():
+        raise HTTPException(status_code=400, detail="Save a transcript before re-indexing")
+    if item.media_kind == "photo" and not item.visual_description.strip():
+        raise HTTPException(status_code=400, detail="Generate a visual description before re-indexing")
+    try:
+        apply_recommendations(db, item)
+    except LLMError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    db.commit()
+    db.refresh(item)
+    return serialize(item, db)
+
+
+@router.post("/media-index/{media_id}/feedback", response_model=MediaIndexOut)
+def save_media_feedback(
+    media_id: int,
+    payload: FeedbackIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+) -> MediaIndexOut:
+    item = _get_media_index(db, media_id)
+    verdict = payload.verdict.strip().lower()
+    if verdict not in VALID_VERDICTS:
+        raise HTTPException(status_code=400, detail="Verdict must be yes or no")
+    feedback = parse_feedback(item.feedback_json)
+    feedback["verdicts"][payload.recipe_ref] = {
+        "verdict": verdict,
+        "note": payload.note,
+        "by": user.email,
+        "at": utc_now().isoformat(),
+    }
+    return _save_feedback(db, item, feedback)
+
+
+@router.post("/media-index/{media_id}/add-usecase", response_model=MediaIndexOut)
+def add_media_usecase(
+    media_id: int,
+    payload: AddUsecaseIn,
+    db: Session = Depends(get_db),
+) -> MediaIndexOut:
+    item = _get_media_index(db, media_id)
+    refs = {option.ref for option in list_recipe_options(db)}
+    if payload.recipe_ref not in refs:
+        raise HTTPException(status_code=400, detail="Unknown recipe_ref")
+    feedback = parse_feedback(item.feedback_json)
+    already = any(entry.get("recipe_ref") == payload.recipe_ref for entry in feedback["added"])
+    if not already:
+        feedback["added"].append(
+            {
+                "recipe_ref": payload.recipe_ref,
+                "note": payload.note,
+                "at": utc_now().isoformat(),
+            }
+        )
+    return _save_feedback(db, item, feedback)
+
+
+@router.post("/media-index/{media_id}/freeze", response_model=MediaIndexOut)
+def freeze_media_index(media_id: int, db: Session = Depends(get_db)) -> MediaIndexOut:
+    item = _get_media_index(db, media_id)
+    if not item.vision.strip():
+        raise HTTPException(status_code=400, detail="Enter a vision note before freezing")
+    if not item.recommendations_json:
+        raise HTTPException(status_code=400, detail="Re-index before freezing")
+    if is_stale(item):
+        raise HTTPException(status_code=400, detail="Vision changed. Re-index before freezing")
+    item.vision_frozen = True
+    item.status = "frozen"
+    touch(item)
+    db.commit()
+    db.refresh(item)
+    return serialize(item, db)
+
+
+@router.post("/media-index/{media_id}/unfreeze", response_model=MediaIndexOut)
+def unfreeze_media_index(media_id: int, db: Session = Depends(get_db)) -> MediaIndexOut:
+    item = _get_media_index(db, media_id)
+    item.vision_frozen = False
+    item.status = "indexed" if item.recommendations_json else "draft"
+    touch(item)
+    db.commit()
+    db.refresh(item)
+    return serialize(item, db)

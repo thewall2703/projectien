@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Generator
 
 from sqlalchemy import create_engine, event, inspect, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from backend.config import settings
@@ -26,6 +27,31 @@ else:
     }
 
 engine = create_engine(settings.database_url, connect_args=connect_args, **engine_kwargs)
+
+_DISCONNECT_MARKERS = (
+    "could not receive data from server",
+    "server closed the connection unexpectedly",
+    "ssl syscall error",
+    "connection reset by peer",
+    "connection is closed",
+    "terminating connection",
+    "broken pipe",
+)
+
+
+def _is_network_disconnect(error: BaseException) -> bool:
+    message = str(error).lower()
+    return any(marker in message for marker in _DISCONNECT_MARKERS)
+
+
+if not settings.database_url.startswith("sqlite"):
+
+    @event.listens_for(engine, "handle_error")
+    def _invalidate_network_disconnect(context) -> None:  # noqa: ANN001
+        """Keep a failed PostgreSQL socket from returning to QueuePool."""
+        if _is_network_disconnect(context.original_exception):
+            context.is_disconnect = True
+
 
 if settings.database_url.startswith("sqlite"):
 
@@ -81,6 +107,11 @@ def _add_missing_columns(table: str, statements: dict[str, str]) -> None:
 
 
 def ensure_schema() -> None:
+    # create_all is checkfirst=True; it only builds tables that are missing
+    # (media_index and any later models). Column backfills stay explicit.
+    from backend import models as _models  # noqa: F401
+
+    Base.metadata.create_all(bind=engine)
     _add_missing_columns("assets", ASSET_COLUMN_SQL)
     _add_missing_columns("generations", GENERATION_COLUMN_SQL)
 
@@ -89,5 +120,15 @@ def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()
     try:
         yield db
+    except DBAPIError:
+        # Discard every connection held by this Session after a driver error;
+        # a broken socket must never be checked back into QueuePool.
+        db.invalidate()
+        raise
     finally:
-        db.close()
+        try:
+            db.close()
+        except DBAPIError:
+            # A dead socket may only reveal itself during the implicit rollback
+            # performed by close(). Invalidate it instead of leaking it.
+            db.invalidate()

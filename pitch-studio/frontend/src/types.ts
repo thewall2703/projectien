@@ -178,3 +178,69 @@ export type FieldConfig = {
   type?: "text" | "textarea" | "select" | "number" | "checkbox";
   options?: string[];
 };
+
+export type MediaImageAsset = {
+  id: number;
+  title: string;
+  file_status: string;
+  content_type: string;
+};
+
+export type MediaRecommendation = {
+  recipe_ref: string;
+  audience_cluster: string;
+  duration: string;
+  channel: string;
+  intent: string;
+  temperatures: string[];
+  confidence: number;
+  rationale: string;
+};
+
+export type MediaFeedback = {
+  verdicts: Record<string, { verdict: string; note: string; by: string; at: string }>;
+  added: { recipe_ref: string; note: string; at: string }[];
+};
+
+export type MediaIndexRow = {
+  id: number;
+  asset_id: number;
+  media_kind: string;
+  transcript: string;
+  visual_description: string;
+  image_keys: string[];
+  vision: string;
+  vision_hash: string;
+  indexed_vision_hash: string;
+  recommended_at: string | null;
+  vision_frozen: boolean;
+  status: string;
+  stale: boolean;
+  job_status?: string;
+  job_stage?: string;
+  job_error?: string;
+  job_type?: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+  asset_title: string;
+  asset_source_url: string;
+  asset_file_status: string;
+  asset_content_type?: string;
+  context_index?: string;
+  recommendations: { generated_at: string; vision_hash: string; items: MediaRecommendation[] };
+  feedback: MediaFeedback;
+  image_assets: MediaImageAsset[];
+};
+
+export type MediaCandidate = {
+  asset_id: number;
+  title: string;
+  type: string;
+  source_url: string;
+  file_status: string;
+};
+
+export type MediaIndexList = {
+  items: MediaIndexRow[];
+  candidates: MediaCandidate[];
+};

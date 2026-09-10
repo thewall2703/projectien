@@ -33,6 +33,13 @@ PYTHONPATH=. python -m backend.sync_assets --types report
 OPENROUTER_API_KEY=sk-or-... PYTHONPATH=. uvicorn backend.main:app --reload --port 8000
 ```
 
+Media prepare/describe run in a separate worker so the API stays responsive. In another terminal:
+
+```bash
+cd pitch-studio
+PYTHONPATH=. python -m backend.worker
+```
+
 In another terminal:
 
 ```bash
@@ -50,15 +57,18 @@ Default admin: `admin@example.com` / `changeme`
 | Variable | Purpose |
 | --- | --- |
 | `OPENROUTER_API_KEY` | Required to generate scripts and decks |
-| `OPENROUTER_MODEL` | Defaults to `openai/gpt-5.6-sol` |
+| `OPENROUTER_MODEL` | Defaults to `anthropic/claude-opus-4.6` |
+| `OPENROUTER_VERBOSITY` | Claude reasoning effort; defaults to `medium` |
 | `SECRET_KEY` | Session cookie signing |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | Bootstrap admin if the user table is empty |
 | `DATABASE_URL` | Defaults to SQLite under `pitch-studio/data/app.db` |
 | `SPACES_*` | DigitalOcean Spaces credentials; omit to store files locally |
+| `APIFY_TOKEN` | Required to download YouTube videos at the highest available quality |
+| `APIFY_YOUTUBE_QUALITY` | Requested short-side resolution; defaults to `4320` (8K, falls back to next best) |
 
 ## DigitalOcean
 
-App Platform spec lives in `.do/app.yaml`. Deploy from a Container Registry image built from this `Dockerfile` (context: `pitch-studio/`). Set `DATABASE_URL`, `SECRET_KEY`, `OPENROUTER_API_KEY`, and Spaces keys as App Platform secrets. Attach the existing `mu-pitch-studio-pg` cluster so Trusted Sources allow the app.
+App Platform spec lives in `.do/app.yaml`. It runs a `web` service and a `media-worker` that polls the `jobs` table for media prepare/describe work. Deploy from a Container Registry image built from this `Dockerfile` (context: `pitch-studio/`). Set `DATABASE_URL`, `SECRET_KEY`, `OPENROUTER_API_KEY`, `APIFY_TOKEN`, and Spaces keys as App Platform secrets on **both** the web and worker components. Attach the existing `mu-pitch-studio-pg` cluster so Trusted Sources allow the app.
 
 ```bash
 docker build -t pitch-studio .

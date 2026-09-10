@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { api } from "../../api";
+import { Button, EmptyState, ErrorBanner, Skeleton } from "../../components/ui";
 import type { FieldConfig } from "../../types";
 
 type Props = {
@@ -23,19 +24,26 @@ export default function DataTable({ title, path, fields, extra }: Props) {
   const [draft, setDraft] = useState<Record<string, unknown> | null>(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [removing, setRemoving] = useState<string>("");
 
   const reload = () =>
     api
       .list<Record<string, unknown>>(path)
       .then(setRows)
-      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load"));
+      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load"))
+      .finally(() => setLoading(false));
 
   useEffect(() => {
+    setLoading(true);
     reload();
   }, [path]);
 
   const save = async () => {
     if (!draft) return;
+    setSaving(true);
+    setError("");
     try {
       if (creating) {
         await api.create(path, draft);
@@ -47,13 +55,23 @@ export default function DataTable({ title, path, fields, extra }: Props) {
       await reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSaving(false);
     }
   };
 
   const remove = async (id: string | number) => {
     if (!window.confirm("Delete this row?")) return;
-    await api.remove(`${path}/${id}`);
-    await reload();
+    setRemoving(String(id));
+    setError("");
+    try {
+      await api.remove(`${path}/${id}`);
+      await reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Delete failed");
+    } finally {
+      setRemoving("");
+    }
   };
 
   const visible = fields.filter((field) => field.key !== "id").slice(0, 4);
@@ -64,19 +82,21 @@ export default function DataTable({ title, path, fields, extra }: Props) {
         <h1 className="font-serif text-3xl">{title}</h1>
         <div className="flex gap-2">
           {extra}
-          <button
-            className="rounded bg-accent px-3 py-2 text-sm text-white"
-            type="button"
+          <Button
+            variant="accent"
+            className="px-3 py-2"
             onClick={() => {
               setCreating(true);
               setDraft(emptyRow(fields));
             }}
           >
             New
-          </button>
+          </Button>
         </div>
       </div>
-      {error && <p className="mt-3 text-sm text-red-700">{error}</p>}
+      <div className="mt-3">
+        <ErrorBanner message={error} />
+      </div>
       <div className="mt-5 overflow-x-auto rounded-xl bg-white">
         <table className="min-w-full text-left text-sm">
           <thead className="border-b border-ink/10 text-ink/50">
@@ -90,25 +110,49 @@ export default function DataTable({ title, path, fields, extra }: Props) {
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => (
-              <tr key={String(row.id)} className="border-t border-ink/5">
-                {visible.map((field) => (
-                  <td key={field.key} className="max-w-xs truncate px-4 py-3">
-                    {String(row[field.key] ?? "")}
+            {loading &&
+              Array.from({ length: 5 }).map((_, index) => (
+                <tr key={`sk-${index}`} className="border-t border-ink/5">
+                  {visible.map((field) => (
+                    <td key={field.key} className="px-4 py-3">
+                      <Skeleton className="h-4 w-28" />
+                    </td>
+                  ))}
+                  <td className="px-4 py-3">
+                    <Skeleton className="ml-auto h-4 w-16" />
                   </td>
-                ))}
-                <td className="px-4 py-3 text-right">
-                  <button className="mr-3 text-accent" type="button" onClick={() => { setCreating(false); setDraft(row); }}>
-                    Edit
-                  </button>
-                  <button className="text-red-700" type="button" onClick={() => remove(row.id as string | number)}>
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            ))}
+                </tr>
+              ))}
+            {!loading &&
+              rows.map((row) => (
+                <tr key={String(row.id)} className="border-t border-ink/5">
+                  {visible.map((field) => (
+                    <td key={field.key} className="max-w-xs truncate px-4 py-3">
+                      {String(row[field.key] ?? "")}
+                    </td>
+                  ))}
+                  <td className="px-4 py-3 text-right">
+                    <button className="mr-3 text-accent" type="button" onClick={() => { setCreating(false); setDraft(row); }}>
+                      Edit
+                    </button>
+                    <Button
+                      variant="ghost"
+                      className="px-0 py-0 text-danger"
+                      loading={removing === String(row.id)}
+                      onClick={() => remove(row.id as string | number)}
+                    >
+                      Delete
+                    </Button>
+                  </td>
+                </tr>
+              ))}
           </tbody>
         </table>
+        {!loading && rows.length === 0 && !error && (
+          <div className="p-6">
+            <EmptyState title={`No ${title.toLowerCase()} yet`} description="Create a row to get started." />
+          </div>
+        )}
       </div>
       {draft && (
         <div className="fixed inset-0 z-10 flex justify-end bg-ink/30">
@@ -161,12 +205,12 @@ export default function DataTable({ title, path, fields, extra }: Props) {
               ))}
             </div>
             <div className="mt-6 flex gap-3">
-              <button className="rounded bg-accent px-4 py-2 text-white" type="button" onClick={save}>
+              <Button variant="accent" loading={saving} onClick={save}>
                 Save
-              </button>
-              <button className="rounded border border-ink/15 px-4 py-2" type="button" onClick={() => setDraft(null)}>
+              </Button>
+              <Button disabled={saving} onClick={() => setDraft(null)}>
                 Cancel
-              </button>
+              </Button>
             </div>
           </div>
         </div>

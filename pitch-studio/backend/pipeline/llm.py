@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import re
 import time
@@ -51,41 +52,55 @@ def _error_message(response: httpx.Response) -> str:
     return f"{response.status_code} {response.reason_phrase}: {response.text[:500]}"
 
 
-def chat_json(messages: list[dict[str, str]], timeout: float = 120.0) -> dict[str, Any]:
-    if not settings.openrouter_api_key:
-        raise LLMError("OPENROUTER_API_KEY is not set")
-    payload = {
+def _request_payload(messages: list[dict[str, str]]) -> dict[str, Any]:
+    return {
         "model": settings.openrouter_model,
         "messages": messages,
         "response_format": {"type": "json_object"},
+        # Claude 4.6 uses adaptive thinking. OpenRouter maps ``verbosity`` to
+        # Anthropic's output_config.effort; medium balances script quality,
+        # latency, and token cost.
+        "reasoning": {"enabled": True},
+        "verbosity": settings.openrouter_verbosity,
     }
-    headers = {
+
+
+def _headers() -> dict[str, str]:
+    return {
         "Authorization": f"Bearer {settings.openrouter_api_key.strip()}",
         "Content-Type": "application/json",
         "HTTP-Referer": "http://127.0.0.1:5173",
         "X-Title": "Pitch Studio",
         "User-Agent": "pitch-studio/1.0",
     }
+
+
+def _message_content(body: dict[str, Any]) -> str:
+    message = (body.get("choices") or [{}])[0].get("message") or {}
+    content = message.get("content") or ""
+    if isinstance(content, list):
+        return "".join(
+            part.get("text", "") if isinstance(part, dict) else str(part)
+            for part in content
+        )
+    return str(content)
+
+
+def _post_openrouter(payload: dict[str, Any], timeout: float) -> str:
+    if not settings.openrouter_api_key:
+        raise LLMError("OPENROUTER_API_KEY is not set")
     last_error: Exception | None = None
     for attempt in range(2):
         try:
             with httpx.Client(timeout=timeout) as client:
-                response = client.post(OPENROUTER_URL, headers=headers, json=payload)
+                response = client.post(OPENROUTER_URL, headers=_headers(), json=payload)
             if response.status_code >= 500:
                 last_error = LLMError(_error_message(response))
                 time.sleep(1)
                 continue
             if response.status_code >= 400:
                 raise LLMError(_error_message(response))
-            body = response.json()
-            message = (body.get("choices") or [{}])[0].get("message") or {}
-            content = message.get("content") or ""
-            if isinstance(content, list):
-                content = "".join(
-                    part.get("text", "") if isinstance(part, dict) else str(part)
-                    for part in content
-                )
-            return _extract_json(content)
+            return _message_content(response.json())
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             last_error = exc
             time.sleep(1)
@@ -94,3 +109,32 @@ def chat_json(messages: list[dict[str, str]], timeout: float = 120.0) -> dict[st
         except json.JSONDecodeError as exc:
             raise LLMError(f"Model did not return JSON: {exc}") from exc
     raise LLMError(str(last_error) if last_error else "OpenRouter request failed")
+
+
+def _multimodal_payload(text: str, images: list[bytes]) -> dict[str, Any]:
+    parts: list[dict[str, Any]] = [{"type": "text", "text": text}]
+    for data in images:
+        encoded = base64.b64encode(data).decode("ascii")
+        parts.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{encoded}"},
+            }
+        )
+    return {
+        "model": settings.openrouter_model,
+        "messages": [{"role": "user", "content": parts}],
+        "reasoning": {"enabled": True},
+        "verbosity": settings.openrouter_verbosity,
+    }
+
+
+def chat_json(messages: list[dict[str, str]], timeout: float = 120.0) -> dict[str, Any]:
+    return _extract_json(_post_openrouter(_request_payload(messages), timeout))
+
+
+def chat_text_multimodal(text: str, images: list[bytes], timeout: float = 120.0) -> str:
+    content = _post_openrouter(_multimodal_payload(text, images), timeout)
+    if not (content or "").strip():
+        raise LLMError("Model returned an empty response")
+    return content.strip()

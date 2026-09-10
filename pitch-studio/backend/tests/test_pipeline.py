@@ -3,8 +3,8 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 
-from backend.pipeline.llm import _extract_json
-from backend.pipeline.prompts import script_messages
+from backend.pipeline.llm import _extract_json, _multimodal_payload, _request_payload
+from backend.pipeline.prompts import UNIVERSITY_STATUS_LINE, duration_framework, script_messages
 from backend.pipeline.resolver import _compose_fallback, parse_sequence
 from backend.pipeline.runner import pick_assets
 from backend.pipeline.validator import align_script_to_recipe, count_script_words, validate_script
@@ -90,6 +90,56 @@ class ValidatorTests(unittest.TestCase):
 
 
 class PromptTests(unittest.TestCase):
+    def test_duration_framework_progresses_with_time(self):
+        self.assertIn("precise, specific, and factual", duration_framework("T0"))
+        self.assertIn("position Masters' Union", duration_framework("T1"))
+        self.assertIn("emotional state", duration_framework("T2"))
+        self.assertIn("student case studies", duration_framework("T3"))
+
+    def test_selected_duration_strategy_is_in_script_prompt(self):
+        messages = script_messages(
+            audience_cluster="A",
+            duration="T2",
+            channel="CH1",
+            intent="I2",
+            temperature="X3",
+            context_note="",
+            modules=[],
+            sequence=["M01"],
+            facts=[],
+            word_budget=700,
+        )
+        system = messages[0]["content"]
+        user = messages[1]["content"]
+        self.assertIn("IMPACT MUST BE PROPORTIONAL TO TIME", system)
+        self.assertIn("Duration strategy — follow this as the governing narrative brief", user)
+        self.assertIn("emotional state", user)
+
+    def test_university_status_uses_natural_approved_wording(self):
+        old_wording = "Masters' Union University — bill passed by the Government of Haryana"
+        status_fact = SimpleNamespace(
+            fact="University status",
+            value=old_wording,
+            source="Haryana state legislation",
+            status="verified",
+            module_ids="M02",
+        )
+        messages = script_messages(
+            audience_cluster="A",
+            duration="T1",
+            channel="CH1",
+            intent="I1",
+            temperature="X2",
+            context_note="",
+            modules=[],
+            sequence=["M02"],
+            facts=[status_fact],
+            word_budget=280,
+        )
+        user = messages[1]["content"]
+        self.assertIn(UNIVERSITY_STATUS_LINE, user)
+        self.assertNotIn(old_wording, user)
+
     def test_revision_includes_draft_and_range(self):
         draft = {
             "sections": [{"module_id": "M01", "heading": "Origin", "text": "Why this exists."}],
@@ -123,6 +173,23 @@ class JsonExtractTests(unittest.TestCase):
     def test_empty_raises(self):
         with self.assertRaises(Exception):
             _extract_json("")
+
+
+class LLMRequestTests(unittest.TestCase):
+    def test_uses_opus_46_with_medium_adaptive_reasoning(self):
+        payload = _request_payload([{"role": "user", "content": "Write the pitch."}])
+        self.assertEqual(payload["model"], "anthropic/claude-opus-4.6")
+        self.assertEqual(payload["reasoning"], {"enabled": True})
+        self.assertEqual(payload["verbosity"], "medium")
+
+    def test_multimodal_payload_sends_image_parts_without_json_format(self):
+        payload = _multimodal_payload("Describe these images.", [b"abc", b"xyz"])
+        content = payload["messages"][0]["content"]
+        self.assertEqual(content[0], {"type": "text", "text": "Describe these images."})
+        self.assertEqual(len(content), 3)
+        self.assertEqual(content[1]["type"], "image_url")
+        self.assertTrue(content[1]["image_url"]["url"].startswith("data:image/jpeg;base64,"))
+        self.assertNotIn("response_format", payload)
 
 
 class ResolverHelperTests(unittest.TestCase):

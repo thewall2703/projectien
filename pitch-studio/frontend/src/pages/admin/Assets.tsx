@@ -1,11 +1,14 @@
 import { useState } from "react";
 import { api } from "../../api";
+import { Button } from "../../components/ui";
 import DataTable from "./DataTable";
 
 export default function Assets() {
   const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
   const sync = async () => {
-    setMessage("Syncing…");
+    setBusy(true);
+    setMessage("");
     try {
       const counts = (await api.syncAssets("report")) as {
         stored: number;
@@ -19,6 +22,8 @@ export default function Assets() {
       );
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Sync failed");
+    } finally {
+      setBusy(false);
     }
   };
   return (
@@ -26,9 +31,9 @@ export default function Assets() {
       title="Assets"
       path="/api/admin/assets"
       extra={
-        <button className="rounded border border-ink/15 px-3 py-2 text-sm" type="button" onClick={sync}>
+        <Button loading={busy} onClick={sync}>
           {message || "Sync report files"}
-        </button>
+        </Button>
       }
       fields={[
         { key: "type", label: "Type", type: "select", options: ["video", "photo", "report"] },

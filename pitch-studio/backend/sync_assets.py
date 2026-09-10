@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+import tempfile
 import time
 from collections import Counter
 from pathlib import Path
@@ -15,7 +16,8 @@ from sqlalchemy.orm import Session
 from backend.config import REPO_ROOT
 from backend.database import SessionLocal, engine, ensure_schema
 from backend.models import Asset, Base, utc_now
-from backend.storage import save_file
+from backend.storage import save_file, save_file_from_path
+from backend.youtube_apify import download_caption_text, download_youtube, is_youtube_url
 
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -37,6 +39,8 @@ SKIP_FOLDER_MARKERS = ("font",)
 FOLDER_FILE_MAX_BYTES = 80 * 1024 * 1024
 PREVIEW_FILE_MAX_BYTES = 700 * 1024 * 1024
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp"}
+VIDEO_SUFFIXES = {".mp4", ".webm", ".mov", ".mkv"}
+YOUTUBE_FILE_MAX_BYTES = 5 * 1024 * 1024 * 1024
 
 
 def classify_link(url: str) -> str:
@@ -50,6 +54,8 @@ def classify_link(url: str) -> str:
         if "/folders/" in lowered:
             return "drive_folder"
         return "drive_file"
+    if is_youtube_url(text):
+        return "youtube"
     if lowered.startswith("http://") or lowered.startswith("https://"):
         return "cdn"
     return "gap"
@@ -109,12 +115,14 @@ def asset_slug(title: str, asset_id: int) -> str:
 
 def _extension(name: str, content_type: str, url: str) -> str:
     suffix = Path(name).suffix.lower()
-    if suffix in DOCUMENT_SUFFIXES:
+    if suffix in DOCUMENT_SUFFIXES or suffix in IMAGE_SUFFIXES or suffix in VIDEO_SUFFIXES:
         return suffix
     if "pdf" in (content_type or "") or (url or "").lower().endswith(".pdf"):
         return ".pdf"
     if "presentation" in (content_type or "") or (url or "").lower().endswith(".pptx"):
         return ".pptx"
+    if "mp4" in (content_type or "") or (url or "").lower().endswith(".mp4"):
+        return ".mp4"
     return ".bin"
 
 
@@ -126,6 +134,14 @@ def _content_type(name: str, header: str, url: str) -> str:
         ".pdf": "application/pdf",
         ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".mp4": "video/mp4",
+        ".webm": "video/webm",
+        ".mov": "video/quicktime",
+        ".mkv": "video/x-matroska",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
     }.get(suffix, header.split(";")[0].strip() if header else "application/octet-stream")
 
 
@@ -133,6 +149,17 @@ def _store_bytes(asset: Asset, data: bytes, filename: str, content_type: str, so
     ext = _extension(filename, content_type, source_url)
     key = f"library/{asset.type}s/{asset_slug(asset.title, asset.id)}{ext}"
     stored = save_file(key, data, content_type)
+    _mark_stored(asset, stored, content_type)
+
+
+def _store_path(asset: Asset, path: Path, filename: str, content_type: str) -> None:
+    ext = _extension(filename, content_type, filename)
+    key = f"library/{asset.type}s/{asset_slug(asset.title, asset.id)}{ext}"
+    stored = save_file_from_path(key, path, content_type)
+    _mark_stored(asset, stored, content_type)
+
+
+def _mark_stored(asset: Asset, stored: str, content_type: str) -> None:
     asset.file_key = stored
     asset.content_type = content_type
     asset.file_status = "stored"
@@ -150,6 +177,58 @@ def _mark(asset: Asset, status: str, error: str = "") -> None:
         asset.status = "gap"
     if status == "external" and asset.source_url:
         asset.url = asset.source_url
+
+
+def _download_url_to_path(url: str, dest: Path, limit: int = YOUTUBE_FILE_MAX_BYTES) -> str:
+    headers = {"User-Agent": USER_AGENT}
+    if settings_token := _apify_media_headers():
+        headers.update(settings_token)
+    with httpx.Client(timeout=httpx.Timeout(30.0, read=600.0), follow_redirects=True, headers=headers) as client:
+        with client.stream("GET", url) as response:
+            if response.status_code >= 400:
+                raise RuntimeError(f"Media download failed ({response.status_code}) for {url}")
+            total = 0
+            with dest.open("wb") as handle:
+                for chunk in response.iter_bytes(1024 * 1024):
+                    if not chunk:
+                        continue
+                    total += len(chunk)
+                    if total > limit:
+                        raise RuntimeError(f"YouTube file exceeds {limit // (1024 * 1024)} MB")
+                    handle.write(chunk)
+            if total == 0:
+                raise RuntimeError("Empty YouTube download")
+            return response.headers.get("content-type", "video/mp4")
+
+
+def _apify_media_headers() -> dict[str, str]:
+    from backend.config import settings
+
+    token = (settings.apify_token or "").strip()
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
+def sync_youtube(asset: Asset) -> str:
+    result = download_youtube(asset.source_url)
+    filename = Path(result["media_key"]).name or f"{asset_slug(asset.title, asset.id)}.mp4"
+    suffix = Path(filename).suffix.lower() or ".mp4"
+    with tempfile.TemporaryDirectory() as tmp:
+        dest = Path(tmp) / filename
+        header = _download_url_to_path(result["media_url"], dest)
+        content_type = _content_type(filename, header, filename)
+        if suffix not in VIDEO_SUFFIXES:
+            filename = f"{Path(filename).stem}.mp4"
+            content_type = "video/mp4"
+        _store_path(asset, dest, filename, content_type)
+    transcript = download_caption_text(result.get("subtitles") or [])
+    resolution = result.get("resolution") or "highest available"
+    notice = result.get("quality_notice") or ""
+    asset.notes = f"Downloaded via Apify at {resolution}"
+    if transcript:
+        asset.notes = f"{asset.notes}; transcript captured from captions"
+    if notice:
+        asset.notes = f"{asset.notes}. {notice}"
+    return transcript
 
 
 def sync_cdn(asset: Asset) -> None:
@@ -374,6 +453,9 @@ def sync_one(db: Session, asset: Asset, force: bool = False) -> str:
         if kind == "external":
             _mark(asset, "external")
             return "external"
+        if kind == "youtube":
+            sync_youtube(asset)
+            return "stored"
         if kind == "cdn":
             sync_cdn(asset)
             return "stored"

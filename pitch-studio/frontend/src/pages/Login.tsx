@@ -1,20 +1,25 @@
 import { FormEvent, useState } from "react";
 import { api } from "../api";
+import { Button, ErrorBanner } from "../components/ui";
 import type { User } from "../types";
 
 export default function Login({ onSignedIn }: { onSignedIn: (user: User) => void }) {
   const [email, setEmail] = useState("admin@example.com");
   const [password, setPassword] = useState("changeme");
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setError("");
+    setBusy(true);
     try {
       const user = (await api.login(email, password)) as User;
       onSignedIn(user);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sign in failed");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -34,6 +39,7 @@ export default function Login({ onSignedIn }: { onSignedIn: (user: User) => void
             onChange={(e) => setEmail(e.target.value)}
             type="email"
             required
+            disabled={busy}
           />
         </label>
         <label className="block text-sm">
@@ -44,12 +50,13 @@ export default function Login({ onSignedIn }: { onSignedIn: (user: User) => void
             onChange={(e) => setPassword(e.target.value)}
             type="password"
             required
+            disabled={busy}
           />
         </label>
-        {error && <p className="text-sm text-danger">{error}</p>}
-        <button className="btn-accent w-full" type="submit">
+        <ErrorBanner message={error} />
+        <Button variant="accent" className="w-full" type="submit" loading={busy}>
           Sign in
-        </button>
+        </Button>
       </form>
     </div>
   );

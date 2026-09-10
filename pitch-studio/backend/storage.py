@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from backend.config import FILES_DIR, settings
@@ -32,6 +33,22 @@ def save_file(key: str, data: bytes, content_type: str = "application/octet-stre
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
     return str(path)
+
+
+def save_file_from_path(key: str, path: Path, content_type: str = "application/octet-stream") -> str:
+    if settings.uses_spaces:
+        client = _spaces_client()
+        client.upload_file(
+            Filename=str(path),
+            Bucket=settings.spaces_bucket,
+            Key=key,
+            ExtraArgs={"ContentType": content_type, "ACL": "private"},
+        )
+        return key
+    dest = FILES_DIR / key
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(path, dest)
+    return str(dest)
 
 
 def read_file(key_or_path: str) -> bytes:

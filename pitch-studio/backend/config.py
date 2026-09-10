@@ -22,7 +22,8 @@ class Settings(BaseSettings):
     database_url: str = f"sqlite:///{DATA_DIR / 'app.db'}"
     secret_key: str = "dev-secret-change-me"
     openrouter_api_key: str = ""
-    openrouter_model: str = "openai/gpt-5.6-sol"
+    openrouter_model: str = "anthropic/claude-opus-4.6"
+    openrouter_verbosity: str = "medium"
     admin_email: str = "admin@example.com"
     admin_password: str = "changeme"
     spaces_endpoint: str = ""
@@ -32,6 +33,10 @@ class Settings(BaseSettings):
     spaces_bucket: str = ""
     runpod_api_key: str = ""
     runpod_endpoint_id: str = ""
+    apify_token: str = ""
+    apify_youtube_actor: str = "dami_studio/youtube-video-downloader"
+    apify_youtube_quality: str = "4320"
+    apify_youtube_max_mb: int = 5000
     cookie_name: str = "pitch_session"
     cookie_max_age: int = 60 * 60 * 24 * 7
     cookie_secure: bool = False

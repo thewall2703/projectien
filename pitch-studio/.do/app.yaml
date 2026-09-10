@@ -19,7 +19,28 @@ services:
         value: "true"
       - key: OPENROUTER_MODEL
         scope: RUN_TIME
-        value: openai/gpt-5.6-sol
+        value: anthropic/claude-opus-4.6
+      - key: OPENROUTER_VERBOSITY
+        scope: RUN_TIME
+        value: medium
+workers:
+  - name: media-worker
+    github:
+      repo: thewall2703/projectien
+      branch: main
+      deploy_on_push: true
+    source_dir: /pitch-studio
+    dockerfile_path: Dockerfile
+    run_command: python -m backend.worker
+    instance_count: 1
+    instance_size_slug: apps-s-1vcpu-1gb
+    envs:
+      - key: OPENROUTER_MODEL
+        scope: RUN_TIME
+        value: anthropic/claude-opus-4.6
+      - key: OPENROUTER_VERBOSITY
+        scope: RUN_TIME
+        value: medium
 databases:
   - name: pitch-studio-pg
     engine: PG

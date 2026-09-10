@@ -1,10 +1,16 @@
+import type { MediaIndexList, MediaIndexRow } from "./types";
+
 const jsonHeaders = { "Content-Type": "application/json" };
 
 let recipesCache: unknown = null;
 let recipesInflight: Promise<unknown> | null = null;
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const timeoutMs = path.includes("/auth/me") ? 25000 : 20000;
+  const timeoutMs = path.includes("/auth/me")
+    ? 25000
+    : /\/(describe|reindex|sync|prepare)(\?|$)/.test(path) || path.includes("/sync-assets")
+      ? 1200000
+      : 20000;
   const response = await fetch(path, {
     credentials: "include",
     signal: AbortSignal.timeout(timeoutMs),
@@ -14,12 +20,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error("unauthorized");
   }
   if (!response.ok) {
-    let detail = response.statusText;
+    const raw = await response.text();
+    let detail: unknown = raw || response.statusText;
     try {
-      const body = await response.json();
-      detail = body.detail || detail;
+      const body = JSON.parse(raw) as { detail?: unknown };
+      if (body.detail !== undefined) detail = body.detail;
     } catch {
-      detail = await response.text();
+      // keep raw text
     }
     throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
   }
@@ -78,4 +85,52 @@ export const api = {
     }),
   getGeneration: (id: number) => request(`/api/generations/${id}`),
   listGenerations: () => request("/api/generations"),
+  mediaIndexList: () => request<MediaIndexList>("/api/admin/media-index"),
+  mediaIndexGet: (id: number) => request<MediaIndexRow>(`/api/admin/media-index/${id}`),
+  mediaIndexCreate: (assetId: number) =>
+    request<MediaIndexRow>("/api/admin/media-index", {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ asset_id: assetId }),
+    }),
+  prepareMedia: (assetId: number) =>
+    request<MediaIndexRow>("/api/admin/media-index/prepare", {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ asset_id: assetId }),
+    }),
+  saveTranscript: (id: number, transcript: string) =>
+    request<MediaIndexRow>(`/api/admin/media-index/${id}/transcript`, {
+      method: "PUT",
+      headers: jsonHeaders,
+      body: JSON.stringify({ transcript }),
+    }),
+  describeMedia: (id: number) =>
+    request<MediaIndexRow>(`/api/admin/media-index/${id}/describe`, { method: "POST" }),
+  saveVision: (id: number, vision: string) =>
+    request<MediaIndexRow>(`/api/admin/media-index/${id}/vision`, {
+      method: "PUT",
+      headers: jsonHeaders,
+      body: JSON.stringify({ vision }),
+    }),
+  reindexMedia: (id: number) =>
+    request<MediaIndexRow>(`/api/admin/media-index/${id}/reindex`, { method: "POST" }),
+  sendFeedback: (id: number, recipeRef: string, verdict: "yes" | "no", note = "") =>
+    request<MediaIndexRow>(`/api/admin/media-index/${id}/feedback`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ recipe_ref: recipeRef, verdict, note }),
+    }),
+  addUsecase: (id: number, recipeRef: string, note = "") =>
+    request<MediaIndexRow>(`/api/admin/media-index/${id}/add-usecase`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ recipe_ref: recipeRef, note }),
+    }),
+  freezeMedia: (id: number) =>
+    request<MediaIndexRow>(`/api/admin/media-index/${id}/freeze`, { method: "POST" }),
+  unfreezeMedia: (id: number) =>
+    request<MediaIndexRow>(`/api/admin/media-index/${id}/unfreeze`, { method: "POST" }),
+  syncAsset: (assetId: number, force = false) =>
+    request(`/api/admin/assets/${assetId}/sync?force=${force ? "true" : "false"}`, { method: "POST" }),
 };

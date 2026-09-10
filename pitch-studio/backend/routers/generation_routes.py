@@ -242,10 +242,12 @@ def download_asset_file(
         if url:
             return RedirectResponse(url)
     data = read_file(asset.file_key)
+    media_type = asset.content_type or "application/octet-stream"
+    disposition = "inline" if media_type.startswith(("video/", "image/")) else "attachment"
     return Response(
         content=data,
-        media_type=asset.content_type or "application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        media_type=media_type,
+        headers={"Content-Disposition": f'{disposition}; filename="{filename}"'},
     )
 
 

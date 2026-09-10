@@ -13,6 +13,8 @@ import Assets from "./pages/admin/Assets";
 import FounderQuotes from "./pages/admin/FounderQuotes";
 import Objections from "./pages/admin/Objections";
 import Users from "./pages/admin/Users";
+import MediaTesting from "./pages/admin/MediaTesting";
+import { Spinner } from "./components/ui";
 
 function navClass({ isActive }: { isActive: boolean }) {
   return `block rounded-lg px-3 py-2 text-sm ${
@@ -47,6 +49,9 @@ function Shell({ user, onLogout, children }: { user: User; onLogout: () => void;
               </NavLink>
               <NavLink to="/admin/assets" className={navClass}>
                 Assets
+              </NavLink>
+              <NavLink to="/admin/media-testing" className={navClass}>
+                Media
               </NavLink>
             </>
           )}
@@ -84,6 +89,9 @@ function Shell({ user, onLogout, children }: { user: User; onLogout: () => void;
                 </NavLink>
                 <NavLink to="/admin/assets" className={navClass}>
                   Assets
+                </NavLink>
+                <NavLink to="/admin/media-testing" className={navClass}>
+                  Media testing
                 </NavLink>
                 <NavLink to="/admin/founder-quotes" className={navClass}>
                   Founder voice
@@ -123,7 +131,12 @@ export default function App() {
   }, []);
 
   if (!ready) {
-    return <div className="p-10 text-muted">Loading…</div>;
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-3 text-muted">
+        <Spinner className="h-6 w-6" />
+        <p className="text-sm">Loading Pitch Studio…</p>
+      </div>
+    );
   }
 
   const logout = async () => {
@@ -151,6 +164,7 @@ export default function App() {
                     <Route path="/admin/facts" element={<Facts />} />
                     <Route path="/admin/recipes" element={<Recipes />} />
                     <Route path="/admin/assets" element={<Assets />} />
+                    <Route path="/admin/media-testing" element={<MediaTesting />} />
                     <Route path="/admin/founder-quotes" element={<FounderQuotes />} />
                     <Route path="/admin/objections" element={<Objections />} />
                     <Route path="/admin/users" element={<Users />} />

@@ -1,11 +1,14 @@
 import { useState } from "react";
 import { api } from "../../api";
+import { Button } from "../../components/ui";
 import DataTable from "./DataTable";
 
 export default function FounderQuotes() {
   const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
   const ingest = async () => {
-    setMessage("Ingesting…");
+    setBusy(true);
+    setMessage("");
     try {
       const counts = (await api.ingestTranscripts()) as {
         files: number;
@@ -19,6 +22,8 @@ export default function FounderQuotes() {
       );
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Ingest failed");
+    } finally {
+      setBusy(false);
     }
   };
   return (
@@ -26,9 +31,9 @@ export default function FounderQuotes() {
       title="Founder quotes"
       path="/api/admin/founder-quotes"
       extra={
-        <button className="rounded border border-ink/15 px-3 py-2 text-sm" type="button" onClick={ingest}>
+        <Button loading={busy} onClick={ingest}>
           {message || "Ingest transcripts"}
-        </button>
+        </Button>
       }
       fields={[
         { key: "text", label: "Text", type: "textarea" },

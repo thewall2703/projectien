@@ -23,6 +23,11 @@ class ClassifyLinkTests(unittest.TestCase):
             "external",
         )
 
+    def test_youtube_watch_and_short_links(self):
+        self.assertEqual(classify_link("https://www.youtube.com/watch?v=N5Crw6YCkSU"), "youtube")
+        self.assertEqual(classify_link("https://youtu.be/VIzWHj8FrXA?si=abc"), "youtube")
+        self.assertEqual(classify_link("https://www.youtube.com/shorts/abc123"), "youtube")
+
     def test_cdn_pdf(self):
         self.assertEqual(
             classify_link("https://files.mastersunion.link/Entrepreneurship_Report.pdf"),

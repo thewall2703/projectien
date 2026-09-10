@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { AXES } from "../axes";
+import { Button, ErrorBanner, Skeleton } from "../components/ui";
 import { axisLabel } from "../labels";
 import type { AxisOption, Generation, RecipeOption } from "../types";
 
@@ -158,7 +159,18 @@ export default function Generate() {
       </p>
 
       <form onSubmit={submit} className="mt-8 space-y-6">
-        <div className="card grid gap-5 p-5 md:grid-cols-2">
+        {recipesLoading && (
+          <div className="card grid gap-5 p-5 md:grid-cols-2">
+            {Array.from({ length: 6 }).map((_, index) => (
+              <div key={index} className="space-y-2">
+                <Skeleton className="h-3 w-20" />
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-3 w-40" />
+              </div>
+            ))}
+          </div>
+        )}
+        <div className={`card grid gap-5 p-5 md:grid-cols-2 ${recipesLoading ? "hidden" : ""}`}>
           <AxisSelect label="Audience" value={audience} onChange={onAudience} options={AXES.audience_clusters} />
           <label className="block">
             <span className="kicker">Persona</span>
@@ -227,10 +239,10 @@ export default function Generate() {
           )}
         </div>
 
-        {error && <p className="text-sm text-danger">{error}</p>}
-        <button className="btn-accent" disabled={busy || recipesLoading} type="submit">
-          {busy ? "Starting…" : "Generate pitch"}
-        </button>
+        <ErrorBanner message={error} />
+        <Button variant="accent" type="submit" loading={busy} disabled={recipesLoading}>
+          Generate pitch
+        </Button>
       </form>
     </div>
   );

@@ -321,3 +321,111 @@ class ExtractResultOut(BaseModel):
     char_count: int = 0
     chunk_count: int = 0
     extract_error: str = ""
+
+
+class TranscriptIn(BaseModel):
+    transcript: str
+
+
+class VisionIn(BaseModel):
+    vision: str
+
+
+class FeedbackIn(BaseModel):
+    recipe_ref: str
+    verdict: str
+    note: str = ""
+
+
+class AddUsecaseIn(BaseModel):
+    recipe_ref: str
+    note: str = ""
+
+
+class MediaIndexCreate(BaseModel):
+    asset_id: int
+
+
+class MediaImageOut(BaseModel):
+    id: int
+    title: str
+    file_status: str = ""
+    content_type: str = ""
+
+
+class MediaRecommendationItem(BaseModel):
+    recipe_ref: str
+    audience_cluster: str = ""
+    duration: str = ""
+    channel: str = ""
+    intent: str = ""
+    temperatures: list[str] = []
+    confidence: float = 0.0
+    rationale: str = ""
+
+
+class MediaRecommendations(BaseModel):
+    generated_at: str = ""
+    vision_hash: str = ""
+    items: list[MediaRecommendationItem] = []
+
+
+class MediaVerdict(BaseModel):
+    verdict: str
+    note: str = ""
+    by: str = ""
+    at: str = ""
+
+
+class MediaAddedUsecase(BaseModel):
+    recipe_ref: str
+    note: str = ""
+    at: str = ""
+
+
+class MediaFeedback(BaseModel):
+    verdicts: dict[str, MediaVerdict] = {}
+    added: list[MediaAddedUsecase] = []
+
+
+class MediaIndexOut(BaseModel):
+    id: int
+    asset_id: int
+    media_kind: str
+    transcript: str = ""
+    visual_description: str = ""
+    image_keys: list[str] = []
+    vision: str = ""
+    vision_hash: str = ""
+    indexed_vision_hash: str = ""
+    recommended_at: datetime | None = None
+    vision_frozen: bool = False
+    status: str = "draft"
+    stale: bool = False
+    job_status: str = ""
+    job_stage: str = ""
+    job_error: str = ""
+    job_type: str = ""
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    asset_title: str = ""
+    asset_source_url: str = ""
+    asset_file_status: str = ""
+    asset_content_type: str = ""
+    context_index: str = ""
+    recommendations: MediaRecommendations = MediaRecommendations()
+    feedback: MediaFeedback = MediaFeedback()
+    image_assets: list[MediaImageOut] = []
+
+
+class MediaCandidate(BaseModel):
+    asset_id: int
+    title: str
+    type: str
+    source_url: str = ""
+    file_status: str = ""
+
+
+class MediaIndexListOut(BaseModel):
+    items: list[MediaIndexOut]
+    candidates: list[MediaCandidate]

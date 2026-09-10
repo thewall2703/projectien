@@ -154,3 +154,39 @@ class FounderQuote(Base):
     status: Mapped[str] = mapped_column(String(16), default="approved")
     edited: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class MediaIndex(Base):
+    __tablename__ = "media_index"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    asset_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    media_kind: Mapped[str] = mapped_column(String(16))
+    transcript: Mapped[str] = mapped_column(Text, default="")
+    visual_description: Mapped[str] = mapped_column(Text, default="")
+    image_keys: Mapped[str] = mapped_column(Text, default="")
+    vision: Mapped[str] = mapped_column(Text, default="")
+    vision_hash: Mapped[str] = mapped_column(String(64), default="")
+    indexed_vision_hash: Mapped[str] = mapped_column(String(64), default="")
+    recommendations_json: Mapped[str] = mapped_column(Text, default="")
+    recommended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    feedback_json: Mapped[str] = mapped_column(Text, default="")
+    vision_frozen: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str] = mapped_column(String(16), default="draft")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class Job(Base):
+    __tablename__ = "jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    job_type: Mapped[str] = mapped_column(String(32), index=True)
+    media_id: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    asset_id: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    stage: Mapped[str] = mapped_column(String(255), default="")
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
