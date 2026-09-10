@@ -23,6 +23,10 @@ function youtubeEmbed(url: string): string | null {
   }
 }
 
+function videoPrepareLabel(fileStatus: string) {
+  return fileStatus === "stored" ? "Transcribe & index video" : "Download, transcribe & index";
+}
+
 function isActiveJob(row?: Pick<MediaIndexRow, "job_status"> | null) {
   return row?.job_status === "queued" || row?.job_status === "running";
 }
@@ -316,9 +320,17 @@ export default function MediaTesting() {
                 </a>
               )}
               <Button variant="accent" loading={preparing} onClick={() => prepare(selected.row.asset_id)}>
-                {selected.row.type === "photo" ? "Prepare & index photos" : "Download, transcribe & index"}
+                {selected.row.type === "photo"
+                  ? "Prepare & index photos"
+                  : videoPrepareLabel(selected.row.file_status)}
               </Button>
-              {preparing && <PrepareProgress kind={selected.row.type} stage={current?.job_stage} />}
+              {preparing && (
+                <PrepareProgress
+                  kind={selected.row.type}
+                  sourceUrl={selected.row.source_url}
+                  stage={current?.job_stage}
+                />
+              )}
             </div>
           )}
           {current && (
@@ -334,14 +346,20 @@ export default function MediaTesting() {
                   <StatusBadge status={displayStatus(current)} />
                 </div>
                 <MediaPreview row={current} onSync={() => prepare(current.asset_id)} busy={preparing} />
-                {(current.media_kind === "video" && current.asset_file_status !== "stored") ||
+                {(current.media_kind === "video" && !current.transcript.trim()) ||
                 (current.media_kind === "photo" && current.image_assets.length === 0) ? (
                   <Button variant="accent" loading={preparing} onClick={() => prepare(current.asset_id)}>
-                    {current.media_kind === "photo" ? "Prepare & index photos" : "Download, transcribe & index"}
+                    {current.media_kind === "photo"
+                      ? "Prepare & index photos"
+                      : videoPrepareLabel(current.asset_file_status)}
                   </Button>
                 ) : null}
                 {(preparing || describing) && (
-                  <PrepareProgress kind={current.media_kind} stage={current.job_stage} />
+                  <PrepareProgress
+                    kind={current.media_kind}
+                    sourceUrl={current.asset_source_url}
+                    stage={current.job_stage}
+                  />
                 )}
               </div>
 
@@ -526,7 +544,16 @@ export default function MediaTesting() {
   );
 }
 
-function PrepareProgress({ kind, stage }: { kind: string; stage?: string }) {
+function PrepareProgress({
+  kind,
+  sourceUrl,
+  stage,
+}: {
+  kind: string;
+  sourceUrl?: string;
+  stage?: string;
+}) {
+  const isYoutube = Boolean(sourceUrl && youtubeEmbed(sourceUrl));
   return (
     <div className="flex items-start gap-3 rounded-xl border border-accent/20 bg-accent/5 px-4 py-3 text-sm">
       <Spinner className="mt-0.5 text-accent" />
@@ -537,7 +564,9 @@ function PrepareProgress({ kind, stage }: { kind: string; stage?: string }) {
         <p className="mt-1 text-muted">
           {kind === "photo"
             ? "Syncing the folder, then describing the images. Login and other pages stay available while this runs."
-            : "Highest-quality download via Apify, then captions. Login and other pages stay available while this runs."}
+            : isYoutube
+              ? "Downloading the YouTube source if needed, then creating its transcript."
+              : "Downloading the Drive video if needed, extracting its audio, then creating its transcript."}
         </p>
       </div>
     </div>

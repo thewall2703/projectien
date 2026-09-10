@@ -62,6 +62,18 @@ def read_file(key_or_path: str) -> bytes:
     return path.read_bytes()
 
 
+def download_file(key_or_path: str, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if settings.uses_spaces:
+        client = _spaces_client()
+        client.download_file(settings.spaces_bucket, key_or_path, str(destination))
+        return
+    source = Path(key_or_path)
+    if not source.is_absolute():
+        source = FILES_DIR / key_or_path
+    shutil.copyfile(source, destination)
+
+
 def file_exists(key_or_path: str) -> bool:
     if settings.uses_spaces:
         from botocore.exceptions import ClientError

@@ -582,6 +582,7 @@ def get_or_create_media_index(db: Session, asset_id: int) -> MediaIndex:
 def prepare_media(db: Session, asset_id: int, on_stage: StageCallback | None = None) -> MediaIndex:
     from backend.sync_assets import classify_link, sync_one, sync_youtube
     from backend.thumbnails import ensure_thumbnails
+    from backend.transcription import transcribe_asset
 
     row = get_or_create_media_index(db, asset_id)
     require_editable(row)
@@ -601,6 +602,11 @@ def prepare_media(db: Session, asset_id: int, on_stage: StageCallback | None = N
             sync_one(db, asset)
         else:
             _emit_stage(on_stage, "Video already stored")
+        if not row.transcript.strip():
+            if asset.file_status != "stored" or not asset.file_key:
+                detail = asset.sync_error or "Video download did not complete"
+                raise MediaIndexError(detail)
+            row.transcript = normalize_transcript(transcribe_asset(asset, on_stage))
     else:
         _emit_stage(on_stage, "Syncing photo folder…")
         sync_one(db, asset)

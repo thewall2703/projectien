@@ -223,6 +223,39 @@ class PrepareMediaTests(unittest.TestCase):
         self.assertEqual(prepared.transcript, "Welcome to campus.")
         db.commit.assert_called()
 
+    def test_transcribes_already_stored_drive_video(self):
+        asset = SimpleNamespace(
+            id=8,
+            type="video",
+            source_url="https://drive.google.com/file/d/abc/view",
+            file_status="stored",
+            file_key="videos/campus.mp4",
+            sync_error="",
+        )
+        row = SimpleNamespace(
+            asset_id=8,
+            media_kind="video",
+            transcript="",
+            visual_description="",
+            vision="",
+            vision_frozen=False,
+            vision_hash="",
+            recommendations_json="",
+            status="draft",
+        )
+        db = mock.Mock()
+        db.get.return_value = asset
+        with mock.patch("backend.media_index.get_or_create_media_index", return_value=row):
+            with mock.patch("backend.sync_assets.classify_link", return_value="drive_file"):
+                with mock.patch(
+                    "backend.transcription.transcribe_asset",
+                    return_value="Welcome to the campus.",
+                ) as transcribe:
+                    prepared = prepare_media(db, 8)
+        transcribe.assert_called_once_with(asset, None)
+        self.assertEqual(prepared.transcript, "Welcome to the campus.")
+        db.commit.assert_called()
+
 
 if __name__ == "__main__":
     unittest.main()
