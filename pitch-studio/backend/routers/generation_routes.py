@@ -35,8 +35,8 @@ from backend.schemas import (
     RecipeOption,
     ReportPassageOut,
 )
-from backend.storage import get_url, read_file
-from backend.thumbnails import ensure_thumbnail
+from backend.storage import file_exists, get_url, read_file
+from backend.thumbnails import ensure_thumbnail, thumbnail_key
 
 router = APIRouter(prefix="/api", tags=["generations"], dependencies=[Depends(get_current_user)])
 
@@ -260,14 +260,18 @@ def download_asset_thumbnail(
 ):
     _ = user
     asset = db.get(Asset, asset_id)
-    if asset is None or not asset.file_key:
+    if asset is None:
         raise HTTPException(status_code=404, detail="File not found")
     if not (asset.content_type or "").startswith("image/"):
         raise HTTPException(status_code=400, detail="Thumbnails apply to images")
 
+    key = thumbnail_key(asset)
+    if not file_exists(key) and not asset.file_key:
+        raise HTTPException(status_code=404, detail="Thumbnail not found")
     db.close()
     try:
-        key = ensure_thumbnail(asset)
+        if not file_exists(key):
+            key = ensure_thumbnail(asset)
     except Exception as exc:
         raise HTTPException(status_code=502, detail="Could not create thumbnail") from exc
 

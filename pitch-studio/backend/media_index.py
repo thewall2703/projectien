@@ -41,7 +41,7 @@ from backend.schemas import (
     MediaVerdict,
     RecipeOption,
 )
-from backend.storage import read_file
+from backend.storage import delete_file, file_exists, read_file
 
 CHILD_TITLE_SEP = " — "
 MAX_IMAGES = 6
@@ -161,7 +161,7 @@ def _downscale_jpeg(data: bytes) -> bytes:
 
 
 def list_image_assets(db: Session, asset: Asset) -> list[Asset]:
-    if (asset.content_type or "").startswith("image/") and asset.file_status == "stored" and asset.file_key:
+    if (asset.content_type or "").startswith("image/") and asset.file_status in {"stored", "preview"}:
         return [asset]
     prefix = f"{asset.title}{CHILD_TITLE_SEP}"
     children = (
@@ -173,8 +173,7 @@ def list_image_assets(db: Session, asset: Asset) -> list[Asset]:
     return [
         child
         for child in children
-        if child.file_status == "stored"
-        and child.file_key
+        if child.file_status in {"stored", "preview"}
         and (child.content_type or "").startswith("image/")
     ]
 
@@ -188,11 +187,17 @@ def collect_image_bytes(
     keys: list[str] = []
     for child in list_image_assets(db, asset)[:max_images]:
         try:
-            data = _downscale_jpeg(read_file(child.file_key))
+            if child.file_key:
+                key = child.file_key
+            else:
+                from backend.thumbnails import thumbnail_key
+
+                key = thumbnail_key(child)
+            data = _downscale_jpeg(read_file(key))
         except Exception:
             continue
         images.append(data)
-        keys.append(child.file_key)
+        keys.append(key)
     if not images:
         raise MediaImagesUnavailable(
             "No stored images found for this photo set. Sync the folder first."
@@ -599,10 +604,14 @@ def prepare_media(db: Session, asset_id: int, on_stage: StageCallback | None = N
     asset = db.get(Asset, row.asset_id)
     if asset is None:
         raise MediaIndexError("Asset not found")
+    image_assets: list[Asset] = []
     if row.media_kind == "video":
         kind = classify_link(asset.source_url)
         stored = asset.file_status == "stored" and bool(asset.file_key)
-        if kind == "youtube" and not stored:
+        processed = asset.file_status == "processed" and has_extract(row)
+        if processed:
+            _emit_stage(on_stage, "Video already analyzed")
+        elif kind == "youtube" and not stored:
             _emit_stage(on_stage, "Downloading YouTube video…")
             transcript = sync_youtube(asset)
             if transcript:
@@ -641,6 +650,27 @@ def prepare_media(db: Session, asset_id: int, on_stage: StageCallback | None = N
         apply_recommendations(db, row)
     else:
         touch(row)
+    if row.media_kind == "video" and has_extract(row) and asset.file_key and asset.source_url:
+        _emit_stage(on_stage, "Removing processed video…")
+        delete_file(asset.file_key)
+        asset.file_key = ""
+        asset.file_status = "processed"
+        asset.url = asset.source_url
+    elif row.media_kind == "photo" and row.visual_description.strip():
+        from backend.thumbnails import thumbnail_key
+
+        retained_keys: list[str] = []
+        for image_asset in image_assets:
+            key = thumbnail_key(image_asset)
+            if not file_exists(key):
+                continue
+            retained_keys.append(key)
+            if image_asset.file_key:
+                delete_file(image_asset.file_key)
+                image_asset.file_key = ""
+            image_asset.file_status = "preview"
+            image_asset.url = f"/api/assets/{image_asset.id}/thumbnail.jpg"
+        row.image_keys = json.dumps(retained_keys[:MAX_IMAGES], ensure_ascii=False)
     db.commit()
     db.refresh(row)
     return row

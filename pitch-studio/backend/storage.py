@@ -74,6 +74,19 @@ def download_file(key_or_path: str, destination: Path) -> None:
     shutil.copyfile(source, destination)
 
 
+def delete_file(key_or_path: str) -> None:
+    if not key_or_path:
+        return
+    if settings.uses_spaces:
+        client = _spaces_client()
+        client.delete_object(Bucket=settings.spaces_bucket, Key=key_or_path)
+        return
+    path = Path(key_or_path)
+    if not path.is_absolute():
+        path = FILES_DIR / key_or_path
+    path.unlink(missing_ok=True)
+
+
 def file_exists(key_or_path: str) -> bool:
     if settings.uses_spaces:
         from botocore.exceptions import ClientError

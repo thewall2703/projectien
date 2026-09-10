@@ -41,7 +41,7 @@ PREVIEW_FILE_MAX_BYTES = 700 * 1024 * 1024
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp"}
 VIDEO_SUFFIXES = {".mp4", ".webm", ".mov", ".mkv"}
 YOUTUBE_FILE_MAX_BYTES = 5 * 1024 * 1024 * 1024
-DRIVE_FILE_MAX_BYTES = 5 * 1024 * 1024 * 1024
+DRIVE_FILE_MAX_BYTES = 20 * 1024 * 1024 * 1024
 
 
 def classify_link(url: str) -> str:
@@ -455,9 +455,13 @@ def sync_drive_folder(db: Session, asset: Asset) -> int:
 
 
 def sync_one(db: Session, asset: Asset, force: bool = False) -> str:
-    if asset.file_status == "stored" and asset.file_key and not force:
-        return "skipped"
     kind = classify_link(asset.source_url)
+    if (
+        asset.file_status == "stored"
+        and (asset.file_key or kind == "drive_folder")
+        and not force
+    ):
+        return "skipped"
     try:
         local = find_local_override(asset)
         if local:

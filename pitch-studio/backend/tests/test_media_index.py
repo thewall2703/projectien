@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 from types import SimpleNamespace
 from unittest import mock
@@ -273,18 +274,101 @@ class PrepareMediaTests(unittest.TestCase):
         db.get.return_value = asset
         with mock.patch("backend.media_index.get_or_create_media_index", return_value=row):
             with mock.patch("backend.sync_assets.classify_link", return_value="drive_file"):
-                with mock.patch(
-                    "backend.transcription.analyze_video_asset",
-                    return_value=SimpleNamespace(
-                        transcript="Welcome to the campus.",
-                        visual_description="A guided campus tour.",
-                    ),
-                ) as analyze:
-                    prepared = prepare_media(db, 8)
+                with mock.patch("backend.media_index.delete_file") as delete:
+                    with mock.patch(
+                        "backend.transcription.analyze_video_asset",
+                        return_value=SimpleNamespace(
+                            transcript="Welcome to the campus.",
+                            visual_description="A guided campus tour.",
+                        ),
+                    ) as analyze:
+                        prepared = prepare_media(db, 8)
         analyze.assert_called_once_with(asset, "", None)
+        delete.assert_called_once_with("videos/campus.mp4")
+        self.assertEqual(asset.file_key, "")
+        self.assertEqual(asset.file_status, "processed")
+        self.assertEqual(asset.url, asset.source_url)
         self.assertEqual(prepared.transcript, "Welcome to the campus.")
         self.assertEqual(prepared.visual_description, "A guided campus tour.")
         db.commit.assert_called()
+
+    def test_processed_video_is_not_downloaded_again(self):
+        asset = SimpleNamespace(
+            id=9,
+            type="video",
+            source_url="https://drive.google.com/file/d/abc/view",
+            file_status="processed",
+            file_key="",
+            sync_error="",
+        )
+        row = SimpleNamespace(
+            asset_id=9,
+            media_kind="video",
+            transcript="Spoken words.",
+            visual_description="Students work together.",
+            vision="",
+            vision_frozen=False,
+            vision_hash="",
+            recommendations_json="",
+            status="draft",
+        )
+        db = mock.Mock()
+        db.get.return_value = asset
+        with mock.patch("backend.media_index.get_or_create_media_index", return_value=row):
+            with mock.patch("backend.sync_assets.classify_link", return_value="drive_file"):
+                with mock.patch("backend.sync_assets.sync_one") as sync:
+                    with mock.patch("backend.transcription.analyze_video_asset") as analyze:
+                        prepare_media(db, 9)
+        sync.assert_not_called()
+        analyze.assert_not_called()
+
+    def test_photo_original_is_removed_after_thumbnail_and_description(self):
+        parent = SimpleNamespace(id=10, type="photo", title="Campus photos")
+        child = SimpleNamespace(
+            id=11,
+            file_key="library/photos/campus.jpg",
+            file_status="stored",
+            content_type="image/jpeg",
+            url="",
+        )
+        row = SimpleNamespace(
+            asset_id=10,
+            media_kind="photo",
+            transcript="",
+            visual_description="",
+            image_keys="",
+            vision="",
+            vision_frozen=False,
+            vision_hash="",
+            recommendations_json="",
+            status="draft",
+        )
+        db = mock.Mock()
+        db.get.return_value = parent
+        with mock.patch("backend.media_index.get_or_create_media_index", return_value=row):
+            with mock.patch("backend.sync_assets.sync_one"):
+                with mock.patch("backend.media_index.list_image_assets", return_value=[child]):
+                    with mock.patch("backend.thumbnails.ensure_thumbnails", return_value=(1, [])):
+                        with mock.patch(
+                            "backend.media_index.collect_image_bytes",
+                            return_value=([b"image"], ["library/photos/campus.jpg"]),
+                        ):
+                            with mock.patch(
+                                "backend.media_index.describe_images",
+                                return_value="Students gather on campus.",
+                            ):
+                                with mock.patch(
+                                    "backend.thumbnails.thumbnail_key",
+                                    return_value="thumbnails/assets/11.jpg",
+                                ):
+                                    with mock.patch("backend.media_index.file_exists", return_value=True):
+                                        with mock.patch("backend.media_index.delete_file") as delete:
+                                            prepare_media(db, 10)
+        delete.assert_called_once_with("library/photos/campus.jpg")
+        self.assertEqual(child.file_key, "")
+        self.assertEqual(child.file_status, "preview")
+        self.assertEqual(child.url, "/api/assets/11/thumbnail.jpg")
+        self.assertEqual(json.loads(row.image_keys), ["thumbnails/assets/11.jpg"])
 
 
 if __name__ == "__main__":

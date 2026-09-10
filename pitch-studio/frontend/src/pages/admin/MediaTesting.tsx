@@ -23,6 +23,18 @@ function youtubeEmbed(url: string): string | null {
   }
 }
 
+function driveEmbed(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    if (!parsed.hostname.includes("drive.google.com")) return null;
+    const pathMatch = parsed.pathname.match(/\/file\/d\/([^/]+)/);
+    const id = pathMatch?.[1] || parsed.searchParams.get("id");
+    return id ? `https://drive.google.com/file/d/${id}/preview` : null;
+  } catch {
+    return null;
+  }
+}
+
 function videoPrepareLabel(fileStatus: string) {
   return fileStatus === "stored" ? "Analyze & index video" : "Download, analyze & index";
 }
@@ -593,6 +605,20 @@ function MediaPreview({
   busy: boolean;
 }) {
   if (row.media_kind === "video") {
+    const drive = driveEmbed(row.asset_source_url);
+    if (drive) {
+      return (
+        <div className="stage bg-ink">
+          <iframe
+            className="h-full w-full"
+            src={drive}
+            title={row.asset_title}
+            allow="autoplay; fullscreen"
+            allowFullScreen
+          />
+        </div>
+      );
+    }
     if (row.asset_file_status === "stored") {
       return (
         <div className="stage bg-ink">
@@ -739,7 +765,7 @@ function ImageThumb({
           setFullFailed(false);
           setOpen(true);
         }}
-        aria-label={`View full-size ${title}`}
+        aria-label={`View ${title}`}
       >
         {!loaded && !failed && (
           <Skeleton className="absolute inset-0 z-0 h-full w-full rounded-none" />
@@ -778,12 +804,12 @@ function ImageThumb({
           {!fullLoaded && !fullFailed && <Spinner className="absolute h-8 w-8 text-white" />}
           {fullFailed && (
             <div className="rounded-xl bg-surface px-6 py-5 text-center">
-              <p className="font-medium">Full-size image unavailable</p>
+              <p className="font-medium">Image preview unavailable</p>
               <p className="mt-1 text-sm text-muted">Close this view and try again.</p>
             </div>
           )}
           <img
-            src={`/api/assets/${id}/file`}
+            src={`/api/assets/${id}/thumbnail.jpg`}
             alt={title}
             className={`max-h-[90vh] max-w-[94vw] object-contain ${fullFailed ? "hidden" : "block"}`}
             onLoad={() => setFullLoaded(true)}

@@ -227,7 +227,7 @@ def seed_assets(db: Session, rows: list[list[tuple[str, str]]]) -> int:
                 "notes": "",
             }
             if existing:
-                stored = existing.file_status == "stored" and existing.file_key
+                stored = existing.file_status in {"stored", "processed", "preview"}
                 for key, value in payload.items():
                     if stored and key in {"file_status", "url"}:
                         continue
