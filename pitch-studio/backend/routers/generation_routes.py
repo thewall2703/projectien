@@ -4,11 +4,11 @@ import json
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from fastapi.responses import RedirectResponse, Response
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from sqlalchemy.orm import Session, load_only
 
 from backend.auth import get_current_user
-from backend.config import settings
+from backend.config import FILES_DIR, settings
 from backend.database import get_db
 from backend.models import Asset, FounderQuote, Generation, Objection, Recipe, User
 from backend.pipeline.brand_deck import (
@@ -36,6 +36,7 @@ from backend.schemas import (
     ReportPassageOut,
 )
 from backend.storage import get_url, read_file
+from backend.thumbnails import ensure_thumbnail
 
 router = APIRouter(prefix="/api", tags=["generations"], dependencies=[Depends(get_current_user)])
 
@@ -248,6 +249,36 @@ def download_asset_file(
         content=data,
         media_type=media_type,
         headers={"Content-Disposition": f'{disposition}; filename="{filename}"'},
+    )
+
+
+@router.get("/assets/{asset_id}/thumbnail.jpg")
+def download_asset_thumbnail(
+    asset_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    _ = user
+    asset = db.get(Asset, asset_id)
+    if asset is None or not asset.file_key:
+        raise HTTPException(status_code=404, detail="File not found")
+    if not (asset.content_type or "").startswith("image/"):
+        raise HTTPException(status_code=400, detail="Thumbnails apply to images")
+
+    db.close()
+    try:
+        key = ensure_thumbnail(asset)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Could not create thumbnail") from exc
+
+    if settings.uses_spaces:
+        url = get_url(key)
+        if url:
+            return RedirectResponse(url, headers={"Cache-Control": "private, max-age=86400"})
+    return FileResponse(
+        FILES_DIR / key,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, max-age=86400"},
     )
 
 

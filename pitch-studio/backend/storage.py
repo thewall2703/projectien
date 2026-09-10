@@ -62,6 +62,25 @@ def read_file(key_or_path: str) -> bytes:
     return path.read_bytes()
 
 
+def file_exists(key_or_path: str) -> bool:
+    if settings.uses_spaces:
+        from botocore.exceptions import ClientError
+
+        client = _spaces_client()
+        try:
+            client.head_object(Bucket=settings.spaces_bucket, Key=key_or_path)
+            return True
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            if code in {"404", "NoSuchKey", "NotFound"}:
+                return False
+            raise
+    path = Path(key_or_path)
+    if not path.is_absolute():
+        path = FILES_DIR / key_or_path
+    return path.exists()
+
+
 def get_url(key_or_path: str, expires: int = 3600) -> str | None:
     if not settings.uses_spaces:
         return None

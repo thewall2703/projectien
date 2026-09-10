@@ -581,6 +581,7 @@ def get_or_create_media_index(db: Session, asset_id: int) -> MediaIndex:
 
 def prepare_media(db: Session, asset_id: int, on_stage: StageCallback | None = None) -> MediaIndex:
     from backend.sync_assets import classify_link, sync_one, sync_youtube
+    from backend.thumbnails import ensure_thumbnails
 
     row = get_or_create_media_index(db, asset_id)
     require_editable(row)
@@ -603,6 +604,15 @@ def prepare_media(db: Session, asset_id: int, on_stage: StageCallback | None = N
     else:
         _emit_stage(on_stage, "Syncing photo folder…")
         sync_one(db, asset)
+        image_assets = list_image_assets(db, asset)
+        if image_assets:
+            def thumbnail_progress(done: int, total: int) -> None:
+                if done == 1 or done == total or done % 10 == 0:
+                    _emit_stage(on_stage, f"Creating previews… {done}/{total}")
+
+            _, thumbnail_errors = ensure_thumbnails(image_assets, thumbnail_progress)
+            for image_id, error in thumbnail_errors:
+                print(f"  thumbnail failed for asset {image_id}: {error}", flush=True)
         if not row.visual_description.strip():
             _emit_stage(on_stage, "Describing images…")
             images, keys = collect_image_bytes(db, asset)

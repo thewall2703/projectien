@@ -601,26 +601,168 @@ function MediaPreview({
       />
     );
   }
+  return <PhotoGallery key={row.asset_id} images={row.image_assets} />;
+}
+
+function PhotoGallery({
+  images,
+}: {
+  images: MediaIndexRow["image_assets"];
+}) {
+  const PAGE_SIZE = 18;
+  const CONCURRENT_LOADS = 3;
+  const initialTarget = Math.min(PAGE_SIZE, images.length);
+  const [targetCount, setTargetCount] = useState(initialTarget);
+  const [mountedCount, setMountedCount] = useState(
+    Math.min(CONCURRENT_LOADS, initialTarget),
+  );
+
+  const thumbnailSettled = () => {
+    setMountedCount((count) => Math.min(count + 1, targetCount));
+  };
+
+  const loadMore = () => {
+    const nextTarget = Math.min(targetCount + PAGE_SIZE, images.length);
+    setTargetCount(nextTarget);
+    setMountedCount((count) => Math.min(count + CONCURRENT_LOADS, nextTarget));
+  };
+
+  const visible = images.slice(0, mountedCount);
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-      {row.image_assets.map((image) => (
-        <ImageThumb key={image.id} id={image.id} title={image.title} />
-      ))}
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+        {visible.map((image) => (
+          <ImageThumb
+            key={image.id}
+            id={image.id}
+            title={image.title}
+            onSettled={thumbnailSettled}
+          />
+        ))}
+      </div>
+      {mountedCount < targetCount && (
+        <p className="flex items-center gap-2 text-xs text-muted">
+          <Spinner /> Loading previews… ({mountedCount}/{targetCount})
+        </p>
+      )}
+      {mountedCount >= targetCount && targetCount < images.length && (
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs text-muted">
+            Showing {targetCount} of {images.length} images
+          </p>
+          <Button onClick={loadMore}>
+            Load {Math.min(PAGE_SIZE, images.length - targetCount)} more
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
 
-function ImageThumb({ id, title }: { id: number; title: string }) {
+function ImageThumb({
+  id,
+  title,
+  onSettled,
+}: {
+  id: number;
+  title: string;
+  onSettled: () => void;
+}) {
   const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [fullLoaded, setFullLoaded] = useState(false);
+  const [fullFailed, setFullFailed] = useState(false);
+  const settledRef = useRef(false);
+
+  const markSettled = () => {
+    if (settledRef.current) return;
+    settledRef.current = true;
+    onSettled();
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [open]);
+
   return (
-    <div className="relative aspect-[4/3] overflow-hidden rounded-lg border border-line bg-paper">
-      {!loaded && <Skeleton className="absolute inset-0 h-full w-full rounded-none" />}
-      <img
-        src={`/api/assets/${id}/file`}
-        alt={title}
-        className={`h-full w-full object-cover ${loaded ? "opacity-100" : "opacity-0"}`}
-        onLoad={() => setLoaded(true)}
-      />
-    </div>
+    <>
+      <button
+        type="button"
+        className="relative aspect-[4/3] overflow-hidden rounded-lg border border-line bg-paper"
+        onClick={() => {
+          setFullLoaded(false);
+          setFullFailed(false);
+          setOpen(true);
+        }}
+        aria-label={`View full-size ${title}`}
+      >
+        {!loaded && !failed && (
+          <Skeleton className="absolute inset-0 z-0 h-full w-full rounded-none" />
+        )}
+        {failed && (
+          <span className="absolute inset-0 z-10 grid place-items-center px-3 text-xs text-muted">
+            Preview unavailable
+          </span>
+        )}
+        <img
+          src={`/api/assets/${id}/thumbnail.jpg`}
+          alt={title}
+          loading="lazy"
+          decoding="async"
+          className={`relative z-10 h-full w-full object-cover ${failed ? "hidden" : "block"}`}
+          onLoad={() => {
+            setLoaded(true);
+            markSettled();
+          }}
+          onError={() => {
+            setFailed(true);
+            setLoaded(false);
+            markSettled();
+          }}
+        />
+      </button>
+
+      {open && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-ink/90 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label={title}
+          onClick={() => setOpen(false)}
+        >
+          {!fullLoaded && !fullFailed && <Spinner className="absolute h-8 w-8 text-white" />}
+          {fullFailed && (
+            <div className="rounded-xl bg-surface px-6 py-5 text-center">
+              <p className="font-medium">Full-size image unavailable</p>
+              <p className="mt-1 text-sm text-muted">Close this view and try again.</p>
+            </div>
+          )}
+          <img
+            src={`/api/assets/${id}/file`}
+            alt={title}
+            className={`max-h-[90vh] max-w-[94vw] object-contain ${fullFailed ? "hidden" : "block"}`}
+            onLoad={() => setFullLoaded(true)}
+            onError={() => {
+              setFullFailed(true);
+              setFullLoaded(false);
+            }}
+            onClick={(event) => event.stopPropagation()}
+          />
+          <button
+            type="button"
+            className="btn-ghost absolute right-4 top-4 border-white/30 bg-ink/70 text-white"
+            onClick={() => setOpen(false)}
+          >
+            Close
+          </button>
+        </div>
+      )}
+    </>
   );
 }
