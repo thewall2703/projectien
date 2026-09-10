@@ -41,7 +41,7 @@ PREVIEW_FILE_MAX_BYTES = 700 * 1024 * 1024
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp"}
 VIDEO_SUFFIXES = {".mp4", ".webm", ".mov", ".mkv"}
 YOUTUBE_FILE_MAX_BYTES = 5 * 1024 * 1024 * 1024
-DRIVE_FILE_MAX_BYTES = 20 * 1024 * 1024 * 1024
+DRIVE_FILE_MAX_BYTES = 35 * 1024 * 1024 * 1024
 
 
 def classify_link(url: str) -> str:
