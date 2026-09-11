@@ -9,14 +9,23 @@ from backend.models import Recipe
 
 _MODULE_RE = re.compile(r"^M\d+$")
 
-WORD_BUDGETS = {
-    "T0": 90,
-    "T1": 280,
-    "T2": 700,
-    "T3": 1400,
-    "T4": 3500,
-    "T5": 4500,
+WORDS_PER_MINUTE = 120
+DURATION_MINUTES = {
+    "T0": 0.5,
+    "T1": 2,
+    "T2": 5,
+    "T3": 10,
+    "T4": 30,
+    "T5": 90,
 }
+WORD_BUDGETS = {
+    duration: int(minutes * WORDS_PER_MINUTE)
+    for duration, minutes in DURATION_MINUTES.items()
+}
+
+
+def word_limit_for_duration(duration: str) -> int:
+    return WORD_BUDGETS.get(duration, WORD_BUDGETS["T1"])
 
 DURATION_ORDER = ["T0", "T1", "T2", "T3", "T4", "T5"]
 PRIORITY_ORDER = {"P0": 0, "P1": 1, "P2": 2}
@@ -92,7 +101,7 @@ def resolve_recipe(
                 return ResolvedRecipe(
                     ref=chosen.ref,
                     module_sequence=seq,
-                    word_budget=chosen.word_budget or WORD_BUDGETS.get(chosen.duration, 280),
+                    word_budget=word_limit_for_duration(duration),
                 )
     recipes = db.query(Recipe).all()
     exact = [
@@ -132,11 +141,10 @@ def resolve_recipe(
         return ResolvedRecipe(
             ref="AUTO",
             module_sequence=sequence,
-            word_budget=WORD_BUDGETS.get(duration, 280),
+            word_budget=word_limit_for_duration(duration),
         )
-    budget = chosen.word_budget or WORD_BUDGETS.get(duration, 280)
     return ResolvedRecipe(
         ref=chosen.ref,
         module_sequence=parse_sequence(chosen.module_sequence),
-        word_budget=budget,
+        word_budget=word_limit_for_duration(duration),
     )

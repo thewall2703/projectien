@@ -29,7 +29,7 @@ def count_script_words(script: dict[str, Any]) -> int:
 
 
 def budget_range(word_budget: int) -> tuple[int, int]:
-    return int(word_budget * 0.85), int(word_budget * 1.15)
+    return int(word_budget * 0.85), word_budget
 
 
 def trim_script_to_budget(script: dict[str, Any], word_budget: int) -> dict[str, Any]:
@@ -229,7 +229,8 @@ def validate_script(
     low, high = budget_range(word_budget)
     if word_count < low or word_count > high:
         violations.append(
-            f"Word count {word_count} is outside budget {word_budget} (±15%, {low}-{high})"
+            f"Word count {word_count} is outside the {low}-{high} range "
+            f"({word_budget}-word hard limit)"
         )
 
     for fact in facts:

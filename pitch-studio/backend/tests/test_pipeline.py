@@ -123,14 +123,14 @@ class ValidatorTests(unittest.TestCase):
                     "topic_title": "Student builders",
                     "pages": [13, 14],
                     "heading": "Build for real",
-                    "text": " ".join(f"word{index}" for index in range(320)) + ".",
+                    "text": " ".join(f"word{index}" for index in range(238)) + ".",
                 }
             ],
             "cta": "Come sit in class Saturday.",
         }
-        trimmed = trim_script_to_budget(script, 280)
-        self.assertEqual(count_script_words(script), 325)
-        self.assertEqual(count_script_words(trimmed), 322)
+        trimmed = trim_script_to_budget(script, 240)
+        self.assertEqual(count_script_words(script), 243)
+        self.assertEqual(count_script_words(trimmed), 240)
         self.assertEqual(trimmed["sections"][0]["topic_id"], 7)
         self.assertEqual(trimmed["sections"][0]["pages"], [13, 14])
         self.assertEqual(trimmed["cta"], script["cta"])
@@ -144,14 +144,14 @@ class ValidatorTests(unittest.TestCase):
                     "topic_title": topic.title,
                     "pages": [13, 14],
                     "heading": "Build for real",
-                    "text": " ".join(f"word{index}" for index in range(320)) + ".",
+                    "text": " ".join(f"word{index}" for index in range(238)) + ".",
                 }
             ],
             "cta": "Come sit in class Saturday.",
         }
-        repaired, violations = _validate_and_repair_budget(script, [], ["M01"], 280, [topic])
+        repaired, violations = _validate_and_repair_budget(script, [], ["M01"], 240, [topic])
         self.assertEqual(violations, [])
-        self.assertEqual(count_script_words(repaired), 322)
+        self.assertEqual(count_script_words(repaired), 240)
 
 
 class ScriptFlowTests(unittest.TestCase):
@@ -327,11 +327,11 @@ class PromptTests(unittest.TestCase):
             sequence=["M01"],
             facts=[],
             word_budget=280,
-            corrections=["Word count 340 is outside budget 280 (±15%, 238-322)"],
+            corrections=["Word count 340 is outside the 238-280 range (280-word hard limit)"],
             draft=draft,
         )
         user = messages[1]["content"]
-        self.assertIn("238-322", user)
+        self.assertIn("238-280", user)
         self.assertIn("Why this exists.", user)
         self.assertIn("Rewrite THAT draft", user)
 

@@ -7,7 +7,12 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.database import Base
 from backend.models import Recipe
-from backend.pipeline.resolver import is_valid_sequence, parse_sequence, resolve_recipe
+from backend.pipeline.resolver import (
+    is_valid_sequence,
+    parse_sequence,
+    resolve_recipe,
+    word_limit_for_duration,
+)
 
 
 class ResolverPersonaTests(unittest.TestCase):
@@ -62,6 +67,13 @@ class ResolverPersonaTests(unittest.TestCase):
         resolved = resolve_recipe(self.db, "A", "T1", "CH2", "I2", recipe_ref="A8-1")
         self.assertEqual(resolved.ref, "A8-1")
         self.assertEqual(resolved.module_sequence, ["M04", "M08", "M11", "M14"])
+        self.assertEqual(resolved.word_budget, 240)
+
+    def test_word_limits_are_derived_at_120_words_per_minute(self) -> None:
+        self.assertEqual(
+            {duration: word_limit_for_duration(duration) for duration in ("T0", "T1", "T2", "T3", "T4", "T5")},
+            {"T0": 60, "T1": 240, "T2": 600, "T3": 1200, "T4": 3600, "T5": 10800},
+        )
 
     def test_every_valid_ref_is_reachable(self) -> None:
         recipes = self.db.query(Recipe).all()

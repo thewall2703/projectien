@@ -5,7 +5,7 @@ import time
 from sqlalchemy.orm import Session
 
 from backend.models import Recipe
-from backend.pipeline.resolver import is_valid_sequence, parse_sequence
+from backend.pipeline.resolver import is_valid_sequence, parse_sequence, word_limit_for_duration
 from backend.schemas import RecipeOption
 
 _TTL_SECONDS = 120.0
@@ -37,7 +37,7 @@ def list_recipe_options(db: Session) -> list[RecipeOption]:
                 intent=recipe.intent,
                 module_sequence=recipe.module_sequence,
                 priority=recipe.priority or "P2",
-                word_budget=recipe.word_budget or 0,
+                word_budget=word_limit_for_duration(recipe.duration),
                 valid=is_valid_sequence(sequence),
             )
         )
