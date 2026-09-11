@@ -1,6 +1,22 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { Link } from "react-router-dom";
 
+export function BrandMark({ className = "" }: { className?: string }) {
+  return (
+    <span
+      className={`brand-mark relative inline-grid place-items-center overflow-hidden rounded-[0.7em] border border-white/80 font-display font-semibold leading-none tracking-tight shadow-[0_10px_24px_-16px_rgba(43,40,35,0.45),inset_0_1px_0_rgba(255,255,255,0.95)] ${className}`}
+      aria-hidden
+    >
+      <span className="brand-mark-grid pointer-events-none absolute inset-0" />
+      <span className="brand-mark-sheen pointer-events-none absolute inset-x-0 top-0 h-1/2" />
+      <span className="relative z-[1]">
+        <span className="text-brand-yellow">P</span>
+        <span className="text-black">S</span>
+      </span>
+    </span>
+  );
+}
+
 export function Wordmark({
   to = "/",
   className = "",
@@ -12,9 +28,16 @@ export function Wordmark({
 }) {
   const sizeClass =
     size === "lg" ? "text-4xl md:text-5xl" : size === "sm" ? "text-lg" : "text-xl md:text-2xl";
+  const markClass = size === "lg" ? "h-12 w-12 text-[1.35rem]" : size === "sm" ? "h-8 w-8 text-[0.85rem]" : "h-9 w-9 text-[0.95rem]";
   return (
-    <Link to={to} className={`font-display leading-none tracking-tight text-black ${sizeClass} ${className}`}>
-      <span className="text-brand-yellow">P</span>itch Studio
+    <Link
+      to={to}
+      className={`inline-flex items-center gap-2.5 font-display leading-none tracking-tight text-black ${sizeClass} ${className}`}
+    >
+      <BrandMark className={markClass} />
+      <span>
+        <span className="text-brand-yellow">P</span>itch Studio
+      </span>
     </Link>
   );
 }
