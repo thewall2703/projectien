@@ -2,12 +2,26 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
+from backend.pipeline.brand_deck import BrandSlide
 from backend.pipeline.llm import _extract_json, _multimodal_payload, _request_payload
-from backend.pipeline.prompts import UNIVERSITY_STATUS_LINE, duration_framework, script_messages
+from backend.pipeline.prompts import (
+    UNIVERSITY_STATUS_LINE,
+    duration_framework,
+    review_pratham_voice,
+    script_messages,
+)
 from backend.pipeline.resolver import _compose_fallback, parse_sequence
-from backend.pipeline.runner import pick_assets
-from backend.pipeline.validator import align_script_to_recipe, count_script_words, validate_script
+from backend.pipeline.runner import pick_assets, run
+from backend.pipeline.script_flow import ScriptFlowError, ScriptTopic, build_script_topics, notes_by_page
+from backend.pipeline.validator import (
+    align_script_to_recipe,
+    align_script_to_topics,
+    count_script_words,
+    validate_script,
+)
+from backend.schemas import ScriptPayload
 
 
 def fact(status: str, value: str, name: str = "x") -> SimpleNamespace:
@@ -88,6 +102,124 @@ class ValidatorTests(unittest.TestCase):
         violations = validate_script(script, [], ["M02"], 8)
         self.assertTrue(any("accreditation" in item.lower() for item in violations))
 
+    def test_missing_final_ask(self):
+        script = {"sections": [{"module_id": "M01", "text": "We train operators on live work."}], "cta": ""}
+        violations = validate_script(script, [], ["M01"], 6)
+        self.assertTrue(any("final ask" in item for item in violations))
+
+    def test_old_script_payload_still_parses(self):
+        payload = ScriptPayload.model_validate(
+            {"sections": [{"module_id": "M01", "heading": "Hook", "text": "Hi there."}], "cta": "Visit"}
+        )
+        self.assertEqual(payload.sections[0].topic_id, 0)
+        self.assertEqual(payload.sections[0].pages, [])
+
+
+class ScriptFlowTests(unittest.TestCase):
+    def test_collapses_consecutive_pages_of_the_same_topic(self):
+        plan = [
+            BrandSlide(1, "", "Cover"),
+            BrandSlide(6, "M01", "Origin"),
+            BrandSlide(7, "M01", "Story"),
+            BrandSlide(51, "M04", "Proof"),
+            BrandSlide(92, "M14", "Close"),
+        ]
+        topics = [
+            SimpleNamespace(id=1, title="Open", pages_json="[1]", summary="Start here", vision="", module_ids=""),
+            SimpleNamespace(
+                id=2,
+                title="Origin",
+                pages_json="[6,7,8]",
+                summary="Why we exist",
+                vision="Build operators",
+                module_ids="M01",
+            ),
+            SimpleNamespace(id=3, title="Proof", pages_json="[51]", summary="Outcomes", vision="", module_ids="M04,M07"),
+            SimpleNamespace(id=4, title="Close", pages_json="[92]", summary="Ask", vision="", module_ids="M14"),
+        ]
+        flow = build_script_topics(plan, topics, ["M01", "M04", "M14"])
+        self.assertEqual([topic.topic_id for topic in flow], [1, 2, 3, 4])
+        self.assertEqual(flow[1].pages, [6, 7])
+        self.assertEqual(flow[1].labels, ["Origin", "Story"])
+        self.assertEqual(flow[1].recipe_modules, ["M01"])
+        self.assertEqual(flow[2].recipe_modules, ["M04"])
+
+    def test_collapsed_topic_collects_slide_modules(self):
+        plan = [
+            BrandSlide(6, "M01", "Origin"),
+            BrandSlide(51, "M04", "Proof"),
+        ]
+        topics = [
+            SimpleNamespace(id=2, title="Story", pages_json="[6,51]", summary="", vision="", module_ids="M01"),
+        ]
+        flow = build_script_topics(plan, topics, ["M01", "M04", "M14"])
+        self.assertEqual(len(flow), 1)
+        self.assertEqual(flow[0].pages, [6, 51])
+        self.assertEqual(flow[0].recipe_modules, ["M01", "M04"])
+
+    def test_missing_topic_index_fails(self):
+        with self.assertRaises(ScriptFlowError):
+            build_script_topics([BrandSlide(1, "", "Cover")], [], ["M01"])
+
+    def test_unmapped_page_fails(self):
+        with self.assertRaises(ScriptFlowError):
+            build_script_topics(
+                [BrandSlide(99, "M01", "Unknown")],
+                [SimpleNamespace(id=1, title="Open", pages_json="[1]", summary="", vision="", module_ids="")],
+                ["M01"],
+            )
+
+    def test_align_fills_from_topic_and_recipe(self):
+        topics = [
+            ScriptTopic(
+                topic_id=1,
+                title="Origin",
+                pages=[6, 7],
+                recipe_modules=["M01"],
+                module_ids=["M01"],
+                summary="Why this exists",
+            ),
+            ScriptTopic(topic_id=2, title="Close", pages=[92], recipe_modules=["M14"], module_ids=["M14"], summary="Ask"),
+        ]
+        script = {
+            "sections": [{"topic_id": 2, "heading": "Ask", "text": "Come this Saturday.", "pages": [92]}],
+            "cta": "Come this Saturday.",
+        }
+        module = SimpleNamespace(id="M01", name="Origin", job="", core_content="We train operators on live projects.")
+        aligned = align_script_to_topics(script, topics, [module])
+        self.assertEqual([section["topic_id"] for section in aligned["sections"]], [1, 2])
+        self.assertEqual(aligned["sections"][0]["pages"], [6, 7])
+        self.assertEqual(aligned["sections"][0]["topic_title"], "Origin")
+        self.assertIn("operators", aligned["sections"][0]["text"])
+
+    def test_topic_order_and_page_coverage(self):
+        topics = [
+            ScriptTopic(topic_id=1, title="A", pages=[1, 2]),
+            ScriptTopic(topic_id=2, title="B", pages=[3]),
+        ]
+        script = {
+            "sections": [
+                {"topic_id": 2, "pages": [3], "text": "Second first."},
+                {"topic_id": 1, "pages": [1, 2], "text": "First second."},
+            ],
+            "cta": "Visit campus",
+        }
+        violations = validate_script(script, [], ["M01"], 6, topics=topics)
+        self.assertTrue(any("topic order" in item for item in violations))
+        self.assertTrue(any("coverage" in item or "pages" in item for item in violations))
+
+    def test_notes_attach_to_each_selected_page(self):
+        script = {
+            "sections": [
+                {"pages": [6, 7], "text": "Origin spoken note."},
+                {"pages": [92], "text": "Close spoken note."},
+            ]
+        }
+        self.assertEqual(
+            notes_by_page(script),
+            {6: "Origin spoken note.", 7: "Origin spoken note.", 92: "Close spoken note."},
+        )
+
 
 class PromptTests(unittest.TestCase):
     def test_duration_framework_progresses_with_time(self):
@@ -163,6 +295,258 @@ class PromptTests(unittest.TestCase):
         self.assertIn("238-322", user)
         self.assertIn("Why this exists.", user)
         self.assertIn("Rewrite THAT draft", user)
+
+    def test_topic_flow_governs_order_and_rewrite(self):
+        topic = ScriptTopic(
+            topic_id=4,
+            title="The close",
+            pages=[92],
+            labels=["Come see"],
+            summary="Ask on the last slide",
+            recipe_modules=["M14"],
+            module_ids=["M14"],
+        )
+        draft = {
+            "sections": [
+                {
+                    "topic_id": 4,
+                    "topic_title": "The close",
+                    "pages": [92],
+                    "heading": "Ask",
+                    "text": "Come see the campus.",
+                }
+            ],
+            "cta": "Come this Saturday.",
+        }
+        messages = script_messages(
+            audience_cluster="A",
+            duration="T1",
+            channel="CH1",
+            intent="I2",
+            temperature="X3",
+            context_note="",
+            modules=[],
+            sequence=["M07", "M14"],
+            facts=[],
+            word_budget=280,
+            topic_flow=[topic],
+            draft=draft,
+        )
+        system = messages[0]["content"]
+        user = messages[1]["content"]
+        self.assertIn("DECK TOPIC FLOW", user)
+        self.assertIn("The close", user)
+        self.assertIn("Weave it into the most relevant existing", user)
+        self.assertIn("topic_id", system)
+        self.assertIn("Keep the same topic_id", user)
+
+
+class VoiceReviewTests(unittest.TestCase):
+    def test_missing_excerpts_fail(self):
+        result = review_pratham_voice({"sections": [], "cta": "Visit"}, [])
+        self.assertFalse(result["passed"])
+        self.assertTrue(any("Pratham" in item for item in result["violations"]))
+
+    def test_violations_fail_even_when_model_passes(self):
+        with mock.patch(
+            "backend.pipeline.llm.chat_json",
+            return_value={"passed": True, "score": 0.95, "violations": ["Sounds like a brochure"]},
+        ):
+            result = review_pratham_voice(
+                {"sections": [{"text": "A world-class ecosystem."}], "cta": "Apply"},
+                [SimpleNamespace(text="Stay in India", topic="vision", module_ids="M12", speaker="Pratham Mittal", source_name="C0005.MP4", source_file_id="abc", start_sec=10)],
+            )
+        self.assertFalse(result["passed"])
+        self.assertIn("Sounds like a brochure", result["violations"])
+
+    def test_clean_review_passes(self):
+        with mock.patch(
+            "backend.pipeline.llm.chat_json",
+            return_value={"passed": True, "score": 0.9, "violations": []},
+        ):
+            result = review_pratham_voice(
+                {"sections": [{"text": "Come sit in a class."}], "cta": "Come Saturday"},
+                [SimpleNamespace(text="Stay in India", topic="vision", module_ids="M12", speaker="Pratham Mittal", source_name="C0005.MP4", source_file_id="abc", start_sec=10)],
+            )
+        self.assertTrue(result["passed"])
+
+
+class RunnerGateTests(unittest.TestCase):
+    def _generation(self):
+        return SimpleNamespace(
+            id=1,
+            audience_cluster="A",
+            duration="T1",
+            channel="CH1",
+            intent="I2",
+            temperature="X2",
+            context_note="",
+            recipe_ref="A2-1",
+            module_sequence="",
+            status="queued",
+            script_json="",
+            validation_report="",
+            error="",
+            deck_spec_json="",
+            pptx_path="",
+            asset_ids="",
+            objection_ids="",
+            founder_quote_ids="",
+            report_asset_ids="",
+            report_passages_json="",
+        )
+
+    def _db(self, generation):
+        db = mock.MagicMock()
+        db.get.return_value = generation
+        db.query.return_value.filter.return_value.all.return_value = []
+        db.query.return_value.all.return_value = []
+        return db
+
+    def _resolved(self):
+        return SimpleNamespace(ref="A2-1", module_sequence=["M01", "M14"], word_budget=80)
+
+    def test_fails_when_topics_cannot_be_mapped(self):
+        generation = self._generation()
+        with mock.patch("backend.pipeline.runner.SessionLocal", return_value=self._db(generation)), mock.patch(
+            "backend.pipeline.runner.resolve_recipe", return_value=self._resolved()
+        ), mock.patch(
+            "backend.pipeline.runner.plan_pages", return_value=[BrandSlide(1, "", "Cover")]
+        ), mock.patch(
+            "backend.pipeline.runner.pick_report_passages", return_value=[]
+        ), mock.patch(
+            "backend.pipeline.runner.load_script_topics",
+            side_effect=ScriptFlowError("Prepare Brand Deck topics before generating a pitch"),
+        ):
+            run(1)
+        self.assertEqual(generation.status, "failed")
+        self.assertIn("topics", generation.error.lower())
+
+    def test_fails_without_pratham_excerpts(self):
+        generation = self._generation()
+        topic = ScriptTopic(topic_id=1, title="Open", pages=[1])
+        with mock.patch("backend.pipeline.runner.SessionLocal", return_value=self._db(generation)), mock.patch(
+            "backend.pipeline.runner.resolve_recipe", return_value=self._resolved()
+        ), mock.patch(
+            "backend.pipeline.runner.plan_pages", return_value=[BrandSlide(1, "", "Cover")]
+        ), mock.patch(
+            "backend.pipeline.runner.pick_report_passages", return_value=[]
+        ), mock.patch(
+            "backend.pipeline.runner.load_script_topics", return_value=[topic]
+        ), mock.patch(
+            "backend.pipeline.runner.pick_founder_quotes", return_value=[]
+        ):
+            run(1)
+        self.assertEqual(generation.status, "failed")
+        self.assertIn("Pratham", generation.error)
+
+    def test_voice_gate_retries_then_fails(self):
+        generation = self._generation()
+        topic = ScriptTopic(topic_id=1, title="Open", pages=[1], recipe_modules=["M01"])
+        script = {
+            "sections": [{"topic_id": 1, "topic_title": "Open", "pages": [1], "heading": "Open", "text": "Come sit in."}],
+            "cta": "Come Saturday.",
+        }
+        reviews = [
+            {"passed": False, "score": 0.4, "violations": ["Sounds written"]},
+            {"passed": False, "score": 0.5, "violations": ["Still corporate"]},
+            {"passed": False, "score": 0.5, "violations": ["Still corporate"]},
+        ]
+        with mock.patch("backend.pipeline.runner.SessionLocal", return_value=self._db(generation)), mock.patch(
+            "backend.pipeline.runner.resolve_recipe", return_value=self._resolved()
+        ), mock.patch(
+            "backend.pipeline.runner.plan_pages", return_value=[BrandSlide(1, "", "Cover")]
+        ), mock.patch(
+            "backend.pipeline.runner.pick_report_passages", return_value=[]
+        ), mock.patch(
+            "backend.pipeline.runner.load_script_topics", return_value=[topic]
+        ), mock.patch(
+            "backend.pipeline.runner.pick_founder_quotes",
+            return_value=[
+                SimpleNamespace(
+                    id=7,
+                    text="Stay in India",
+                    speaker="Pratham Mittal",
+                    topic="vision",
+                    module_ids="M12",
+                    source_name="C0005.MP4",
+                    source_file_id="abc",
+                    start_sec=10,
+                )
+            ],
+        ), mock.patch(
+            "backend.pipeline.runner.chat_json", return_value=script
+        ), mock.patch(
+            "backend.pipeline.runner.ScriptPayload.model_validate", return_value=None
+        ), mock.patch(
+            "backend.pipeline.runner.align_script_to_topics", side_effect=lambda payload, topics, modules: payload
+        ), mock.patch(
+            "backend.pipeline.runner.validate_script", return_value=[]
+        ), mock.patch(
+            "backend.pipeline.runner.review_pratham_voice", side_effect=reviews
+        ):
+            run(1)
+        self.assertEqual(generation.status, "failed")
+        self.assertIn("voice", generation.error.lower())
+
+    def test_voice_rewrite_can_pass(self):
+        generation = self._generation()
+        topic = ScriptTopic(topic_id=1, title="Open", pages=[1], recipe_modules=["M01"])
+        script = {
+            "sections": [{"topic_id": 1, "topic_title": "Open", "pages": [1], "heading": "Open", "text": "Come sit in."}],
+            "cta": "Come Saturday.",
+        }
+        reviews = [
+            {"passed": False, "score": 0.4, "violations": ["Sounds written"]},
+            {"passed": True, "score": 0.9, "violations": []},
+        ]
+        with mock.patch("backend.pipeline.runner.SessionLocal", return_value=self._db(generation)), mock.patch(
+            "backend.pipeline.runner.resolve_recipe", return_value=self._resolved()
+        ), mock.patch(
+            "backend.pipeline.runner.plan_pages", return_value=[BrandSlide(1, "", "Cover")]
+        ), mock.patch(
+            "backend.pipeline.runner.pick_report_passages", return_value=[]
+        ), mock.patch(
+            "backend.pipeline.runner.load_script_topics", return_value=[topic]
+        ), mock.patch(
+            "backend.pipeline.runner.pick_founder_quotes",
+            return_value=[
+                SimpleNamespace(
+                    id=7,
+                    text="Stay in India",
+                    speaker="Pratham Mittal",
+                    topic="vision",
+                    module_ids="M12",
+                    source_name="C0005.MP4",
+                    source_file_id="abc",
+                    start_sec=10,
+                )
+            ],
+        ), mock.patch(
+            "backend.pipeline.runner.chat_json", return_value=script
+        ), mock.patch(
+            "backend.pipeline.runner.ScriptPayload.model_validate", return_value=None
+        ), mock.patch(
+            "backend.pipeline.runner.align_script_to_topics", side_effect=lambda payload, topics, modules: payload
+        ), mock.patch(
+            "backend.pipeline.runner.validate_script", return_value=[]
+        ), mock.patch(
+            "backend.pipeline.runner.review_pratham_voice", side_effect=reviews
+        ), mock.patch(
+            "backend.pipeline.runner.deck_spec_from_plan",
+            return_value=SimpleNamespace(model_dump_json=lambda: "{}"),
+        ), mock.patch(
+            "backend.pipeline.runner.render_pptx", return_value="/tmp/deck.pptx"
+        ), mock.patch(
+            "backend.pipeline.runner.brand_deck_file_key", return_value=""
+        ), mock.patch(
+            "backend.pipeline.runner._select_assets", return_value=[]
+        ), mock.patch(
+            "backend.pipeline.runner._select_objections", return_value=[]
+        ):
+            run(1)
+        self.assertEqual(generation.status, "done")
+        self.assertEqual(generation.pptx_path, "/tmp/deck.pptx")
 
 
 class JsonExtractTests(unittest.TestCase):

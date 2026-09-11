@@ -245,7 +245,10 @@ class GenerationCreate(BaseModel):
 
 
 class ScriptSection(BaseModel):
-    module_id: str
+    module_id: str = ""
+    topic_id: int = 0
+    topic_title: str = ""
+    pages: list[int] = []
     heading: str = ""
     text: str = ""
 

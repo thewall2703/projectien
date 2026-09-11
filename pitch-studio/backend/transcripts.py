@@ -165,6 +165,10 @@ def curate_chunk(chunk_text: str) -> list[dict[str, Any]]:
     return parse_curation_payload(payload)
 
 
+def is_pratham_quote(quote: FounderQuote) -> bool:
+    return "pratham" in (getattr(quote, "speaker", "") or "").lower()
+
+
 def pick_founder_quotes(
     quotes: list[FounderQuote],
     sequence: list[str],
@@ -173,9 +177,13 @@ def pick_founder_quotes(
     sequence_set = set(sequence)
     buckets: dict[str, list[FounderQuote]] = {}
     leftovers: list[FounderQuote] = []
-    for quote in quotes:
-        if quote.status != "approved":
-            continue
+    usable = [
+        quote
+        for quote in quotes
+        if quote.status == "approved" and is_pratham_quote(quote)
+    ]
+    usable.sort(key=lambda quote: (0 if getattr(quote, "verbatim", False) else 1, quote.id if hasattr(quote, "id") else 0))
+    for quote in usable:
         ids = [part.strip() for part in (quote.module_ids or "").split(",") if part.strip()]
         matches = [mid for mid in ids if mid in sequence_set]
         if matches:

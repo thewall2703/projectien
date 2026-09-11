@@ -129,7 +129,10 @@ export type FounderQuoteRow = {
 };
 
 export type ScriptSection = {
-  module_id: string;
+  module_id?: string;
+  topic_id?: number;
+  topic_title?: string;
+  pages?: number[];
   heading: string;
   text: string;
 };

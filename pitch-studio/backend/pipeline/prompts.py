@@ -70,6 +70,44 @@ def duration_framework(duration: str) -> str:
     return _DURATION_FRAMEWORK.get(duration, _DURATION_FRAMEWORK["T2"])
 
 
+def _format_topic_flow(topic_flow: list[Any], modules: list[Module], sequence: list[str]) -> str:
+    by_id = {module.id: module for module in modules}
+    blocks = []
+    for index, topic in enumerate(topic_flow, start=1):
+        payload = topic.to_prompt_dict() if hasattr(topic, "to_prompt_dict") else topic
+        labels = ", ".join(str(label) for label in (payload.get("labels") or []) if label)
+        recipe_ids = payload.get("recipe_modules") or []
+        module_blocks = []
+        for module_id in recipe_ids:
+            module = by_id.get(module_id)
+            if not module:
+                continue
+            module_blocks.append(
+                f"Recipe {module.id} {module.name}: {module.job}\n"
+                f"Core content: {module.core_content}\n"
+                f"Flex points: {module.flex_points or '(none)'}"
+            )
+        blocks.append(
+            f"### Beat {index}: {payload.get('title')} ({payload.get('page_range')})\n"
+            f"topic_id: {payload.get('topic_id')}\n"
+            f"Selected slides: {labels or '(unlabeled)'}\n"
+            f"Topic summary: {payload.get('summary') or '(none)'}\n"
+            f"Topic vision: {payload.get('vision') or '(none)'}\n"
+            f"{chr(10).join(module_blocks) or 'No overlapping recipe module — stay with the slides.'}"
+        )
+    used: set[str] = set()
+    for topic in topic_flow:
+        payload = topic.to_prompt_dict() if hasattr(topic, "to_prompt_dict") else topic
+        used.update(str(item) for item in (payload.get("recipe_modules") or []))
+    leftovers = [module_id for module_id in sequence if module_id not in used]
+    if leftovers:
+        blocks.append(
+            "Recipe material not tied to a selected topic. Weave it into the most relevant existing "
+            f"beat only: {', '.join(leftovers)}"
+        )
+    return "\n\n".join(blocks)
+
+
 def _format_modules(modules: list[Module], sequence: list[str]) -> str:
     by_id = {module.id: module for module in modules}
     blocks = []
@@ -117,6 +155,7 @@ def script_messages(
     word_budget: int,
     founder_quotes: list[FounderQuote] | None = None,
     report_passages: list[dict] | None = None,
+    topic_flow: list[Any] | None = None,
     corrections: list[str] | None = None,
     draft: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
@@ -173,9 +212,29 @@ def script_messages(
         "in the relevant module (recruiter, role, programme, or named outcome) and attribute the report title "
         "naturally, the way a person would. If LOCKED and REPORT EVIDENCE conflict on a number, use LOCKED.\n"
         "- One ask only, at the end. Make it sound like a person asking, not a call-to-action button.\n"
-        "- Follow the module sequence exactly. One section per module, in that order. The 'text' is the spoken "
-        "words for that beat; 'heading' is a short internal label (2-4 words) only.\n"
-        '- Output: {"sections":[{"module_id":"M01","heading":"...","text":"..."}], "cta":"..."}'
+        + (
+            "- Follow the DECK TOPIC FLOW exactly. One section per topic, in that order. Never invent, "
+            "merge, or reorder topics. Extra recipe information may be woven into the most relevant "
+            "existing topic only. The 'text' is the spoken words for that beat; 'heading' is a short "
+            "internal label (2-4 words) only.\n"
+            '- Output: {"sections":[{"topic_id":1,"topic_title":"...","pages":[1,2],"module_id":"M01",'
+            '"heading":"...","text":"..."}], "cta":"..."}'
+            if topic_flow
+            else
+            "- Follow the module sequence exactly. One section per module, in that order. The 'text' is the spoken "
+            "words for that beat; 'heading' is a short internal label (2-4 words) only.\n"
+            '- Output: {"sections":[{"module_id":"M01","heading":"...","text":"..."}], "cta":"..."}'
+        )
+    )
+    flow_block = (
+        f"DECK TOPIC FLOW — this is the governing spoken order. Stay inside it:\n"
+        f"{_format_topic_flow(topic_flow, modules, sequence)}\n\n"
+        f"Recipe module sequence for supporting material only: {' > '.join(sequence)}\n"
+        if topic_flow
+        else
+        f"Module sequence: {' > '.join(sequence)}\n\n"
+        f"Modules (the beats to hit, in order — the content is raw material, rewrite it in the spoken voice):\n"
+        f"{_format_modules(modules, sequence)}"
     )
     user = (
         f"You are pitching to this person:\n"
@@ -187,20 +246,23 @@ def script_messages(
         f"Context note: {context_note or '(none)'}\n"
         f"Duration strategy — follow this as the governing narrative brief:\n{duration_framework(duration)}\n"
         f"Word budget: {word_budget} words. Hard range: {low}-{high} words.\n"
-        f"Module sequence: {' > '.join(sequence)}\n\n"
+        f"{flow_block}\n\n"
         f"FOUNDER VOICE — this is the exact tone, cadence, and vocabulary to write the whole pitch in "
-        f"(Pratham Mittal, transcribed):\n{voice}\n\n"
+        f"(Pratham Mittal, transcribed). Write like him talking, not like a brochure:\n{voice}\n\n"
         f"LOCKED — use verbatim where relevant:\n{locked}\n\n"
         f"FORBIDDEN — never state these:\n{forbidden}\n\n"
-        f"REPORT EVIDENCE:\n{reports}\n\n"
-        f"Modules (the beats to hit, in order — the content is raw material, rewrite it in the spoken voice):\n"
-        f"{_format_modules(modules, sequence)}"
+        f"REPORT EVIDENCE:\n{reports}"
     )
     if draft:
         current = count_script_words(draft)
+        order_rule = (
+            "Keep the same topic_id, pages, topic_title, locked facts, and spoken founder voice. "
+            if topic_flow
+            else "Keep the same module order, the locked facts, and the spoken founder voice. "
+        )
         user += (
             f"\n\nPrevious draft is {current} words. Rewrite THAT draft — do not start over. "
-            f"Keep the same module order, the locked facts, and the spoken founder voice. "
+            f"{order_rule}"
             f"Cut or add whole sentences (never pad with filler or hype) until the total word count, "
             f"including the ask, is between {low} and {high}. It must still read like a person talking. "
             f"Return the full revised JSON.\n"
@@ -209,3 +271,44 @@ def script_messages(
     if corrections:
         user += "\n\nPrevious draft failed validation. Fix these issues:\n- " + "\n- ".join(corrections)
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+def voice_review_messages(script: dict[str, Any], founder_quotes: list[FounderQuote]) -> list[dict[str, str]]:
+    voice = "\n".join(format_founder_line(quote) for quote in founder_quotes) or "(none)"
+    system = (
+        "You review a spoken pitch for whether it sounds like Pratham Mittal talking. "
+        "Use only the transcript excerpts as the style reference. "
+        "Pass only if the draft is direct, conversational, concrete-to-point, plain, "
+        "and free of brochure or corporate phrasing. "
+        "Fail if it copies transcript sentences, treats transcript anecdotes as unsourced facts, "
+        "or sounds written rather than spoken. "
+        'Return JSON only: {"passed":true,"score":0.0,"violations":["..."]}'
+    )
+    user = (
+        f"PRATHAM TRANSCRIPT EXCERPTS:\n{voice}\n\n"
+        f"DRAFT SCRIPT:\n{json.dumps(script, ensure_ascii=False)}"
+    )
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+def review_pratham_voice(script: dict[str, Any], founder_quotes: list[FounderQuote]) -> dict[str, Any]:
+    from backend.pipeline.llm import chat_json
+
+    if not founder_quotes:
+        return {
+            "passed": False,
+            "score": 0.0,
+            "violations": ["Approved Pratham Mittal transcript excerpts are missing"],
+        }
+    payload = chat_json(voice_review_messages(script, founder_quotes))
+    violations = [
+        str(item).strip()
+        for item in (payload.get("violations") or [])
+        if str(item).strip()
+    ]
+    try:
+        score = float(payload.get("score") or 0.0)
+    except (TypeError, ValueError):
+        score = 0.0
+    passed = bool(payload.get("passed")) and score >= 0.7 and not violations
+    return {"passed": passed, "score": score, "violations": violations}

@@ -15,9 +15,10 @@ from backend.pipeline.brand_deck import (
 )
 from backend.pipeline.deck import slide_count_for
 from backend.pipeline.llm import chat_json
-from backend.pipeline.prompts import script_messages
+from backend.pipeline.prompts import review_pratham_voice, script_messages
 from backend.pipeline.resolver import resolve_recipe
-from backend.pipeline.validator import align_script_to_recipe, validate_script
+from backend.pipeline.script_flow import ScriptFlowError, load_script_topics, notes_by_page
+from backend.pipeline.validator import align_script_to_topics, validate_script
 from backend.schemas import ScriptPayload
 from backend.transcripts import pick_founder_quotes
 
@@ -108,6 +109,17 @@ def run(generation_id: int) -> None:
         facts = db.query(LockedFact).all()
         founder_quotes = _select_founder_quotes(db, resolved.module_sequence)
         report_passages = pick_report_passages(db.query(Asset).all(), resolved.module_sequence)
+        plan = plan_pages(resolved.module_sequence, slide_count_for(generation.duration))
+        try:
+            topic_flow = load_script_topics(db, plan, resolved.module_sequence)
+        except ScriptFlowError as exc:
+            generation.error = str(exc)
+            _set_status(db, generation, "failed")
+            return
+        if not founder_quotes:
+            generation.error = "Approved Pratham Mittal transcript excerpts are required before generating a script"
+            _set_status(db, generation, "failed")
+            return
 
         _set_status(db, generation, "generating_script")
         messages = script_messages(
@@ -123,13 +135,16 @@ def run(generation_id: int) -> None:
             word_budget=resolved.word_budget,
             founder_quotes=founder_quotes,
             report_passages=report_passages,
+            topic_flow=topic_flow,
         )
         script = chat_json(messages)
         ScriptPayload.model_validate(script)
-        script = align_script_to_recipe(script, resolved.module_sequence, modules)
+        script = align_script_to_topics(script, topic_flow, modules)
 
         _set_status(db, generation, "validating")
-        violations = validate_script(script, facts, resolved.module_sequence, resolved.word_budget)
+        violations = validate_script(
+            script, facts, resolved.module_sequence, resolved.word_budget, topics=topic_flow
+        )
         for _attempt in range(2):
             if not violations:
                 break
@@ -147,30 +162,74 @@ def run(generation_id: int) -> None:
                     word_budget=resolved.word_budget,
                     founder_quotes=founder_quotes,
                     report_passages=report_passages,
+                    topic_flow=topic_flow,
                     corrections=violations,
                     draft=script,
                 )
             )
             ScriptPayload.model_validate(script)
-            script = align_script_to_recipe(script, resolved.module_sequence, modules)
-            violations = validate_script(script, facts, resolved.module_sequence, resolved.word_budget)
-        generation.script_json = json.dumps(script, ensure_ascii=False)
-        generation.validation_report = "\n".join(violations)
+            script = align_script_to_topics(script, topic_flow, modules)
+            violations = validate_script(
+                script, facts, resolved.module_sequence, resolved.word_budget, topics=topic_flow
+            )
         if violations:
+            generation.script_json = json.dumps(script, ensure_ascii=False)
+            generation.validation_report = "\n".join(violations)
             generation.error = "Script failed validation after retry"
             _set_status(db, generation, "failed")
             return
 
+        review = review_pratham_voice(script, founder_quotes)
+        for _attempt in range(2):
+            if review["passed"]:
+                break
+            voice_notes = review["violations"] or ["The draft does not sound like Pratham Mittal speaking."]
+            script = chat_json(
+                script_messages(
+                    audience_cluster=generation.audience_cluster,
+                    duration=generation.duration,
+                    channel=generation.channel,
+                    intent=generation.intent,
+                    temperature=generation.temperature,
+                    context_note=generation.context_note,
+                    modules=modules,
+                    sequence=resolved.module_sequence,
+                    facts=facts,
+                    word_budget=resolved.word_budget,
+                    founder_quotes=founder_quotes,
+                    report_passages=report_passages,
+                    topic_flow=topic_flow,
+                    corrections=voice_notes,
+                    draft=script,
+                )
+            )
+            ScriptPayload.model_validate(script)
+            script = align_script_to_topics(script, topic_flow, modules)
+            violations = validate_script(
+                script, facts, resolved.module_sequence, resolved.word_budget, topics=topic_flow
+            )
+            if violations:
+                continue
+            review = review_pratham_voice(script, founder_quotes)
+        generation.script_json = json.dumps(script, ensure_ascii=False)
+        generation.validation_report = "\n".join(violations or review["violations"])
+        if violations or not review["passed"]:
+            generation.error = (
+                "Script failed the Pratham Mittal voice check"
+                if not violations
+                else "Script failed validation after voice rewrite"
+            )
+            _set_status(db, generation, "failed")
+            return
+
         _set_status(db, generation, "generating_deck")
-        plan = plan_pages(resolved.module_sequence, slide_count_for(generation.duration))
         generation.deck_spec_json = deck_spec_from_plan(plan).model_dump_json()
 
         _set_status(db, generation, "rendering")
-        notes = {section["module_id"]: section.get("text", "") for section in script.get("sections", [])}
         generation.pptx_path = render_pptx(
             plan,
             generation.id,
-            notes_by_module=notes,
+            notes_by_page=notes_by_page(script),
             file_key=brand_deck_file_key(db),
         )
 

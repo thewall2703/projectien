@@ -346,6 +346,7 @@ def render_pptx(
     plan: list[BrandSlide],
     generation_id: int,
     notes_by_module: dict[str, str] | None = None,
+    notes_by_page: dict[int, str] | None = None,
     file_key: str | None = None,
 ) -> str:
     """Write the planned pages into a 16:9 PPTX, one full-bleed page per slide."""
@@ -362,7 +363,7 @@ def render_pptx(
             width=presentation.slide_width,
             height=presentation.slide_height,
         )
-        note = (notes_by_module or {}).get(item.module_id, "").strip()
+        note = ((notes_by_page or {}).get(item.page) or (notes_by_module or {}).get(item.module_id, "")).strip()
         if note:
             slide.notes_slide.notes_text_frame.text = note
     buffer = BytesIO()

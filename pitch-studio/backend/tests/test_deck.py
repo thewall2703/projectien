@@ -116,3 +116,19 @@ class BrandDeckRenderTests(unittest.TestCase):
             picture = slide.shapes[0]
             self.assertEqual(picture.width, presentation.slide_width)
             self.assertEqual(picture.height, presentation.slide_height)
+
+    def test_speaker_notes_follow_selected_pages(self):
+        from pptx import Presentation
+
+        plan = plan_pages(["M01", "M07", "M14"], 8)
+        page_notes = {slide.page: f"Spoken note for p{slide.page}." for slide in plan}
+        with mock.patch.object(type(settings), "uses_spaces", property(lambda self: False)):
+            path = render_pptx(
+                plan,
+                999201,
+                notes_by_module={"M01": "Module-wide note that should lose."},
+                notes_by_page=page_notes,
+            )
+        presentation = Presentation(path)
+        for slide, item in zip(presentation.slides, plan):
+            self.assertEqual(slide.notes_slide.notes_text_frame.text, f"Spoken note for p{item.page}.")

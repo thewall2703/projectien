@@ -10,6 +10,14 @@ import type { FactRow, Generation, RecipeOption, RecommendedMedia } from "../typ
 const STEPS = ["queued", "generating_script", "validating", "generating_deck", "rendering", "done"];
 const TABS = ["Script", "Deck", "Assets & Evidence", "Q&A"] as const;
 
+function slideRange(pages?: number[]) {
+  if (!pages?.length) return "";
+  const first = pages[0];
+  const last = pages[pages.length - 1];
+  if (pages.length === 1 || first === last) return `p${first}`;
+  return `p${first}–${last}`;
+}
+
 function highlight(text: string, values: string[]) {
   if (!values.length) return text;
   const escaped = values.map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).filter(Boolean);
@@ -177,13 +185,20 @@ export default function Result() {
       )}
       {tab === "Script" && generation.script && (
         <section className="space-y-6 animate-slide-up">
-          {generation.script.sections.map((section) => (
-            <article key={section.module_id} className="card p-6">
-              <p className="kicker">{moduleName(section.module_id)}</p>
-              <h2 className="mt-2 font-display text-2xl">{section.heading}</h2>
-              <p className="mt-3 whitespace-pre-wrap leading-7">{highlight(section.text, factValues)}</p>
-            </article>
-          ))}
+          {generation.script.sections.map((section, index) => {
+            const topicName = section.topic_title?.trim() || moduleName(section.module_id || "");
+            const range = slideRange(section.pages);
+            return (
+              <article key={`${section.topic_id || section.module_id || "section"}-${index}`} className="card p-6">
+                <p className="kicker">
+                  {topicName}
+                  {range ? ` · ${range}` : ""}
+                </p>
+                <h2 className="mt-2 font-display text-2xl">{section.heading}</h2>
+                <p className="mt-3 whitespace-pre-wrap leading-7">{highlight(section.text, factValues)}</p>
+              </article>
+            );
+          })}
           {generation.script.cta && <p className="rounded-2xl bg-accent px-6 py-4 text-white">{generation.script.cta}</p>}
         </section>
       )}
