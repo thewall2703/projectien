@@ -279,7 +279,9 @@ def build_recommendation_messages(
         extracted_label = "Visual description"
     system = (
         "You match Masters' Union media (a video or a photo set) to pitch personas. "
-        "Combine the extracted content with the human vision note. "
+        "Base recommendations on the extracted analysis first. "
+        "If a human vision note is present, refine the matches with it; "
+        "if it is empty, still recommend from the analysis alone. "
         "Only recommend personas that should actually see this media. "
         "Return strict JSON: {\"items\":[{\"recipe_ref\":\"\",\"temperatures\":[],"
         "\"confidence\":0.0,\"rationale\":\"\"}]}. "
@@ -291,7 +293,7 @@ def build_recommendation_messages(
         f"Axes catalog:\n{_format_axes()}\n\n"
         f"Persona catalog:\n{_format_personas(recipe_options)}\n\n"
         f"{extracted_label}:\n{extracted or '(none)'}\n\n"
-        f"Human vision:\n{vision.strip() or '(none)'}\n\n"
+        f"Human vision:\n{vision.strip() or '(none — recommend from the analysis only)'}\n\n"
         f"Prior reviewer feedback:\n{_format_feedback(feedback or empty_feedback())}\n\n"
         "Recommend the personas this media should be shown for."
     )
@@ -645,9 +647,13 @@ def prepare_media(db: Session, asset_id: int, on_stage: StageCallback | None = N
             images, keys = collect_image_bytes(db, asset)
             row.visual_description = describe_images(images)
             row.image_keys = json.dumps(keys, ensure_ascii=False)
-    if row.vision.strip() and has_extract(row):
+    if has_extract(row) and not row.vision_frozen:
         _emit_stage(on_stage, "Generating recommendations…")
-        apply_recommendations(db, row)
+        try:
+            apply_recommendations(db, row)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  media {getattr(row, 'id', '?')} recommendation skipped: {exc}", flush=True)
+            touch(row)
     else:
         touch(row)
     if row.media_kind == "video" and has_extract(row) and asset.file_key and asset.source_url:
@@ -691,7 +697,15 @@ def describe_media(db: Session, media_id: int, on_stage: StageCallback | None = 
     _emit_stage(on_stage, "Describing images…")
     row.visual_description = describe_images(images)
     row.image_keys = json.dumps(keys, ensure_ascii=False)
-    touch(row)
+    if has_extract(row) and not row.vision_frozen:
+        _emit_stage(on_stage, "Generating recommendations…")
+        try:
+            apply_recommendations(db, row)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  media {getattr(row, 'id', '?')} recommendation skipped: {exc}", flush=True)
+            touch(row)
+    else:
+        touch(row)
     db.commit()
     db.refresh(row)
     return row

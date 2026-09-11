@@ -6,16 +6,25 @@ let recipesCache: unknown = null;
 let recipesInflight: Promise<unknown> | null = null;
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const timeoutMs = path.includes("/auth/me")
+  const timeoutMs = path.includes("/auth/")
     ? 25000
     : /\/(describe|reindex|sync|prepare)(\?|$)/.test(path) || path.includes("/sync-assets") || path.includes("/deck-topics/prepare")
       ? 1200000
       : 20000;
-  const response = await fetch(path, {
-    credentials: "include",
-    signal: AbortSignal.timeout(timeoutMs),
-    ...init,
-  });
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      credentials: "include",
+      signal: AbortSignal.timeout(timeoutMs),
+      ...init,
+    });
+  } catch (err) {
+    const name = err instanceof DOMException ? err.name : "";
+    if (name === "AbortError" || name === "TimeoutError") {
+      throw new Error("The server did not respond. The database may be unreachable from this network.");
+    }
+    throw err;
+  }
   if (response.status === 401) {
     throw new Error("unauthorized");
   }

@@ -43,6 +43,13 @@ function isActiveJob(row?: Pick<MediaIndexRow, "job_status"> | null) {
   return row?.job_status === "queued" || row?.job_status === "running";
 }
 
+function hasExtract(row: MediaIndexRow) {
+  if (row.media_kind === "video") {
+    return Boolean(row.transcript.trim() || row.visual_description.trim());
+  }
+  return Boolean(row.visual_description.trim());
+}
+
 function displayStatus(row: MediaIndexRow) {
   if (row.vision_frozen) return "frozen";
   if (isActiveJob(row) || row.status === "processing") return "processing";
@@ -266,9 +273,8 @@ export default function MediaTesting() {
         <p className="kicker">Library</p>
         <h1 className="font-display text-3xl">Media testing</h1>
         <p className="mt-2 max-w-3xl text-sm text-muted">
-          Select a video or photo set, then prepare it. Videos are downloaded at the highest
-          quality, transcribed, and indexed. Vision is attached to that context automatically
-          whenever you change it.
+          Select a video or photo set, then prepare it. Personas are recommended from the
+          analysis automatically. Add a vision later if you want to refine those matches.
         </p>
       </div>
       <ErrorBanner message={error} />
@@ -443,8 +449,8 @@ export default function MediaTesting() {
                   )}
                 </div>
                 <p className="text-sm text-muted">
-                  Why should this be shown? Changes are indexed automatically and attached to the
-                  video or photo context below.
+                  Optional. Personas are recommended from the media analysis automatically.
+                  Add a vision to refine those matches.
                 </p>
                 <textarea
                   className="field min-h-32"
@@ -464,7 +470,7 @@ export default function MediaTesting() {
                 <div className="card space-y-3 p-6">
                   <h3 className="font-display text-xl">Context index</h3>
                   <p className="text-sm text-muted">
-                    Transcript or visual description plus the current vision, used together for usecase matching.
+                    Transcript or visual description, plus vision when you add one, used for usecase matching.
                   </p>
                   <pre className="whitespace-pre-wrap rounded-xl bg-paper p-4 text-sm leading-6">
                     {current.context_index}
@@ -473,12 +479,21 @@ export default function MediaTesting() {
               )}
 
               <div className="card space-y-4 p-6">
-                <h3 className="font-display text-xl">Recommended usecases</h3>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h3 className="font-display text-xl">Recommended usecases</h3>
+                  <Button
+                    loading={busy === "reindex"}
+                    disabled={current.vision_frozen || !hasExtract(current)}
+                    onClick={() => run("reindex", () => api.reindexMedia(current.id))}
+                  >
+                    Refresh recommendations
+                  </Button>
+                </div>
                 {current.recommendations.items.length === 0 && (
                   <p className="text-sm text-muted">
-                    {displayStatus(current) === "ready"
-                      ? "Media is ready. Add a vision note to generate persona recommendations."
-                      : "No recommendations yet. Prepare the media, then enter a vision — it indexes automatically."}
+                    {hasExtract(current)
+                      ? "No recommendations yet. Refresh to match personas from this analysis."
+                      : "Prepare the media first. Personas are recommended from the analysis."}
                   </p>
                 )}
                 <div className="space-y-3">

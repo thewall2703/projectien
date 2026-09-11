@@ -381,7 +381,9 @@ def build_topic_recommendation_messages(
     page_range = f"{pages[0]}-{pages[-1]}" if pages else "(none)"
     system = (
         "You match a Masters' Union Brand Deck topic to pitch personas. "
-        "Combine the topic summary with the human vision note. "
+        "Base recommendations on the topic summary first. "
+        "If a human vision note is present, refine the matches with it; "
+        "if it is empty, still recommend from the analysis alone. "
         "Only recommend personas that should actually see these slides. "
         "Return strict JSON: {\"items\":[{\"recipe_ref\":\"\",\"temperatures\":[],"
         "\"confidence\":0.0,\"rationale\":\"\"}]}. "
@@ -394,7 +396,7 @@ def build_topic_recommendation_messages(
         f"Axes catalog:\n{_format_axes()}\n\n"
         f"Persona catalog:\n{_format_personas(recipe_options)}\n\n"
         f"Topic summary:\n{summary.strip() or '(none)'}\n\n"
-        f"Human vision:\n{vision.strip() or '(none)'}\n\n"
+        f"Human vision:\n{vision.strip() or '(none — recommend from the analysis only)'}\n\n"
         f"Prior reviewer feedback:\n{_format_feedback(feedback or empty_feedback())}\n\n"
         "Recommend the personas this brand deck topic should be shown for."
     )
@@ -590,7 +592,17 @@ def prepare_deck_topics(db: Session, on_stage: StageCallback | None = None, forc
     source_hash = catalog_source_hash(catalog)
     existing = db.query(DeckTopic).order_by(DeckTopic.sort_order, DeckTopic.id).all()
     if existing and not force and all(row.source_hash == source_hash and row.summary.strip() for row in existing):
-        _emit_stage(on_stage, "Topics already indexed")
+        missing = [row for row in existing if not row.recommendations_json and not row.vision_frozen]
+        if missing:
+            for index, row in enumerate(missing, start=1):
+                _emit_stage(on_stage, f"Matching personas {index}/{len(missing)}…")
+                try:
+                    apply_recommendations(db, row)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"  topic {row.id} recommendation skipped: {exc}", flush=True)
+            db.commit()
+        else:
+            _emit_stage(on_stage, "Topics already indexed")
         return existing
 
     _emit_stage(on_stage, "Grouping brand deck pages…")
@@ -632,6 +644,12 @@ def prepare_deck_topics(db: Session, on_stage: StageCallback | None = None, forc
             match.status = "ready" if summary else "draft"
         touch(match)
         db.flush()
+        if summary and not match.vision_frozen:
+            _emit_stage(on_stage, f"Matching personas {index + 1}/{len(groups)}…")
+            try:
+                apply_recommendations(db, match)
+            except Exception as exc:  # noqa: BLE001
+                print(f"  topic {index + 1} recommendation skipped: {exc}", flush=True)
         kept_ids.append(match.id)
         created.append(match)
 

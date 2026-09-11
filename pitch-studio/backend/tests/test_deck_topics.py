@@ -222,12 +222,56 @@ class PreparePersistenceTests(unittest.TestCase):
                             return_value="A concise topic summary.",
                         ):
                             with mock.patch("backend.deck_topic_index.brand_deck_file_key", return_value=None):
-                                rows = prepare_deck_topics(db)
+                                with mock.patch("backend.deck_topic_index.apply_recommendations") as recommend:
+                                    rows = prepare_deck_topics(db)
+        self.assertEqual(recommend.call_count, 2)
         self.assertEqual(len(rows), 2)
         self.assertEqual(json.loads(rows[0].pages_json)[0], 1)
         self.assertEqual(json.loads(rows[1].pages_json)[-1], 92)
         self.assertEqual(rows[0].summary, "A concise topic summary.")
         db.commit.assert_called()
+
+    def test_skip_path_recommends_missing_personas(self):
+        from backend.deck_topic_index import prepare_deck_topics
+
+        asset = SimpleNamespace(id=7, extract_json="", extract_status="ready", title="Brand Deck")
+        existing = [
+            SimpleNamespace(
+                id=1,
+                source_hash="same",
+                summary="Campus origin story.",
+                recommendations_json="",
+                vision_frozen=False,
+            )
+        ]
+        db = mock.Mock()
+        db.query.return_value.order_by.return_value.all.return_value = existing
+        with mock.patch("backend.deck_topic_index._ensure_schema"):
+            with mock.patch("backend.deck_topic_index.find_brand_deck_asset", return_value=asset):
+                with mock.patch("backend.deck_topic_index._ensure_extract"):
+                    with mock.patch(
+                        "backend.deck_topic_index.catalog_source_hash",
+                        return_value="same",
+                    ):
+                        with mock.patch("backend.deck_topic_index.apply_recommendations") as recommend:
+                            rows = prepare_deck_topics(db)
+        recommend.assert_called_once_with(db, existing[0])
+        self.assertEqual(rows, existing)
+        db.commit.assert_called()
+
+    def test_recommends_from_analysis_without_vision(self):
+        from backend.deck_topic_index import build_topic_recommendation_messages
+
+        messages = build_topic_recommendation_messages(
+            "Origin",
+            [1, 2, 3],
+            "Why the school exists.",
+            "",
+            [],
+        )
+        self.assertIn("analysis only", messages[1]["content"])
+        self.assertIn("Why the school exists.", messages[1]["content"])
+        self.assertIn("analysis alone", messages[0]["content"])
 
 
 if __name__ == "__main__":

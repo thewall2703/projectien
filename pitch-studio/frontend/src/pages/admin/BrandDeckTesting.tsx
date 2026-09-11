@@ -181,8 +181,8 @@ export default function BrandDeckTesting() {
         <p className="kicker">Library</p>
         <h1 className="font-display text-3xl">Brand deck testing</h1>
         <p className="mt-2 max-w-3xl text-sm text-muted">
-          Group the Brand Deck into topics, then attach the same vision and persona
-          matching used for media. Generated pitch decks are unchanged in this version.
+          Group the Brand Deck into topics. Personas are recommended from each topic
+          analysis automatically. Add a vision later if you want to refine those matches.
         </p>
       </div>
       <ErrorBanner message={error} />
@@ -236,7 +236,7 @@ export default function BrandDeckTesting() {
           {!loading && !current && (
             <EmptyState
               title="Select a topic"
-              description="Prepare the Brand Deck, then choose a topic to attach a vision."
+              description="Prepare the Brand Deck, then choose a topic. Personas are recommended from the analysis."
             />
           )}
           {current && (
@@ -297,8 +297,8 @@ export default function BrandDeckTesting() {
                   )}
                 </div>
                 <p className="text-sm text-muted">
-                  Why should this topic be shown? Changes are indexed automatically and attached
-                  to the topic summary below.
+                  Optional. Personas are recommended from the topic analysis automatically.
+                  Add a vision to refine those matches.
                 </p>
                 <textarea
                   className="field min-h-32"
@@ -324,12 +324,21 @@ export default function BrandDeckTesting() {
               )}
 
               <div className="card space-y-4 p-6">
-                <h3 className="font-display text-xl">Recommended usecases</h3>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h3 className="font-display text-xl">Recommended usecases</h3>
+                  <Button
+                    loading={busy === "reindex"}
+                    disabled={current.vision_frozen || !current.summary.trim()}
+                    onClick={() => run("reindex", () => api.reindexDeckTopic(current.id))}
+                  >
+                    Refresh recommendations
+                  </Button>
+                </div>
                 {current.recommendations.items.length === 0 && (
                   <p className="text-sm text-muted">
-                    {displayStatus(current) === "ready"
-                      ? "Topic is ready. Add a vision note to generate persona recommendations."
-                      : "No recommendations yet. Prepare the topics, then enter a vision."}
+                    {current.summary.trim()
+                      ? "No recommendations yet. Refresh to match personas from this analysis."
+                      : "Prepare the Brand Deck first. Personas are recommended from the topic analysis."}
                   </p>
                 )}
                 <div className="space-y-3">

@@ -18,7 +18,7 @@ engine_kwargs: dict = {}
 if settings.database_url.startswith("sqlite"):
     connect_args = {"check_same_thread": False, "timeout": 30}
 else:
-    connect_args = {"connect_timeout": 20}
+    connect_args = {"connect_timeout": 8}
     engine_kwargs = {
         "pool_pre_ping": True,
         "pool_size": 5,

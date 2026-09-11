@@ -86,6 +86,18 @@ class RecommendationPromptTests(unittest.TestCase):
         self.assertIn("Human marked YES for A1-1", user)
         self.assertIn("ALSO applies to F5-1", user)
 
+    def test_recommends_from_analysis_without_vision(self):
+        messages = build_recommendation_messages(
+            "video",
+            "This is the campus film.",
+            "Students walk through campus.",
+            "",
+            [recipe()],
+        )
+        self.assertIn("analysis only", messages[1]["content"])
+        self.assertIn("This is the campus film.", messages[1]["content"])
+        self.assertIn("analysis alone", messages[0]["content"])
+
 
 class RecommendValidationTests(unittest.TestCase):
     def test_drops_unknown_refs_and_fills_axes(self):
@@ -245,8 +257,10 @@ class PrepareMediaTests(unittest.TestCase):
                         ),
                     ):
                         with mock.patch("backend.media_index.delete_file"):
-                            prepared = prepare_media(db, 4)
+                            with mock.patch("backend.media_index.apply_recommendations") as recommend:
+                                prepared = prepare_media(db, 4)
         sync.assert_called_once_with(asset)
+        recommend.assert_called_once_with(db, row)
         self.assertEqual(prepared.transcript, "Welcome to campus.")
         self.assertEqual(prepared.visual_description, "Students walk through campus.")
         db.commit.assert_called()
@@ -283,8 +297,10 @@ class PrepareMediaTests(unittest.TestCase):
                             visual_description="A guided campus tour.",
                         ),
                     ) as analyze:
-                        prepared = prepare_media(db, 8)
+                        with mock.patch("backend.media_index.apply_recommendations") as recommend:
+                            prepared = prepare_media(db, 8)
         analyze.assert_called_once_with(asset, "", None)
+        recommend.assert_called_once_with(db, row)
         delete.assert_called_once_with("videos/campus.mp4")
         self.assertEqual(asset.file_key, "")
         self.assertEqual(asset.file_status, "processed")
@@ -319,9 +335,11 @@ class PrepareMediaTests(unittest.TestCase):
             with mock.patch("backend.sync_assets.classify_link", return_value="drive_file"):
                 with mock.patch("backend.sync_assets.sync_one") as sync:
                     with mock.patch("backend.transcription.analyze_video_asset") as analyze:
-                        prepare_media(db, 9)
+                        with mock.patch("backend.media_index.apply_recommendations") as recommend:
+                            prepare_media(db, 9)
         sync.assert_not_called()
         analyze.assert_not_called()
+        recommend.assert_called_once_with(db, row)
 
     def test_photo_original_is_removed_after_thumbnail_and_description(self):
         parent = SimpleNamespace(id=10, type="photo", title="Campus photos")
@@ -364,7 +382,11 @@ class PrepareMediaTests(unittest.TestCase):
                                 ):
                                     with mock.patch("backend.media_index.file_exists", return_value=True):
                                         with mock.patch("backend.media_index.delete_file") as delete:
-                                            prepare_media(db, 10)
+                                            with mock.patch(
+                                                "backend.media_index.apply_recommendations"
+                                            ) as recommend:
+                                                prepare_media(db, 10)
+        recommend.assert_called_once_with(db, row)
         delete.assert_called_once_with("library/photos/campus.jpg")
         self.assertEqual(child.file_key, "")
         self.assertEqual(child.file_status, "preview")

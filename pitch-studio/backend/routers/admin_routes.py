@@ -552,7 +552,7 @@ def save_media_vision(
     item.vision_hash = sha256_text(payload.vision)
     if item.status == "frozen":
         item.status = "indexed"
-    if item.vision.strip() and has_extract(item):
+    if has_extract(item):
         try:
             apply_recommendations(db, item)
         except LLMError as exc:
@@ -571,12 +571,8 @@ def reindex_media(media_id: int, db: Session = Depends(get_db)) -> MediaIndexOut
         require_editable(item)
     except MediaIndexError as exc:
         raise _media_error(exc) from exc
-    if not item.vision.strip():
-        raise HTTPException(status_code=400, detail="Enter a vision note before re-indexing")
-    if item.media_kind == "video" and not item.transcript.strip():
-        raise HTTPException(status_code=400, detail="Save a transcript before re-indexing")
-    if item.media_kind == "photo" and not item.visual_description.strip():
-        raise HTTPException(status_code=400, detail="Generate a visual description before re-indexing")
+    if not has_extract(item):
+        raise HTTPException(status_code=400, detail="Prepare the media before re-indexing")
     try:
         apply_recommendations(db, item)
     except LLMError as exc:
@@ -633,10 +629,8 @@ def add_media_usecase(
 @router.post("/media-index/{media_id}/freeze", response_model=MediaIndexOut)
 def freeze_media_index(media_id: int, db: Session = Depends(get_db)) -> MediaIndexOut:
     item = _get_media_index(db, media_id)
-    if not item.vision.strip():
-        raise HTTPException(status_code=400, detail="Enter a vision note before freezing")
     if not item.recommendations_json:
-        raise HTTPException(status_code=400, detail="Re-index before freezing")
+        raise HTTPException(status_code=400, detail="Generate recommendations before freezing")
     if is_stale(item):
         raise HTTPException(status_code=400, detail="Vision changed. Re-index before freezing")
     item.vision_frozen = True
@@ -732,7 +726,7 @@ def save_deck_topic_vision(
     item.vision_hash = sha256_text(payload.vision)
     if item.status == "frozen":
         item.status = "indexed"
-    if item.vision.strip() and deck_has_extract(item):
+    if deck_has_extract(item):
         try:
             apply_deck_recommendations(db, item)
         except LLMError as exc:
@@ -752,8 +746,6 @@ def reindex_deck_topic(topic_id: int, db: Session = Depends(get_db)) -> DeckTopi
         require_deck_editable(item)
     except DeckTopicError as exc:
         raise _deck_error(exc) from exc
-    if not item.vision.strip():
-        raise HTTPException(status_code=400, detail="Enter a vision note before re-indexing")
     if not item.summary.strip():
         raise HTTPException(status_code=400, detail="Prepare the Brand Deck topics before re-indexing")
     try:
@@ -813,10 +805,8 @@ def add_deck_topic_usecase(
 @router.post("/deck-topics/{topic_id}/freeze", response_model=DeckTopicOut)
 def freeze_deck_topic(topic_id: int, db: Session = Depends(get_db)) -> DeckTopicOut:
     item = _get_deck_topic(db, topic_id)
-    if not item.vision.strip():
-        raise HTTPException(status_code=400, detail="Enter a vision note before freezing")
     if not item.recommendations_json:
-        raise HTTPException(status_code=400, detail="Re-index before freezing")
+        raise HTTPException(status_code=400, detail="Generate recommendations before freezing")
     if deck_is_stale(item):
         raise HTTPException(status_code=400, detail="Vision changed. Re-index before freezing")
     item.vision_frozen = True
