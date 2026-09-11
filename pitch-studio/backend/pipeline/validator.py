@@ -10,6 +10,14 @@ MEMBERSHIP_NAMES = ("EFMD", "AACSB", "BGA", "BSIS", "NSDC")
 FORBIDDEN_STATUSES = {"conflict", "do_not_use", "needs_source", "needs_decision"}
 AVERAGE_MARKER = "33.39"
 MEDIAN_MARKER = "27.78"
+OPENING_CONTINUATION_RE = re.compile(
+    r"^\s*[\"'“‘]*(?:"
+    r"then\b|and then\b|so then\b|next\b|moving on\b|finally\b|"
+    r"as (?:i|we) (?:said|mentioned|noted)\b|"
+    r"another (?:thing|point|reason)\b"
+    r")",
+    re.IGNORECASE,
+)
 
 
 def _words(text: str) -> list[str]:
@@ -214,6 +222,13 @@ def validate_script(
         expected = [page for topic in topics for page in topic.pages]
         if covered != expected:
             violations.append(f"Selected slide coverage {covered} does not match deck pages {expected}")
+        if sections:
+            opening = (sections[0].get("text") or "").strip()
+            if OPENING_CONTINUATION_RE.search(opening):
+                violations.append(
+                    "The opening starts like a continuation. Rewrite the first sentence so it "
+                    "stands alone for a listener hearing the pitch from the beginning"
+                )
     else:
         section_ids = [section.get("module_id", "") for section in sections]
         if section_ids != sequence:

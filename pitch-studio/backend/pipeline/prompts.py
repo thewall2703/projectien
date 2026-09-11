@@ -74,6 +74,10 @@ def _format_topic_flow(topic_flow: list[Any], modules: list[Module], sequence: l
     by_id = {module.id: module for module in modules}
     blocks = []
     for index, topic in enumerate(topic_flow, start=1):
+        if len(topic_flow) == 1:
+            role = "OPENING + CLOSE"
+        else:
+            role = "OPENING" if index == 1 else ("CLOSE" if index == len(topic_flow) else "BODY")
         payload = topic.to_prompt_dict() if hasattr(topic, "to_prompt_dict") else topic
         labels = ", ".join(str(label) for label in (payload.get("labels") or []) if label)
         recipe_ids = payload.get("recipe_modules") or []
@@ -89,6 +93,7 @@ def _format_topic_flow(topic_flow: list[Any], modules: list[Module], sequence: l
             )
         blocks.append(
             f"### Beat {index}: {payload.get('title')} ({payload.get('page_range')})\n"
+            f"Role: {role}\n"
             f"topic_id: {payload.get('topic_id')}\n"
             f"Selected slides: {labels or '(unlabeled)'}\n"
             f"Topic summary: {payload.get('summary') or '(none)'}\n"
@@ -211,7 +216,15 @@ def script_messages(
         "- REPORT EVIDENCE is from official Masters' Union reports. Use at least one concrete detail from it "
         "in the relevant module (recruiter, role, programme, or named outcome) and attribute the report title "
         "naturally, the way a person would. If LOCKED and REPORT EVIDENCE conflict on a number, use LOCKED.\n"
-        "- One ask only, at the end. Make it sound like a person asking, not a call-to-action button.\n"
+        "- One ask only, at the end. Make it sound like a person asking, not a call-to-action button.\n\n"
+        "BEAT ROLES:\n"
+        "- OPENING: This is the first thing the listener hears. Start independently with a direct question, "
+        "sharp claim, or concrete image. Never begin with a continuation such as 'Then', 'Next', "
+        "'Moving on', 'As I mentioned', or anything that assumes earlier speech.\n"
+        "- BODY: Continue the same conversation. Connect naturally to the previous beat, explain only what "
+        "the selected slides support, and land one clear point before moving forward.\n"
+        "- CLOSE: Add no new argument or evidence. Briefly land the core point, make exactly one specific "
+        "ask, and stop. Do not end with a slogan, summary list, or multiple options.\n"
         + (
             "- Follow the DECK TOPIC FLOW exactly. One section per topic, in that order. Never invent, "
             "merge, or reorder topics. Extra recipe information may be woven into the most relevant "
@@ -257,7 +270,7 @@ def script_messages(
     if draft:
         current = count_script_words(draft)
         order_rule = (
-            "Keep the same topic_id, pages, topic_title, locked facts, and spoken founder voice. "
+            "Keep the same topic_id, pages, topic_title, beat roles, locked facts, and spoken founder voice. "
             if topic_flow
             else "Keep the same module order, the locked facts, and the spoken founder voice. "
         )

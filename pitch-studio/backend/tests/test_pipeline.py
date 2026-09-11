@@ -153,6 +153,40 @@ class ValidatorTests(unittest.TestCase):
         self.assertEqual(violations, [])
         self.assertEqual(count_script_words(repaired), 240)
 
+    def test_topic_opening_cannot_start_like_a_continuation(self):
+        topic = ScriptTopic(topic_id=1, title="Origin", pages=[1, 2])
+        script = {
+            "sections": [
+                {
+                    "topic_id": 1,
+                    "topic_title": "Origin",
+                    "pages": [1, 2],
+                    "heading": "Why here",
+                    "text": "Then there's Gurugram. The city becomes part of the classroom.",
+                }
+            ],
+            "cta": "Come sit in a class.",
+        }
+        violations = validate_script(script, [], ["M01"], 15, topics=[topic])
+        self.assertTrue(any("opening starts like a continuation" in item for item in violations))
+
+    def test_independent_topic_opening_passes_opening_rule(self):
+        topic = ScriptTopic(topic_id=1, title="Origin", pages=[1, 2])
+        script = {
+            "sections": [
+                {
+                    "topic_id": 1,
+                    "topic_title": "Origin",
+                    "pages": [1, 2],
+                    "heading": "Why here",
+                    "text": "Why Gurugram? It was a teaching decision, not an address decision.",
+                }
+            ],
+            "cta": "Come sit in a class.",
+        }
+        violations = validate_script(script, [], ["M01"], 16, topics=[topic])
+        self.assertFalse(any("opening starts like a continuation" in item for item in violations))
+
 
 class ScriptFlowTests(unittest.TestCase):
     def test_collapses_consecutive_pages_of_the_same_topic(self):
@@ -378,6 +412,33 @@ class PromptTests(unittest.TestCase):
         self.assertIn("Weave it into the most relevant existing", user)
         self.assertIn("topic_id", system)
         self.assertIn("Keep the same topic_id", user)
+
+    def test_topic_flow_labels_opening_body_and_close(self):
+        topics = [
+            ScriptTopic(topic_id=1, title="Origin", pages=[1], labels=["Cover"]),
+            ScriptTopic(topic_id=2, title="Proof", pages=[20], labels=["Student proof"]),
+            ScriptTopic(topic_id=3, title="Visit", pages=[92], labels=["Visit campus"]),
+        ]
+        messages = script_messages(
+            audience_cluster="A",
+            duration="T1",
+            channel="CH3",
+            intent="I2",
+            temperature="X3",
+            context_note="",
+            modules=[],
+            sequence=["M01", "M07", "M14"],
+            facts=[],
+            word_budget=240,
+            topic_flow=topics,
+        )
+        system = messages[0]["content"]
+        user = messages[1]["content"]
+        self.assertIn("Role: OPENING", user)
+        self.assertIn("Role: BODY", user)
+        self.assertIn("Role: CLOSE", user)
+        self.assertIn("This is the first thing the listener hears", system)
+        self.assertIn("Add no new argument or evidence", system)
 
 
 class VoiceReviewTests(unittest.TestCase):
