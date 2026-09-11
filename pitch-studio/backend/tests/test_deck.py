@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
+import tempfile
 import unittest
 from unittest import mock
 
 from backend.config import settings
+from backend.pipeline import brand_deck
 from backend.pipeline.brand_deck import (
     CLOSING_PAGE,
     COVER_PAGE,
@@ -93,6 +96,19 @@ class BrandDeckPlanTests(unittest.TestCase):
             self.assertEqual(slide.layout, "image")
             self.assertGreater(slide.page, 0)
             self.assertEqual(slide.image_url, f"/api/brand-deck/pages/{slide.page}.jpg")
+
+
+class BrandDeckSourceTests(unittest.TestCase):
+    def test_cached_source_is_used_without_a_database_file_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            files_dir = Path(directory)
+            cached = files_dir / brand_deck.SOURCE_CACHE_PATH
+            cached.parent.mkdir(parents=True)
+            cached.write_bytes(b"cached brand deck")
+            with mock.patch.object(brand_deck, "FILES_DIR", files_dir), mock.patch.object(
+                brand_deck, "_local_source_candidates", return_value=[]
+            ):
+                self.assertEqual(brand_deck.resolve_source(None), cached)
 
 
 class BrandDeckRenderTests(unittest.TestCase):

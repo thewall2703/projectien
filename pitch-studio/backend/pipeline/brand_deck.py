@@ -288,15 +288,16 @@ def _local_source_candidates() -> list[Path]:
 
 def resolve_source(file_key: str | None = None) -> Path:
     """Return a local path to the brand deck PDF, caching a Spaces copy."""
+    cached = FILES_DIR / SOURCE_CACHE_PATH
+    if cached.exists():
+        return cached
     if file_key:
         candidate = Path(file_key)
         if candidate.is_absolute() and candidate.exists():
             return candidate
         if settings.uses_spaces:
-            cached = FILES_DIR / SOURCE_CACHE_PATH
-            if not cached.exists():
-                cached.parent.mkdir(parents=True, exist_ok=True)
-                cached.write_bytes(read_file(file_key))
+            cached.parent.mkdir(parents=True, exist_ok=True)
+            cached.write_bytes(read_file(file_key))
             return cached
     for candidate in _local_source_candidates():
         if candidate.exists():
