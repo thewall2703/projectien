@@ -9,9 +9,12 @@ from backend.media_index import (
     build_context_index,
     build_recommendation_messages,
     derive_status,
+    drive_file_id,
+    drive_image_url,
     enqueue_job,
     is_stale,
     normalize_transcript,
+    pick_recommended_media,
     prepare_media,
     recommend,
     sha256_text,
@@ -392,6 +395,111 @@ class PrepareMediaTests(unittest.TestCase):
         self.assertEqual(child.file_status, "preview")
         self.assertEqual(child.url, "/api/assets/11/thumbnail.jpg")
         self.assertEqual(json.loads(row.image_keys), ["thumbnails/assets/11.jpg"])
+
+
+def _rec_row(
+    asset_id: int,
+    kind: str,
+    items: list[dict],
+    verdicts: dict | None = None,
+    added: list | None = None,
+):
+    return SimpleNamespace(
+        asset_id=asset_id,
+        media_kind=kind,
+        recommendations_json=json.dumps({"items": items}),
+        feedback_json=json.dumps({"verdicts": verdicts or {}, "added": added or []}),
+    )
+
+
+def _asset(asset_id: int, title: str, source: str):
+    return SimpleNamespace(id=asset_id, title=title, source_url=source, url="")
+
+
+class RecommendedMediaPickTests(unittest.TestCase):
+    def test_drive_image_url_uses_file_id(self):
+        self.assertEqual(drive_file_id("https://drive.google.com/file/d/abc123/view"), "abc123")
+        self.assertEqual(
+            drive_image_url("https://drive.google.com/file/d/abc123/view"),
+            "https://drive.google.com/uc?export=view&id=abc123",
+        )
+
+    def test_matches_exact_usecase_and_prefers_temperature(self):
+        rows = [
+            _rec_row(1, "video", [{"recipe_ref": "A1-1", "temperatures": ["X4"], "confidence": 0.99, "rationale": "hot"}]),
+            _rec_row(2, "video", [{"recipe_ref": "A1-1", "temperatures": ["X2"], "confidence": 0.4, "rationale": "fit"}]),
+            _rec_row(3, "video", [{"recipe_ref": "B2-1", "temperatures": ["X2"], "confidence": 0.9, "rationale": "other"}]),
+        ]
+        assets = [
+            _asset(1, "Hot film", "https://youtu.be/one"),
+            _asset(2, "Fit film", "https://youtu.be/two"),
+            _asset(3, "Other film", "https://youtu.be/three"),
+        ]
+        db = mock.Mock()
+        db.query.return_value.filter.return_value.all.side_effect = [rows, assets]
+        with mock.patch("backend.media_index._ensure_media_schema"):
+            videos, pictures = pick_recommended_media(db, "A1-1", "X2")
+        self.assertEqual([item.asset_id for item in videos], [2, 1])
+        self.assertEqual(pictures, [])
+
+    def test_excludes_rejected_and_includes_added(self):
+        rows = [
+            _rec_row(
+                1,
+                "video",
+                [{"recipe_ref": "A1-1", "temperatures": ["X2"], "confidence": 0.9, "rationale": "nope"}],
+                verdicts={"A1-1": {"verdict": "no"}},
+            ),
+            _rec_row(2, "video", [], added=[{"recipe_ref": "A1-1", "note": "missed"}]),
+        ]
+        assets = [_asset(1, "Rejected", "https://youtu.be/a"), _asset(2, "Added", "https://youtu.be/b")]
+        db = mock.Mock()
+        db.query.return_value.filter.return_value.all.side_effect = [rows, assets]
+        with mock.patch("backend.media_index._ensure_media_schema"):
+            videos, _pictures = pick_recommended_media(db, "A1-1", "X2")
+        self.assertEqual([item.asset_id for item in videos], [2])
+
+    def test_expands_photo_sets_round_robin_and_caps(self):
+        rows = [
+            _rec_row(10, "photo", [{"recipe_ref": "A1-1", "temperatures": ["X2"], "confidence": 0.8, "rationale": "a"}]),
+            _rec_row(20, "photo", [{"recipe_ref": "A1-1", "temperatures": ["X2"], "confidence": 0.7, "rationale": "b"}]),
+        ]
+        parents = [_asset(10, "Campus", ""), _asset(20, "Studio", "")]
+        children = {
+            10: [_asset(11, "Campus — 1", "https://drive.google.com/file/d/c1/view"), _asset(12, "Campus — 2", "https://drive.google.com/file/d/c2/view")],
+            20: [
+                _asset(21, "Studio — 1", "https://drive.google.com/file/d/s1/view"),
+                _asset(22, "Studio — 2", "https://drive.google.com/file/d/s2/view"),
+                _asset(23, "Studio — 3", "https://drive.google.com/file/d/s3/view"),
+                _asset(24, "Studio — 4", "https://drive.google.com/file/d/s4/view"),
+                _asset(25, "Studio — 5", "https://drive.google.com/file/d/s5/view"),
+            ],
+        }
+        db = mock.Mock()
+        db.query.return_value.filter.return_value.all.side_effect = [rows, parents]
+        with mock.patch("backend.media_index._ensure_media_schema"):
+            with mock.patch(
+                "backend.media_index.list_image_assets",
+                side_effect=lambda _db, asset: children[asset.id],
+            ):
+                videos, pictures = pick_recommended_media(db, "A1-1", "X2")
+        self.assertEqual(videos, [])
+        self.assertEqual(len(pictures), 5)
+        self.assertEqual([item.asset_id for item in pictures], [11, 21, 12, 22, 23])
+        self.assertTrue(pictures[0].preview_url.endswith("id=c1"))
+        self.assertEqual(pictures[0].thumbnail_url, "/api/assets/11/thumbnail.jpg")
+
+    def test_returns_fewer_than_five_when_needed(self):
+        rows = [
+            _rec_row(1, "video", [{"recipe_ref": "A1-1", "temperatures": [], "confidence": 0.5, "rationale": "only"}]),
+        ]
+        assets = [_asset(1, "Only film", "https://youtu.be/only")]
+        db = mock.Mock()
+        db.query.return_value.filter.return_value.all.side_effect = [rows, assets]
+        with mock.patch("backend.media_index._ensure_media_schema"):
+            videos, pictures = pick_recommended_media(db, "A1-1", "X2")
+        self.assertEqual(len(videos), 1)
+        self.assertEqual(pictures, [])
 
 
 if __name__ == "__main__":

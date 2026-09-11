@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, load_only
 from backend.auth import get_current_user
 from backend.config import FILES_DIR, settings
 from backend.database import get_db
+from backend.media_index import pick_recommended_media
 from backend.models import Asset, FounderQuote, Generation, Objection, Recipe, User
 from backend.pipeline.brand_deck import (
     SOURCE_PAGE_COUNT,
@@ -89,6 +90,9 @@ def _enrich(db: Session, generation: Generation) -> GenerationOut:
             ]
         except (json.JSONDecodeError, ValueError):
             payload.report_passages = []
+    videos, pictures = pick_recommended_media(db, generation.recipe_ref, generation.temperature)
+    payload.recommended_videos = videos
+    payload.recommended_pictures = pictures
     return payload
 
 

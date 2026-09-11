@@ -284,6 +284,8 @@ class GenerationOut(BaseModel):
     objections: list[ObjectionOut] = []
     founder_quotes: list[FounderQuoteOut] = []
     report_passages: list[ReportPassageOut] = []
+    recommended_videos: list[RecommendedMediaOut] = []
+    recommended_pictures: list[RecommendedMediaOut] = []
 
     model_config = {"from_attributes": True}
 
@@ -351,6 +353,18 @@ class MediaImageOut(BaseModel):
     title: str
     file_status: str = ""
     content_type: str = ""
+
+
+class RecommendedMediaOut(BaseModel):
+    asset_id: int
+    parent_asset_id: int = 0
+    media_kind: str
+    title: str
+    source_url: str = ""
+    thumbnail_url: str = ""
+    preview_url: str = ""
+    confidence: float = 0.0
+    rationale: str = ""
 
 
 class MediaRecommendationItem(BaseModel):

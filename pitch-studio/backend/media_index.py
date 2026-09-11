@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+from collections import deque
 from datetime import datetime, timezone
 from io import BytesIO
 from collections.abc import Callable
@@ -40,6 +42,7 @@ from backend.schemas import (
     MediaRecommendations,
     MediaVerdict,
     RecipeOption,
+    RecommendedMediaOut,
 )
 from backend.storage import delete_file, file_exists, read_file
 
@@ -47,6 +50,10 @@ CHILD_TITLE_SEP = " — "
 MAX_IMAGES = 6
 MAX_IMAGE_EDGE = 1024
 MAX_RECOMMENDATIONS = 15
+MAX_RECOMMENDED_VIDEOS = 5
+MAX_RECOMMENDED_PICTURES = 5
+DRIVE_FILE_RE = re.compile(r"/file/d/([a-zA-Z0-9_-]+)")
+DRIVE_ID_RE = re.compile(r"[?&]id=([a-zA-Z0-9_-]+)")
 VALID_TEMPERATURES = {item.code for item in TEMPERATURES}
 VALID_VERDICTS = {"yes", "no"}
 JOB_PREPARE = "media_prepare"
@@ -158,6 +165,145 @@ def _downscale_jpeg(data: bytes) -> bytes:
     out = BytesIO()
     image.save(out, format="JPEG", quality=82)
     return out.getvalue()
+
+
+def drive_file_id(url: str) -> str:
+    text = url or ""
+    match = DRIVE_FILE_RE.search(text)
+    if match:
+        return match.group(1)
+    match = DRIVE_ID_RE.search(text)
+    return match.group(1) if match else ""
+
+
+def drive_image_url(url: str) -> str:
+    file_id = drive_file_id(url)
+    if not file_id:
+        return url or ""
+    return f"https://drive.google.com/uc?export=view&id={file_id}"
+
+
+def _recommendation_for_ref(row: MediaIndex, recipe_ref: str) -> dict[str, Any] | None:
+    if not recipe_ref:
+        return None
+    feedback = parse_feedback(row.feedback_json)
+    verdicts = feedback.get("verdicts") or {}
+    verdict = verdicts.get(recipe_ref) if isinstance(verdicts, dict) else None
+    if isinstance(verdict, dict) and str(verdict.get("verdict") or "").strip().lower() == "no":
+        return None
+    items = parse_recommendations(row.recommendations_json).get("items") or []
+    match = next(
+        (
+            item
+            for item in items
+            if isinstance(item, dict) and str(item.get("recipe_ref") or "") == recipe_ref
+        ),
+        None,
+    )
+    added = any(
+        isinstance(entry, dict) and str(entry.get("recipe_ref") or "") == recipe_ref
+        for entry in (feedback.get("added") or [])
+    )
+    if match is None and not added:
+        return None
+    return {
+        "recipe_ref": recipe_ref,
+        "temperatures": list(match.get("temperatures") or []) if match else [],
+        "confidence": float(match.get("confidence") or 0.0) if match else 0.0,
+        "rationale": str(match.get("rationale") or "") if match else "",
+        "added": added,
+    }
+
+
+def _recommendation_sort_key(item: dict[str, Any], temperature: str) -> tuple[int, float]:
+    temps = [str(code) for code in (item.get("temperatures") or [])]
+    mismatch = 1 if temperature and temps and temperature not in temps else 0
+    return (mismatch, -float(item.get("confidence") or 0.0))
+
+
+def _media_source_url(asset: Asset | None) -> str:
+    if asset is None:
+        return ""
+    return asset.source_url or asset.url or ""
+
+
+def _recommended_video(asset: Asset, item: dict[str, Any]) -> RecommendedMediaOut:
+    source = _media_source_url(asset)
+    return RecommendedMediaOut(
+        asset_id=asset.id,
+        parent_asset_id=asset.id,
+        media_kind="video",
+        title=asset.title,
+        source_url=source,
+        preview_url=source,
+        confidence=float(item.get("confidence") or 0.0),
+        rationale=str(item.get("rationale") or ""),
+    )
+
+
+def _recommended_picture(child: Asset, parent: Asset, item: dict[str, Any]) -> RecommendedMediaOut:
+    source = _media_source_url(child) or _media_source_url(parent)
+    return RecommendedMediaOut(
+        asset_id=child.id,
+        parent_asset_id=parent.id,
+        media_kind="photo",
+        title=child.title,
+        source_url=source,
+        thumbnail_url=f"/api/assets/{child.id}/thumbnail.jpg",
+        preview_url=drive_image_url(source),
+        confidence=float(item.get("confidence") or 0.0),
+        rationale=str(item.get("rationale") or ""),
+    )
+
+
+def pick_recommended_media(
+    db: Session,
+    recipe_ref: str,
+    temperature: str = "",
+    video_limit: int = MAX_RECOMMENDED_VIDEOS,
+    picture_limit: int = MAX_RECOMMENDED_PICTURES,
+) -> tuple[list[RecommendedMediaOut], list[RecommendedMediaOut]]:
+    if not (recipe_ref or "").strip():
+        return [], []
+    _ensure_media_schema()
+    rows = db.query(MediaIndex).filter(MediaIndex.recommendations_json != "").all()
+    if not rows:
+        return [], []
+    assets = {
+        asset.id: asset
+        for asset in db.query(Asset).filter(Asset.id.in_([row.asset_id for row in rows])).all()
+    }
+    videos: list[tuple[tuple[int, float], RecommendedMediaOut]] = []
+    photo_sets: list[tuple[tuple[int, float], Asset, dict[str, Any]]] = []
+    for row in rows:
+        asset = assets.get(row.asset_id)
+        if asset is None:
+            continue
+        item = _recommendation_for_ref(row, recipe_ref)
+        if item is None:
+            continue
+        key = _recommendation_sort_key(item, temperature)
+        if row.media_kind == "video":
+            videos.append((key, _recommended_video(asset, item)))
+        elif row.media_kind == "photo":
+            photo_sets.append((key, asset, item))
+    videos.sort(key=lambda entry: entry[0])
+    photo_sets.sort(key=lambda entry: entry[0])
+    pictures: list[RecommendedMediaOut] = []
+    queues = [
+        deque(list_image_assets(db, asset))
+        for _key, asset, _item in photo_sets
+    ]
+    items_by_queue = [item for _key, _asset, item in photo_sets]
+    parents = [asset for _key, asset, _item in photo_sets]
+    while len(pictures) < picture_limit and any(queues):
+        for index, queue in enumerate(queues):
+            if not queue:
+                continue
+            pictures.append(_recommended_picture(queue.popleft(), parents[index], items_by_queue[index]))
+            if len(pictures) >= picture_limit:
+                break
+    return [item for _key, item in videos[:video_limit]], pictures
 
 
 def list_image_assets(db: Session, asset: Asset) -> list[Asset]:

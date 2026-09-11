@@ -162,6 +162,20 @@ export type Generation = {
   objections: ObjectionRow[];
   founder_quotes?: FounderQuoteRow[];
   report_passages?: ReportPassage[];
+  recommended_videos?: RecommendedMedia[];
+  recommended_pictures?: RecommendedMedia[];
+};
+
+export type RecommendedMedia = {
+  asset_id: number;
+  parent_asset_id: number;
+  media_kind: string;
+  title: string;
+  source_url: string;
+  thumbnail_url: string;
+  preview_url: string;
+  confidence: number;
+  rationale: string;
 };
 
 export type AxesResponse = {
