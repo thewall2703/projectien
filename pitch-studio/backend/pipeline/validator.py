@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import re
 from typing import Any
 
@@ -29,6 +30,43 @@ def count_script_words(script: dict[str, Any]) -> int:
 
 def budget_range(word_budget: int) -> tuple[int, int]:
     return int(word_budget * 0.85), int(word_budget * 1.15)
+
+
+def trim_script_to_budget(script: dict[str, Any], word_budget: int) -> dict[str, Any]:
+    """Deterministically remove an overage without changing section structure."""
+    _low, high = budget_range(word_budget)
+    excess = count_script_words(script) - high
+    if excess <= 0:
+        return script
+
+    trimmed = deepcopy(script)
+    cta = (trimmed.get("cta") or "").strip()
+    sections = trimmed.get("sections") or []
+    candidates = [
+        section
+        for section in sections
+        if (section.get("text") or "").strip()
+        and (not cta or cta not in section.get("text", ""))
+    ]
+    candidates.sort(key=lambda item: len(_words(item.get("text", ""))), reverse=True)
+
+    for section in candidates:
+        if excess <= 0:
+            break
+        text = section.get("text", "").strip()
+        matches = list(re.finditer(r"[A-Za-z0-9₹.%]+", text))
+        removable = max(0, len(matches) - 8)
+        remove = min(excess, removable)
+        if not remove:
+            continue
+        cut_at = matches[-remove].start()
+        shortened = text[:cut_at].rstrip(" \t,;:–—-")
+        if shortened and shortened[-1] not in ".!?":
+            shortened += "."
+        section["text"] = shortened
+        excess -= remove
+
+    return trimmed
 
 
 def _section_pages(section: dict[str, Any]) -> list[int]:

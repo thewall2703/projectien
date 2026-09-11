@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -18,7 +19,7 @@ from backend.pipeline.llm import chat_json
 from backend.pipeline.prompts import review_pratham_voice, script_messages
 from backend.pipeline.resolver import resolve_recipe
 from backend.pipeline.script_flow import ScriptFlowError, load_script_topics, notes_by_page
-from backend.pipeline.validator import align_script_to_topics, validate_script
+from backend.pipeline.validator import align_script_to_topics, trim_script_to_budget, validate_script
 from backend.schemas import ScriptPayload
 from backend.transcripts import pick_founder_quotes
 
@@ -79,6 +80,20 @@ def _select_objections(db: Session, intent: str) -> list[Objection]:
     if intent == "I3":
         return approved[:6]
     return approved[:6]
+
+
+def _validate_and_repair_budget(
+    script: dict[str, Any],
+    facts: list[LockedFact],
+    sequence: list[str],
+    word_budget: int,
+    topics: list[Any],
+) -> tuple[dict[str, Any], list[str]]:
+    violations = validate_script(script, facts, sequence, word_budget, topics=topics)
+    if violations and all(item.startswith("Word count ") for item in violations):
+        script = trim_script_to_budget(script, word_budget)
+        violations = validate_script(script, facts, sequence, word_budget, topics=topics)
+    return script, violations
 
 
 def run(generation_id: int) -> None:
@@ -142,8 +157,8 @@ def run(generation_id: int) -> None:
         script = align_script_to_topics(script, topic_flow, modules)
 
         _set_status(db, generation, "validating")
-        violations = validate_script(
-            script, facts, resolved.module_sequence, resolved.word_budget, topics=topic_flow
+        script, violations = _validate_and_repair_budget(
+            script, facts, resolved.module_sequence, resolved.word_budget, topic_flow
         )
         for _attempt in range(2):
             if not violations:
@@ -169,8 +184,8 @@ def run(generation_id: int) -> None:
             )
             ScriptPayload.model_validate(script)
             script = align_script_to_topics(script, topic_flow, modules)
-            violations = validate_script(
-                script, facts, resolved.module_sequence, resolved.word_budget, topics=topic_flow
+            script, violations = _validate_and_repair_budget(
+                script, facts, resolved.module_sequence, resolved.word_budget, topic_flow
             )
         if violations:
             generation.script_json = json.dumps(script, ensure_ascii=False)
@@ -205,8 +220,8 @@ def run(generation_id: int) -> None:
             )
             ScriptPayload.model_validate(script)
             script = align_script_to_topics(script, topic_flow, modules)
-            violations = validate_script(
-                script, facts, resolved.module_sequence, resolved.word_budget, topics=topic_flow
+            script, violations = _validate_and_repair_budget(
+                script, facts, resolved.module_sequence, resolved.word_budget, topic_flow
             )
             if violations:
                 continue

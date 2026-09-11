@@ -13,12 +13,13 @@ from backend.pipeline.prompts import (
     script_messages,
 )
 from backend.pipeline.resolver import _compose_fallback, parse_sequence
-from backend.pipeline.runner import pick_assets, run
+from backend.pipeline.runner import _validate_and_repair_budget, pick_assets, run
 from backend.pipeline.script_flow import ScriptFlowError, ScriptTopic, build_script_topics, notes_by_page
 from backend.pipeline.validator import (
     align_script_to_recipe,
     align_script_to_topics,
     count_script_words,
+    trim_script_to_budget,
     validate_script,
 )
 from backend.schemas import ScriptPayload
@@ -113,6 +114,44 @@ class ValidatorTests(unittest.TestCase):
         )
         self.assertEqual(payload.sections[0].topic_id, 0)
         self.assertEqual(payload.sections[0].pages, [])
+
+    def test_over_budget_script_is_trimmed_to_the_hard_limit(self):
+        script = {
+            "sections": [
+                {
+                    "topic_id": 7,
+                    "topic_title": "Student builders",
+                    "pages": [13, 14],
+                    "heading": "Build for real",
+                    "text": " ".join(f"word{index}" for index in range(320)) + ".",
+                }
+            ],
+            "cta": "Come sit in class Saturday.",
+        }
+        trimmed = trim_script_to_budget(script, 280)
+        self.assertEqual(count_script_words(script), 325)
+        self.assertEqual(count_script_words(trimmed), 322)
+        self.assertEqual(trimmed["sections"][0]["topic_id"], 7)
+        self.assertEqual(trimmed["sections"][0]["pages"], [13, 14])
+        self.assertEqual(trimmed["cta"], script["cta"])
+
+    def test_runner_repairs_a_word_only_validation_failure(self):
+        topic = ScriptTopic(topic_id=7, title="Student builders", pages=[13, 14])
+        script = {
+            "sections": [
+                {
+                    "topic_id": 7,
+                    "topic_title": topic.title,
+                    "pages": [13, 14],
+                    "heading": "Build for real",
+                    "text": " ".join(f"word{index}" for index in range(320)) + ".",
+                }
+            ],
+            "cta": "Come sit in class Saturday.",
+        }
+        repaired, violations = _validate_and_repair_budget(script, [], ["M01"], 280, [topic])
+        self.assertEqual(violations, [])
+        self.assertEqual(count_script_words(repaired), 322)
 
 
 class ScriptFlowTests(unittest.TestCase):
