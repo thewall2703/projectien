@@ -347,10 +347,22 @@ class VoiceReviewTests(unittest.TestCase):
         self.assertFalse(result["passed"])
         self.assertTrue(any("Pratham" in item for item in result["violations"]))
 
-    def test_violations_fail_even_when_model_passes(self):
+    def test_reviewer_pass_is_the_gate(self):
         with mock.patch(
             "backend.pipeline.llm.chat_json",
-            return_value={"passed": True, "score": 0.95, "violations": ["Sounds like a brochure"]},
+            return_value={"passed": True, "score": 0.95, "violations": ["A leftover brochure word"]},
+        ):
+            result = review_pratham_voice(
+                {"sections": [{"text": "Come sit in a class."}], "cta": "Come Saturday"},
+                [SimpleNamespace(text="Stay in India", topic="vision", module_ids="M12", speaker="Pratham Mittal", source_name="C0005.MP4", source_file_id="abc", start_sec=10)],
+            )
+        self.assertTrue(result["passed"])
+        self.assertIn("A leftover brochure word", result["violations"])
+
+    def test_low_score_fails(self):
+        with mock.patch(
+            "backend.pipeline.llm.chat_json",
+            return_value={"passed": False, "score": 0.4, "violations": ["Sounds like a brochure"]},
         ):
             result = review_pratham_voice(
                 {"sections": [{"text": "A world-class ecosystem."}], "cta": "Apply"},

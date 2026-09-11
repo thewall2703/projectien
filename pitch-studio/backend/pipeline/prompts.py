@@ -278,10 +278,13 @@ def voice_review_messages(script: dict[str, Any], founder_quotes: list[FounderQu
     system = (
         "You review a spoken pitch for whether it sounds like Pratham Mittal talking. "
         "Use only the transcript excerpts as the style reference. "
-        "Pass only if the draft is direct, conversational, concrete-to-point, plain, "
-        "and free of brochure or corporate phrasing. "
+        "Pass if the draft is mostly direct, conversational, concrete-to-point, and plain. "
         "Fail if it copies transcript sentences, treats transcript anecdotes as unsourced facts, "
-        "or sounds written rather than spoken. "
+        "or sounds like a brochure more than a person talking. "
+        "Do not fail locked institutional wording that must stay exact: university-status language, "
+        "CTC figures, membership names, or other verified facts. Those can sound formal. "
+        "Do not fail a heading label. Judge the spoken text only. "
+        "Minor leftover formality is not enough to fail if the voice is still spoken. "
         'Return JSON only: {"passed":true,"score":0.0,"violations":["..."]}'
     )
     user = (
@@ -310,5 +313,7 @@ def review_pratham_voice(script: dict[str, Any], founder_quotes: list[FounderQuo
         score = float(payload.get("score") or 0.0)
     except (TypeError, ValueError):
         score = 0.0
-    passed = bool(payload.get("passed")) and score >= 0.7 and not violations
+    passed = bool(payload.get("passed")) and score >= 0.7
+    if not passed and not violations:
+        violations = ["The draft does not sound like Pratham Mittal speaking."]
     return {"passed": passed, "score": score, "violations": violations}
