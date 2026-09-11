@@ -4,14 +4,23 @@ export default {
   theme: {
     extend: {
       colors: {
-        ink: "#14141A",
+        black: "#0B0B0F",
+        offwhite: "#F5F2EB",
+        grey: {
+          DEFAULT: "#6B6B76",
+          light: "#E8E4DB",
+          dark: "#3A3A42",
+        },
+        "brand-yellow": "#F5C518",
+        /* Compatibility aliases used by existing admin pages */
+        ink: "#0B0B0F",
         paper: "#F5F2EB",
         surface: "#FFFFFF",
-        accent: "#2439D9",
-        "accent-dark": "#16227A",
-        gold: "#C9A24B",
         muted: "#6B6B76",
-        line: "#E7E2D8",
+        line: "#E8E4DB",
+        accent: "#0B0B0F",
+        "accent-dark": "#000000",
+        gold: "#F5C518",
         success: "#1B8A5A",
         warn: "#B7791F",
         danger: "#B4232A",
@@ -22,7 +31,8 @@ export default {
         serif: ["Fraunces Variable", "Fraunces", "Georgia", "Times New Roman", "serif"],
       },
       boxShadow: {
-        card: "0 12px 40px -24px rgba(20, 20, 26, 0.35)",
+        card: "0 12px 40px -24px rgba(11, 11, 15, 0.28)",
+        glass: "0 8px 32px -12px rgba(11, 11, 15, 0.18)",
       },
       borderRadius: {
         xl: "1rem",

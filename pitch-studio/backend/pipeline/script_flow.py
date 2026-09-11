@@ -26,6 +26,8 @@ class ScriptTopic:
     vision: str = ""
     module_ids: list[str] = field(default_factory=list)
     recipe_modules: list[str] = field(default_factory=list)
+    _source_topic_id: int = field(default=0, repr=False)
+    _slide_module_id: str = field(default="", repr=False)
 
     def to_prompt_dict(self) -> dict[str, Any]:
         page_range = f"p{self.pages[0]}" if len(self.pages) == 1 else f"p{self.pages[0]}–{self.pages[-1]}"
@@ -72,30 +74,58 @@ def build_script_topics(
         )
 
     sequence_set = list(dict.fromkeys(sequence))
+    selected_modules_by_topic: dict[int, set[str]] = {}
+    for slide in plan:
+        source_topic_id = int(mapping[slide.page].id)
+        selected_modules_by_topic.setdefault(source_topic_id, set()).add(slide.module_id)
     flow: list[ScriptTopic] = []
     current: ScriptTopic | None = None
     for slide in plan:
         topic = mapping[slide.page]
-        topic_id = int(topic.id)
-        if current is not None and current.topic_id == topic_id:
+        source_topic_id = int(topic.id)
+        # Deck-topic rows are intentionally broad visual chapters and can span
+        # several recipe modules (for example Origin may include both M01 and
+        # the M09 Gurugram page). Do not turn those different arguments into
+        # one spoken beat: that lets a later, vivid slide hijack the opening.
+        # Collapse only adjacent pages that share both chapter and module.
+        if (
+            current is not None
+            and current._source_topic_id == source_topic_id
+            and current._slide_module_id == slide.module_id
+        ):
             current.pages.append(slide.page)
             current.labels.append(slide.label or PAGE_LABELS.get(slide.page, f"Page {slide.page}"))
             if slide.module_id and slide.module_id in sequence_set and slide.module_id not in current.recipe_modules:
                 current.recipe_modules.append(slide.module_id)
             continue
         module_ids = _split_ids(getattr(topic, "module_ids", ""))
-        recipe_modules = [module_id for module_id in sequence_set if module_id in module_ids]
-        if slide.module_id and slide.module_id in sequence_set and slide.module_id not in recipe_modules:
-            recipe_modules.append(slide.module_id)
+        # The source DeckTopic may span several modules. Feeding all of them
+        # into every split beat leaks later arguments into earlier slides
+        # (notably M09 campus copy into the cover/origin opening).
+        recipe_modules = [slide.module_id] if slide.module_id in sequence_set else []
+        source_title = (getattr(topic, "title", "") or "").strip()
+        label = slide.label or PAGE_LABELS.get(slide.page, f"Page {slide.page}")
+        # Once a broad source chapter is split, give each spoken beat a title
+        # that describes its actual slides instead of repeating a misleading
+        # chapter title such as "Origin" over the Gurugram beat.
+        beat_title = (
+            label
+            if len(selected_modules_by_topic.get(source_topic_id, set())) > 1
+            else source_title or f"Topic {source_topic_id}"
+        )
         current = ScriptTopic(
-            topic_id=topic_id,
-            title=(getattr(topic, "title", "") or "").strip() or f"Topic {topic_id}",
+            # This is a beat id, not the database DeckTopic id. Splitting a
+            # broad visual chapter must still produce unique section ids.
+            topic_id=len(flow) + 1,
+            title=beat_title,
             pages=[slide.page],
-            labels=[slide.label or PAGE_LABELS.get(slide.page, f"Page {slide.page}")],
+            labels=[label],
             summary=(getattr(topic, "summary", "") or "").strip(),
             vision=(getattr(topic, "vision", "") or "").strip(),
             module_ids=module_ids,
             recipe_modules=recipe_modules,
+            _source_topic_id=source_topic_id,
+            _slide_module_id=slide.module_id,
         )
         flow.append(current)
     return flow

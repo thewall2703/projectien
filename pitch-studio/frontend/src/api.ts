@@ -4,13 +4,18 @@ const jsonHeaders = { "Content-Type": "application/json" };
 
 let recipesCache: unknown = null;
 let recipesInflight: Promise<unknown> | null = null;
+let deckTopicsInflight: Promise<DeckTopicList> | null = null;
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const timeoutMs = path.includes("/auth/")
     ? 25000
-    : /\/(describe|reindex|sync|prepare)(\?|$)/.test(path) || path.includes("/sync-assets") || path.includes("/deck-topics/prepare")
+    : /\/(describe|reindex|sync|prepare)(\?|$)/.test(path) ||
+        path.includes("/sync-assets") ||
+        path.includes("/deck-topics/prepare")
       ? 1200000
-      : 20000;
+      : path.includes("/deck-topics") || path.includes("/media-index")
+        ? 60000
+        : 20000;
   let response: Response;
   try {
     response = await fetch(path, {
@@ -55,6 +60,7 @@ export const api = {
   logout: () => {
     recipesCache = null;
     recipesInflight = null;
+    deckTopicsInflight = null;
     return request("/api/auth/logout", { method: "POST" });
   },
   me: () => request("/api/auth/me"),
@@ -142,7 +148,14 @@ export const api = {
     request<MediaIndexRow>(`/api/admin/media-index/${id}/unfreeze`, { method: "POST" }),
   syncAsset: (assetId: number, force = false) =>
     request(`/api/admin/assets/${assetId}/sync?force=${force ? "true" : "false"}`, { method: "POST" }),
-  deckTopicList: () => request<DeckTopicList>("/api/admin/deck-topics"),
+  deckTopicList: () => {
+    if (!deckTopicsInflight) {
+      deckTopicsInflight = request<DeckTopicList>("/api/admin/deck-topics").finally(() => {
+        deckTopicsInflight = null;
+      });
+    }
+    return deckTopicsInflight;
+  },
   deckTopicGet: (id: number) => request<DeckTopicRow>(`/api/admin/deck-topics/${id}`),
   prepareDeckTopics: (force = false) =>
     request<DeckTopicList>(`/api/admin/deck-topics/prepare?force=${force ? "true" : "false"}`, {

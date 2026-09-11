@@ -171,13 +171,13 @@ class ValidatorTests(unittest.TestCase):
         self.assertTrue(any("opening starts like a continuation" in item for item in violations))
 
     def test_independent_topic_opening_passes_opening_rule(self):
-        topic = ScriptTopic(topic_id=1, title="Origin", pages=[1, 2])
+        topic = ScriptTopic(topic_id=1, title="Campus", pages=[8], recipe_modules=["M09"])
         script = {
             "sections": [
                 {
                     "topic_id": 1,
-                    "topic_title": "Origin",
-                    "pages": [1, 2],
+                    "topic_title": "Campus",
+                    "pages": [8],
                     "heading": "Why here",
                     "text": "Why Gurugram? It was a teaching decision, not an address decision.",
                 }
@@ -186,6 +186,34 @@ class ValidatorTests(unittest.TestCase):
         }
         violations = validate_script(script, [], ["M01"], 16, topics=[topic])
         self.assertFalse(any("opening starts like a continuation" in item for item in violations))
+        self.assertFalse(any("jumps ahead to Gurugram" in item for item in violations))
+
+    def test_opening_cannot_jump_to_campus_before_campus_beat(self):
+        topics = [
+            ScriptTopic(topic_id=1, title="Learn by Doing", pages=[1]),
+            ScriptTopic(topic_id=2, title="Gurugram", pages=[8], recipe_modules=["M09"]),
+        ]
+        script = {
+            "sections": [
+                {
+                    "topic_id": 1,
+                    "topic_title": "Learn by Doing",
+                    "pages": [1],
+                    "heading": "Why here",
+                    "text": "The campus sits in Gurugram, surrounded by companies.",
+                },
+                {
+                    "topic_id": 2,
+                    "topic_title": "Gurugram",
+                    "pages": [8],
+                    "heading": "The location",
+                    "text": "That location turns the city into part of the classroom.",
+                },
+            ],
+            "cta": "Come sit in a class.",
+        }
+        violations = validate_script(script, [], ["M01", "M09"], 25, topics=topics)
+        self.assertTrue(any("jumps ahead to Gurugram" in item for item in violations))
 
 
 class ScriptFlowTests(unittest.TestCase):
@@ -217,7 +245,7 @@ class ScriptFlowTests(unittest.TestCase):
         self.assertEqual(flow[1].recipe_modules, ["M01"])
         self.assertEqual(flow[2].recipe_modules, ["M04"])
 
-    def test_collapsed_topic_collects_slide_modules(self):
+    def test_broad_topic_splits_when_slide_module_changes(self):
         plan = [
             BrandSlide(6, "M01", "Origin"),
             BrandSlide(51, "M04", "Proof"),
@@ -226,9 +254,38 @@ class ScriptFlowTests(unittest.TestCase):
             SimpleNamespace(id=2, title="Story", pages_json="[6,51]", summary="", vision="", module_ids="M01"),
         ]
         flow = build_script_topics(plan, topics, ["M01", "M04", "M14"])
-        self.assertEqual(len(flow), 1)
-        self.assertEqual(flow[0].pages, [6, 51])
-        self.assertEqual(flow[0].recipe_modules, ["M01", "M04"])
+        self.assertEqual(len(flow), 2)
+        self.assertEqual([topic.topic_id for topic in flow], [1, 2])
+        self.assertEqual([topic.pages for topic in flow], [[6], [51]])
+        self.assertEqual([topic.recipe_modules for topic in flow], [["M01"], ["M04"]])
+        self.assertEqual([topic.title for topic in flow], ["Origin", "Proof"])
+
+    def test_origin_chapter_does_not_merge_cover_origin_and_gurugram(self):
+        plan = [
+            BrandSlide(1, "", "Learn by Doing"),
+            BrandSlide(4, "M01", "Medical students learn from doctors"),
+            BrandSlide(8, "M09", "In the heart of Gurugram's business hub"),
+        ]
+        topics = [
+            SimpleNamespace(
+                id=7,
+                title="The Origin of Masters' Union",
+                pages_json="[1,2,3,4,5,6,7,8]",
+                summary="The origin and location.",
+                vision="Explain why the institution exists.",
+                module_ids="M01,M09",
+            )
+        ]
+        flow = build_script_topics(plan, topics, ["M01", "M09"])
+        self.assertEqual([topic.pages for topic in flow], [[1], [4], [8]])
+        self.assertEqual(
+            [topic.title for topic in flow],
+            [
+                "Learn by Doing",
+                "Medical students learn from doctors",
+                "In the heart of Gurugram's business hub",
+            ],
+        )
 
     def test_missing_topic_index_fails(self):
         with self.assertRaises(ScriptFlowError):

@@ -106,14 +106,29 @@ def _add_missing_columns(table: str, statements: dict[str, str]) -> None:
                 connection.execute(text(statement))
 
 
+_SCHEMA_READY = False
+
+
 def ensure_schema() -> None:
     # create_all is checkfirst=True; it only builds tables that are missing
     # (media_index and any later models). Column backfills stay explicit.
+    # Cache the result: remote Postgres inspect/create_all is multi-second work
+    # and was previously re-run on every deck-topics / media list request.
+    global _SCHEMA_READY
+    if _SCHEMA_READY:
+        return
     from backend import models as _models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
     _add_missing_columns("assets", ASSET_COLUMN_SQL)
     _add_missing_columns("generations", GENERATION_COLUMN_SQL)
+    _SCHEMA_READY = True
+
+
+def reset_schema_cache() -> None:
+    """Test helper — force the next ensure_schema() to run again."""
+    global _SCHEMA_READY
+    _SCHEMA_READY = False
 
 
 def get_db() -> Generator[Session, None, None]:

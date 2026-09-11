@@ -21,16 +21,16 @@ export default function History() {
   }, []);
 
   return (
-    <div>
-      <p className="kicker">Create</p>
-      <h1 className="mt-2 font-display text-4xl">History</h1>
+    <div className="mx-auto max-w-4xl px-6 py-10 md:px-10">
+      <p className="kicker">Library</p>
+      <h1 className="mt-2 font-display text-4xl tracking-tight text-black">History</h1>
       <div className="mt-3">
         <ErrorBanner message={error} />
       </div>
-      <div className="mt-6 space-y-3">
+      <div className="mt-8 space-y-3">
         {loading &&
           Array.from({ length: 4 }).map((_, index) => (
-            <div key={index} className="card p-5">
+            <div key={index} className="glass-panel p-5">
               <div className="flex items-center justify-between gap-3">
                 <div className="space-y-2">
                   <Skeleton className="h-5 w-48" />
@@ -44,13 +44,17 @@ export default function History() {
           rows.map((row) => {
             const labels = generationAxisLabels(row);
             return (
-              <Link key={row.id} to={`/result/${row.id}`} className="card block p-5 hover:border-accent/40">
+              <Link
+                key={row.id}
+                to={`/result/${row.id}`}
+                className="glass-panel block p-5 transition hover:bg-white/70"
+              >
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <p className="font-medium">
+                    <p className="font-medium text-black">
                       {personaLabel(recipes, row.recipe_ref, row) || `Pitch ${row.id}`}
                     </p>
-                    <p className="mt-1 text-sm text-muted">
+                    <p className="mt-1 text-sm text-grey">
                       {[labels.audience, labels.duration, labels.channel, labels.intent]
                         .filter(Boolean)
                         .join(" · ")}
@@ -58,14 +62,22 @@ export default function History() {
                   </div>
                   <div className="flex items-center gap-3">
                     <StatusBadge status={row.status} />
-                    <span className="text-xs text-muted">{new Date(row.created_at).toLocaleString()}</span>
+                    <span className="text-xs text-grey">{new Date(row.created_at).toLocaleString()}</span>
                   </div>
                 </div>
               </Link>
             );
           })}
         {!loading && rows.length === 0 && !error && (
-          <EmptyState title="No pitches yet" description="Generate a pitch to see it here." />
+          <EmptyState
+            title="No pitches yet"
+            description="Generate a pitch to see it here."
+            action={
+              <Link to="/generate" className="btn-accent">
+                Generate
+              </Link>
+            }
+          />
         )}
       </div>
     </div>

@@ -18,6 +18,7 @@ OPENING_CONTINUATION_RE = re.compile(
     r")",
     re.IGNORECASE,
 )
+OPENING_CAMPUS_RE = re.compile(r"\b(?:Gurugram|Cyberpark|campus)\b", re.IGNORECASE)
 
 
 def _words(text: str) -> list[str]:
@@ -228,6 +229,14 @@ def validate_script(
                 violations.append(
                     "The opening starts like a continuation. Rewrite the first sentence so it "
                     "stands alone for a listener hearing the pitch from the beginning"
+                )
+            first_sentence = re.split(r"(?<=[.!?])\s+", opening, maxsplit=1)[0]
+            opening_modules = set(getattr(topics[0], "recipe_modules", []) or [])
+            if "M09" not in opening_modules and OPENING_CAMPUS_RE.search(first_sentence):
+                violations.append(
+                    "The opening jumps ahead to Gurugram/campus even though the opening slides "
+                    "are not the Campus module. Anchor the first sentence in the first selected "
+                    "slide; save location details for the M09 beat"
                 )
     else:
         section_ids = [section.get("module_id", "") for section in sections]

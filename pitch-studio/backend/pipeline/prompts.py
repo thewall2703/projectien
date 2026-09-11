@@ -220,9 +220,11 @@ def script_messages(
         "BEAT ROLES:\n"
         "- OPENING: This is the first thing the listener hears. Start independently with a direct question, "
         "sharp claim, or concrete image. Never begin with a continuation such as 'Then', 'Next', "
-        "'Moving on', 'As I mentioned', or anything that assumes earlier speech.\n"
+        "'Moving on', 'As I mentioned', or anything that assumes earlier speech. The selected slides are "
+        "listed in speaking order: anchor the opening in the FIRST selected slide and explain its central "
+        "idea before using any later slide. Do not choose a vivid detail from a later slide as the opening.\n"
         "- BODY: Continue the same conversation. Connect naturally to the previous beat, explain only what "
-        "the selected slides support, and land one clear point before moving forward.\n"
+        "the selected slides support, in their listed order, and land one clear point before moving forward.\n"
         "- CLOSE: Add no new argument or evidence. Briefly land the core point, make exactly one specific "
         "ask, and stop. Do not end with a slogan, summary list, or multiple options.\n"
         + (

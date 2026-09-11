@@ -77,9 +77,9 @@ export default function DataTable({ title, path, fields, extra }: Props) {
   const visible = fields.filter((field) => field.key !== "id").slice(0, 4);
 
   return (
-    <div>
+    <div className="mx-auto max-w-6xl px-6 py-10 md:px-10">
       <div className="flex items-center justify-between gap-4">
-        <h1 className="font-serif text-3xl">{title}</h1>
+        <h1 className="font-display text-3xl tracking-tight text-black">{title}</h1>
         <div className="flex gap-2">
           {extra}
           <Button
@@ -97,12 +97,12 @@ export default function DataTable({ title, path, fields, extra }: Props) {
       <div className="mt-3">
         <ErrorBanner message={error} />
       </div>
-      <div className="mt-5 overflow-x-auto rounded-xl bg-white">
+      <div className="glass-panel mt-5 overflow-x-auto">
         <table className="min-w-full text-left text-sm">
-          <thead className="border-b border-ink/10 text-ink/50">
+          <thead className="border-b border-black/10 text-grey">
             <tr>
               {visible.map((field) => (
-                <th key={field.key} className="px-4 py-3">
+                <th key={field.key} className="px-4 py-3 font-medium">
                   {field.label}
                 </th>
               ))}
@@ -112,7 +112,7 @@ export default function DataTable({ title, path, fields, extra }: Props) {
           <tbody>
             {loading &&
               Array.from({ length: 5 }).map((_, index) => (
-                <tr key={`sk-${index}`} className="border-t border-ink/5">
+                <tr key={`sk-${index}`} className="border-t border-black/5">
                   {visible.map((field) => (
                     <td key={field.key} className="px-4 py-3">
                       <Skeleton className="h-4 w-28" />
@@ -125,14 +125,21 @@ export default function DataTable({ title, path, fields, extra }: Props) {
               ))}
             {!loading &&
               rows.map((row) => (
-                <tr key={String(row.id)} className="border-t border-ink/5">
+                <tr key={String(row.id)} className="border-t border-black/5">
                   {visible.map((field) => (
-                    <td key={field.key} className="max-w-xs truncate px-4 py-3">
+                    <td key={field.key} className="max-w-xs truncate px-4 py-3 text-black">
                       {String(row[field.key] ?? "")}
                     </td>
                   ))}
                   <td className="px-4 py-3 text-right">
-                    <button className="mr-3 text-accent" type="button" onClick={() => { setCreating(false); setDraft(row); }}>
+                    <button
+                      className="mr-3 text-grey-dark underline-offset-2 hover:underline"
+                      type="button"
+                      onClick={() => {
+                        setCreating(false);
+                        setDraft(row);
+                      }}
+                    >
                       Edit
                     </button>
                     <Button
@@ -155,23 +162,23 @@ export default function DataTable({ title, path, fields, extra }: Props) {
         )}
       </div>
       {draft && (
-        <div className="fixed inset-0 z-10 flex justify-end bg-ink/30">
-          <div className="h-full w-full max-w-lg overflow-y-auto bg-white p-6">
-            <h2 className="font-serif text-2xl">{creating ? "Create" : "Edit"}</h2>
+        <div className="fixed inset-0 z-20 flex justify-end bg-black/30 backdrop-blur-sm">
+          <div className="glass h-full w-full max-w-lg overflow-y-auto p-6 shadow-glass">
+            <h2 className="font-display text-2xl text-black">{creating ? "Create" : "Edit"}</h2>
             <div className="mt-4 space-y-3">
               {fields.map((field) => (
-                <label key={field.key} className="block text-sm">
+                <label key={field.key} className="block text-sm text-grey-dark">
                   {field.label}
                   {field.type === "textarea" ? (
                     <textarea
-                      className="mt-1 w-full rounded border border-ink/15 px-3 py-2"
+                      className="field mt-1"
                       rows={5}
                       value={String(draft[field.key] ?? "")}
                       onChange={(e) => setDraft({ ...draft, [field.key]: e.target.value })}
                     />
                   ) : field.type === "select" ? (
                     <select
-                      className="mt-1 w-full rounded border border-ink/15 px-3 py-2"
+                      className="field mt-1"
                       value={String(draft[field.key] ?? "")}
                       onChange={(e) => setDraft({ ...draft, [field.key]: e.target.value })}
                     >
@@ -190,7 +197,7 @@ export default function DataTable({ title, path, fields, extra }: Props) {
                     />
                   ) : (
                     <input
-                      className="mt-1 w-full rounded border border-ink/15 px-3 py-2"
+                      className="field mt-1"
                       type={field.type === "number" ? "number" : "text"}
                       value={String(draft[field.key] ?? "")}
                       onChange={(e) =>

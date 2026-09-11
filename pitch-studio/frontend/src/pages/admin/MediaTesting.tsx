@@ -268,7 +268,7 @@ export default function MediaTesting() {
   const describing = busy === "describe" || (isActiveJob(current) && current?.job_type === "media_describe");
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-6xl space-y-6 px-6 py-10 md:px-10">
       <div>
         <p className="kicker">Library</p>
         <h1 className="font-display text-3xl">Media testing</h1>
@@ -279,7 +279,7 @@ export default function MediaTesting() {
       </div>
       <ErrorBanner message={error} />
       <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
-        <aside className="card max-h-[80vh] overflow-y-auto p-3">
+        <aside className="card scrollbar-none max-h-[80vh] overflow-y-auto p-3">
           {loading && (
             <div className="space-y-2 p-1">
               {Array.from({ length: 6 }).map((_, index) => (

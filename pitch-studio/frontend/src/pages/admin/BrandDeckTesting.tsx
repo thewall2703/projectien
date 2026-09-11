@@ -176,7 +176,7 @@ export default function BrandDeckTesting() {
   const preparing = busy === "prepare" || isActiveJob(list);
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-6xl space-y-6 px-6 py-10 md:px-10">
       <div>
         <p className="kicker">Library</p>
         <h1 className="font-display text-3xl">Brand deck testing</h1>
@@ -187,7 +187,7 @@ export default function BrandDeckTesting() {
       </div>
       <ErrorBanner message={error} />
       <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
-        <aside className="card max-h-[80vh] overflow-y-auto p-3">
+        <aside className="card scrollbar-none max-h-[80vh] overflow-y-auto p-3">
           <div className="mb-3 space-y-2 px-1">
             <Button variant="accent" loading={preparing} onClick={() => prepare(list.items.length > 0)}>
               {list.items.length ? "Regroup topics" : "Prepare topics"}

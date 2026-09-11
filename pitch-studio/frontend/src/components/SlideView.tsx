@@ -20,8 +20,8 @@ export default function SlideView({
 
   if (!source) {
     return (
-      <div className="flex h-full w-full items-center justify-center bg-paper px-[8%] text-center">
-        <p className="text-[2cqw] text-muted">
+      <div className="flex h-full w-full items-center justify-center bg-offwhite px-[8%] text-center">
+        <p className="text-[2cqw] text-grey">
           {slide.title || "This slide is not linked to a brand deck page."}
         </p>
       </div>
@@ -31,7 +31,7 @@ export default function SlideView({
   const label = [moduleName(slide.module_id), slide.title].filter(Boolean).join(" — ");
 
   return (
-    <div className="brand-slide relative h-full w-full bg-ink">
+    <div className="brand-slide relative h-full w-full bg-black">
       <img
         src={source}
         alt={label || `Brand deck page ${slide.page}`}
