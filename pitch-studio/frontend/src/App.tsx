@@ -13,6 +13,7 @@ import Facts from "./pages/admin/Facts";
 import Recipes from "./pages/admin/Recipes";
 import Assets from "./pages/admin/Assets";
 import FounderQuotes from "./pages/admin/FounderQuotes";
+import VoiceTranscripts from "./pages/admin/VoiceTranscripts";
 import Objections from "./pages/admin/Objections";
 import Users from "./pages/admin/Users";
 import MediaTesting from "./pages/admin/MediaTesting";
@@ -27,6 +28,7 @@ const ADMIN_LINKS = [
   { to: "/admin/media-testing", label: "Media testing" },
   { to: "/admin/brand-deck-testing", label: "Brand deck testing" },
   { to: "/admin/founder-quotes", label: "Founder voice" },
+  { to: "/admin/voice-transcripts", label: "Style guide" },
   { to: "/admin/objections", label: "Objections" },
   { to: "/admin/users", label: "Users" },
 ] as const;
@@ -337,6 +339,7 @@ export default function App() {
                     <Route path="/admin/media-testing" element={<MediaTesting />} />
                     <Route path="/admin/brand-deck-testing" element={<BrandDeckTesting />} />
                     <Route path="/admin/founder-quotes" element={<FounderQuotes />} />
+                    <Route path="/admin/voice-transcripts" element={<VoiceTranscripts />} />
                     <Route path="/admin/objections" element={<Objections />} />
                     <Route path="/admin/users" element={<Users />} />
                   </>

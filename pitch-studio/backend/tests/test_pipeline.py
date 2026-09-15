@@ -312,12 +312,22 @@ class ScriptFlowTests(unittest.TestCase):
             ScriptTopic(topic_id=2, title="Close", pages=[92], recipe_modules=["M14"], module_ids=["M14"], summary="Ask"),
         ]
         script = {
-            "sections": [{"topic_id": 2, "heading": "Ask", "text": "Come this Saturday.", "pages": [92]}],
+            "sections": [
+                {
+                    "module_id": None,
+                    "topic_id": 2,
+                    "heading": "Ask",
+                    "text": "Come this Saturday.",
+                    "pages": [92],
+                }
+            ],
             "cta": "Come this Saturday.",
         }
         module = SimpleNamespace(id="M01", name="Origin", job="", core_content="We train operators on live projects.")
         aligned = align_script_to_topics(script, topics, [module])
+        ScriptPayload.model_validate(aligned)
         self.assertEqual([section["topic_id"] for section in aligned["sections"]], [1, 2])
+        self.assertEqual([section["module_id"] for section in aligned["sections"]], ["M01", "M14"])
         self.assertEqual(aligned["sections"][0]["pages"], [6, 7])
         self.assertEqual(aligned["sections"][0]["topic_title"], "Origin")
         self.assertIn("operators", aligned["sections"][0]["text"])

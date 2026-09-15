@@ -1,4 +1,13 @@
-import type { DeckTopicList, DeckTopicRow, MediaIndexList, MediaIndexRow } from "./types";
+import type {
+  DeckTopicList,
+  DeckTopicRow,
+  InterpretResult,
+  MediaIndexList,
+  MediaIndexRow,
+  StyleGuide,
+  StyleTranscriptCreateResult,
+  StyleTranscriptRow,
+} from "./types";
 
 const jsonHeaders = { "Content-Type": "application/json" };
 
@@ -11,9 +20,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ? 25000
     : /\/(describe|reindex|sync|prepare)(\?|$)/.test(path) ||
         path.includes("/sync-assets") ||
-        path.includes("/deck-topics/prepare")
+        path.includes("/deck-topics/prepare") ||
+        path.includes("/style-transcripts")
       ? 1200000
-      : path.includes("/deck-topics") || path.includes("/media-index")
+      : path.includes("/deck-topics") ||
+          path.includes("/media-index") ||
+          path.includes("/generations/interpret")
         ? 60000
         : 20000;
   let response: Response;
@@ -94,6 +106,12 @@ export const api = {
     request(`/api/admin/extract-assets/${assetId}?max_pages=${maxPages}`, { method: "POST" }),
   createGeneration: (body: unknown) =>
     request("/api/generations", {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify(body),
+    }),
+  interpretBrief: (body: { audience_text: string; setting_text: string; goal_text: string }) =>
+    request<InterpretResult>("/api/generations/interpret", {
       method: "POST",
       headers: jsonHeaders,
       body: JSON.stringify(body),
@@ -185,4 +203,18 @@ export const api = {
     request<DeckTopicRow>(`/api/admin/deck-topics/${id}/freeze`, { method: "POST" }),
   unfreezeDeckTopic: (id: number) =>
     request<DeckTopicRow>(`/api/admin/deck-topics/${id}/unfreeze`, { method: "POST" }),
+  styleTranscriptList: () => request<StyleTranscriptRow[]>("/api/admin/style-transcripts"),
+  styleTranscriptCreate: (name: string, text: string) =>
+    request<StyleTranscriptCreateResult>("/api/admin/style-transcripts", {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ name, text }),
+    }),
+  styleGuideGet: () => request<StyleGuide>("/api/admin/style-guide"),
+  styleGuideSave: (guideText: string) =>
+    request<StyleGuide>("/api/admin/style-guide", {
+      method: "PUT",
+      headers: jsonHeaders,
+      body: JSON.stringify({ guide_text: guideText }),
+    }),
 };

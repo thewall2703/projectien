@@ -163,6 +163,7 @@ def script_messages(
     topic_flow: list[Any] | None = None,
     corrections: list[str] | None = None,
     draft: dict[str, Any] | None = None,
+    style_guide: str = "",
 ) -> list[dict[str, str]]:
     locked, forbidden = _format_facts(facts, sequence)
     voice_lines = [format_founder_line(quote) for quote in (founder_quotes or [])]
@@ -190,15 +191,32 @@ def script_messages(
         "'testament to'. Kill stacked three-adjective phrases and generic hype.\n"
         "- Inside a section's text: it is spoken prose. No headings, no bullet points, no numbered lists, "
         "no markdown. Just what the speaker says.\n\n"
-        "WHOSE VOICE TO WRITE IN:\n"
+        "SPEAKER IDENTITY — DO NOT CONFUSE STYLE WITH IDENTITY:\n"
+        "- This script will be delivered by a Masters' Union EMPLOYEE or representative. The speaker is "
+        "not Pratham Mittal and must never impersonate him.\n"
+        "- The employee may say 'we', 'our', and 'at Masters\\' Union' for institutional actions and beliefs. "
+        "For anything specific to the founder's life, memories, education, relationships, or achievements, "
+        "refer to Pratham in the third person and only when that content is independently supported by "
+        "LOCKED facts or REPORT EVIDENCE.\n"
+        "- Never write founder-biography claims in the employee's first person: no 'I started Masters\\' Union', "
+        "'when I was at Wharton', 'I met every parent', 'I lived in the hostel', or equivalent identity borrowing.\n"
+        "- A third-person reference to Pratham is correct employee narration, not a voice failure.\n\n"
+        "STYLE SOURCE:\n"
         "- The FOUNDER VOICE block is Pratham Mittal actually speaking, transcribed from real talks. "
-        "It is your primary style reference. Absorb his rhythm, plain word choice, and attitude, and write "
-        "the ENTIRE script in that register — direct, specific, story-first, a bit irreverent, no corporate gloss. "
-        "Match how he moves from a concrete thing to the point.\n"
-        "- Borrow the VOICE, not the sentences. Only reproduce his words as a short, clearly-attributed quote "
-        "to Pratham Mittal. Never present a number or claim from that block as fact — facts come from LOCKED "
-        "and REPORT EVIDENCE only.\n\n"
-        "IMPACT MUST BE PROPORTIONAL TO TIME:\n"
+        "It is a STYLE REFERENCE ONLY. Transfer his rhythm, plain word choice, directness, specificity, "
+        "story-first movement, and lack of corporate gloss into an employee's voice.\n"
+        "- Borrow communication patterns, never sentences, identity, memories, anecdotes, numbers, or claims. "
+        "Do not quote or closely paraphrase the transcript, even with attribution. Transcript content is not "
+        "evidence; facts come from LOCKED and REPORT EVIDENCE only.\n"
+        + (
+            "- The PRATHAM STYLE AND STRUCTURE GUIDE complements FOUNDER VOICE: the guide is rules for "
+            "transferable structure and register; the voice block is register examples. Treat observed devices "
+            "as context-dependent, not a checklist: do not force Hindi, named parts, audience games, prizes, "
+            "or Q&A mechanics into a pitch where they do not naturally fit.\n\n"
+            if style_guide
+            else "\n"
+        )
+        + "IMPACT MUST BE PROPORTIONAL TO TIME:\n"
         "- 30–60 seconds: precise, specific, factual; one point and one proof.\n"
         "- 2 minutes: highlight the listener's need and position Masters' Union as the solution.\n"
         "- 5 minutes: build a story; read the audience's likely emotional state, match it to the information "
@@ -263,18 +281,25 @@ def script_messages(
         f"Word limit: {word_budget} words at 120 spoken words per minute. "
         f"Write {low}-{high} words and never exceed {high}.\n"
         f"{flow_block}\n\n"
-        f"FOUNDER VOICE — this is the exact tone, cadence, and vocabulary to write the whole pitch in "
-        f"(Pratham Mittal, transcribed). Write like him talking, not like a brochure:\n{voice}\n\n"
-        f"LOCKED — use verbatim where relevant:\n{locked}\n\n"
+        f"FOUNDER VOICE STYLE SAMPLES — style reference only; the employee is the speaker. "
+        f"Do not reuse their facts, anecdotes, or wording:\n{voice}\n\n"
+        + (
+            "PRATHAM-DERIVED EMPLOYEE STYLE GUIDE — use only the transferable, context-appropriate "
+            "structural moves and register:\n"
+            f"{style_guide}\n\n"
+            if style_guide
+            else ""
+        )
+        + f"LOCKED — use verbatim where relevant:\n{locked}\n\n"
         f"FORBIDDEN — never state these:\n{forbidden}\n\n"
         f"REPORT EVIDENCE:\n{reports}"
     )
     if draft:
         current = count_script_words(draft)
         order_rule = (
-            "Keep the same topic_id, pages, topic_title, beat roles, locked facts, and spoken founder voice. "
+            "Keep the same topic_id, pages, topic_title, beat roles, locked facts, and employee voice. "
             if topic_flow
-            else "Keep the same module order, the locked facts, and the spoken founder voice. "
+            else "Keep the same module order, the locked facts, and the employee voice. "
         )
         user += (
             f"\n\nPrevious draft is {current} words. Rewrite THAT draft — do not start over. "
@@ -289,28 +314,65 @@ def script_messages(
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
-def voice_review_messages(script: dict[str, Any], founder_quotes: list[FounderQuote]) -> list[dict[str, str]]:
+def voice_review_messages(
+    script: dict[str, Any],
+    founder_quotes: list[FounderQuote],
+    style_guide: str = "",
+    duration: str = "",
+    channel: str = "",
+    intent: str = "",
+    context_note: str = "",
+) -> list[dict[str, str]]:
     voice = "\n".join(format_founder_line(quote) for quote in founder_quotes) or "(none)"
     system = (
-        "You review a spoken pitch for whether it sounds like Pratham Mittal talking. "
-        "Use only the transcript excerpts as the style reference. "
-        "Pass if the draft is mostly direct, conversational, concrete-to-point, and plain. "
-        "Fail if it copies transcript sentences, treats transcript anecdotes as unsourced facts, "
-        "or sounds like a brochure more than a person talking. "
+        "You review a spoken pitch written for a Masters' Union EMPLOYEE or representative. "
+        "Pratham Mittal is the style source, NOT the speaker. The goal is an employee who communicates "
+        "with Pratham's directness, conversational rhythm, specificity, and plain language without "
+        "impersonating him. Pass if the draft is mostly direct, conversational, concrete-to-point, and plain. "
+        "Third-person references to Pratham are correct when discussing founder-specific material; NEVER fail "
+        "a draft merely because it refers to him in the third person. Fail identity only when the employee "
+        "claims Pratham's personal biography, memories, or actions as their own first-person experience. "
+        "Fail if the draft copies or closely paraphrases transcript sentences (even as an attributed quote), "
+        "uses transcript anecdotes or numbers as factual evidence, or sounds like a brochure more than a person talking. "
+        "Do not use transcript excerpts to fact-check the draft: they are style samples, not an authoritative "
+        "source of current facts. "
         "Do not fail locked institutional wording that must stay exact: university-status language, "
         "CTC figures, membership names, or other verified facts. Those can sound formal. "
         "Do not fail a heading label. Judge the spoken text only. "
         "Minor leftover formality is not enough to fail if the voice is still spoken. "
-        'Return JSON only: {"passed":true,"score":0.0,"violations":["..."]}'
+        + (
+            "Use the PRATHAM-DERIVED EMPLOYEE STYLE GUIDE as contextual guidance, not a mandatory checklist. "
+            "Apply only rules appropriate to the pitch duration, channel, intent, and context. The absence of "
+            "Hindi, named parts, gamification, prizes, audience interaction, or a question framework is not a "
+            "failure unless the supplied pitch context specifically requires that device. "
+            if style_guide
+            else ""
+        )
+        + 'Return JSON only: {"passed":true,"score":0.0,"violations":["..."]}'
     )
     user = (
-        f"PRATHAM TRANSCRIPT EXCERPTS:\n{voice}\n\n"
-        f"DRAFT SCRIPT:\n{json.dumps(script, ensure_ascii=False)}"
+        f"PITCH CONTEXT:\nDuration: {duration or '(unknown)'}\nChannel: {channel or '(unknown)'}\n"
+        f"Intent: {intent or '(unknown)'}\nContext note: {context_note or '(none)'}\n\n"
+        f"PRATHAM TRANSCRIPT STYLE SAMPLES — not facts and not speaker identity:\n{voice}\n\n"
+        + (
+            f"PRATHAM-DERIVED EMPLOYEE STYLE GUIDE:\n{style_guide}\n\n"
+            if style_guide
+            else ""
+        )
+        + f"DRAFT SCRIPT:\n{json.dumps(script, ensure_ascii=False)}"
     )
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
-def review_pratham_voice(script: dict[str, Any], founder_quotes: list[FounderQuote]) -> dict[str, Any]:
+def review_pratham_voice(
+    script: dict[str, Any],
+    founder_quotes: list[FounderQuote],
+    style_guide: str = "",
+    duration: str = "",
+    channel: str = "",
+    intent: str = "",
+    context_note: str = "",
+) -> dict[str, Any]:
     from backend.pipeline.llm import chat_json
 
     if not founder_quotes:
@@ -319,7 +381,17 @@ def review_pratham_voice(script: dict[str, Any], founder_quotes: list[FounderQuo
             "score": 0.0,
             "violations": ["Approved Pratham Mittal transcript excerpts are missing"],
         }
-    payload = chat_json(voice_review_messages(script, founder_quotes))
+    payload = chat_json(
+        voice_review_messages(
+            script,
+            founder_quotes,
+            style_guide=style_guide,
+            duration=duration,
+            channel=channel,
+            intent=intent,
+            context_note=context_note,
+        )
+    )
     violations = [
         str(item).strip()
         for item in (payload.get("violations") or [])
@@ -331,5 +403,5 @@ def review_pratham_voice(script: dict[str, Any], founder_quotes: list[FounderQuo
         score = 0.0
     passed = bool(payload.get("passed")) and score >= 0.7
     if not passed and not violations:
-        violations = ["The draft does not sound like Pratham Mittal speaking."]
+        violations = ["The draft does not sound like a Masters' Union employee using the approved founder-derived style."]
     return {"passed": passed, "score": score, "violations": violations}

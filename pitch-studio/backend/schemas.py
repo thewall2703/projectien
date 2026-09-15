@@ -244,6 +244,23 @@ class GenerationCreate(BaseModel):
     recipe_ref: str = ""
 
 
+class InterpretRequest(BaseModel):
+    audience_text: str = ""
+    setting_text: str = ""
+    goal_text: str = ""
+
+
+class InterpretResult(BaseModel):
+    audience_cluster: str
+    duration: str
+    channel: str
+    intent: str
+    temperature: str
+    recipe_ref: str = ""
+    summary: str = ""
+    notes: str = ""
+
+
 class ScriptSection(BaseModel):
     module_id: str = ""
     topic_id: int = 0
@@ -315,6 +332,35 @@ class TranscriptIngestCounts(BaseModel):
     kept: int = 0
     skipped: int = 0
     dropped: int = 0
+
+
+class StyleTranscriptIn(BaseModel):
+    name: str
+    text: str
+
+
+class StyleTranscriptOut(BaseModel):
+    id: int
+    name: str
+    status: str
+    created_at: datetime | None = None
+    text_length: int = 0
+
+
+class StyleTranscriptIngestOut(BaseModel):
+    guide_version: int
+    quotes_kept: int
+    quotes_skipped: int
+    transcript_id: int
+
+
+class StyleGuideIn(BaseModel):
+    guide_text: str
+
+
+class StyleGuideOut(BaseModel):
+    version: int = 0
+    guide_text: str = ""
 
 
 class ExtractResultOut(BaseModel):

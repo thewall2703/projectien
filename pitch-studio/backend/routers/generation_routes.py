@@ -18,6 +18,7 @@ from backend.pipeline.brand_deck import (
     brand_deck_file_key,
     page_image,
 )
+from backend.pipeline.interpret import InterpretError, interpret_brief
 from backend.pipeline.resolver import is_valid_sequence, parse_sequence
 from backend.pipeline.runner import run as run_generation
 from backend.recipe_cache import list_recipe_options
@@ -32,6 +33,8 @@ from backend.schemas import (
     FounderQuoteOut,
     GenerationCreate,
     GenerationOut,
+    InterpretRequest,
+    InterpretResult,
     ObjectionOut,
     RecipeOption,
     ReportPassageOut,
@@ -139,6 +142,22 @@ def recipe_options(db: Session = Depends(get_db)) -> list[RecipeOption]:
     return list_recipe_options(db)
 
 
+@router.post("/generations/interpret", response_model=InterpretResult)
+def interpret_generation(
+    payload: InterpretRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> InterpretResult:
+    _ = user
+    try:
+        return interpret_brief(db, payload)
+    except InterpretError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=str(exc) or "Could not interpret brief",
+        ) from exc
+
+
 @router.post("/generations", response_model=GenerationOut)
 def create_generation(
     payload: GenerationCreate,
@@ -162,11 +181,13 @@ def create_generation(
                 status_code=400,
                 detail=f"Recipe {recipe_ref} has a non-module sequence and cannot be generated",
             )
+        # Keep a matched persona for its module sequence, but do not overwrite axes
+        # the user (or interpreter) already set — especially duration/channel.
         axes = {
-            "audience_cluster": recipe.audience_cluster,
-            "duration": recipe.duration,
-            "channel": recipe.channel,
-            "intent": recipe.intent,
+            "audience_cluster": axes["audience_cluster"] or recipe.audience_cluster,
+            "duration": axes["duration"] or recipe.duration,
+            "channel": axes["channel"] or recipe.channel,
+            "intent": axes["intent"] or recipe.intent,
         }
     generation = Generation(
         user_id=user.id,

@@ -63,6 +63,17 @@ export type RecipeOption = {
   valid: boolean;
 };
 
+export type InterpretResult = {
+  audience_cluster: string;
+  duration: string;
+  channel: string;
+  intent: string;
+  temperature: string;
+  recipe_ref: string;
+  summary: string;
+  notes: string;
+};
+
 export type DeckSlide = {
   layout: string;
   /** 1-based page in the Masters' Union brand deck. */
@@ -304,4 +315,24 @@ export type DeckTopicList = {
   job_stage?: string;
   job_error?: string;
   job_type?: string;
+};
+
+export type StyleTranscriptRow = {
+  id: number;
+  name: string;
+  status: string;
+  created_at: string | null;
+  text_length: number;
+};
+
+export type StyleTranscriptCreateResult = {
+  guide_version: number;
+  quotes_kept: number;
+  quotes_skipped: number;
+  transcript_id: number;
+};
+
+export type StyleGuide = {
+  version: number;
+  guide_text: string;
 };

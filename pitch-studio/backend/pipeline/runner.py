@@ -18,6 +18,7 @@ from backend.pipeline.deck import slide_count_for
 from backend.pipeline.llm import chat_json
 from backend.pipeline.prompts import review_pratham_voice, script_messages
 from backend.pipeline.resolver import resolve_recipe
+from backend.pipeline.style_guide import latest_style_guide
 from backend.pipeline.script_flow import ScriptFlowError, load_script_topics, notes_by_page
 from backend.pipeline.validator import align_script_to_topics, trim_script_to_budget, validate_script
 from backend.schemas import ScriptPayload
@@ -123,6 +124,7 @@ def run(generation_id: int) -> None:
         )
         facts = db.query(LockedFact).all()
         founder_quotes = _select_founder_quotes(db, resolved.module_sequence)
+        style_guide = latest_style_guide(db)
         report_passages = pick_report_passages(db.query(Asset).all(), resolved.module_sequence)
         plan = plan_pages(resolved.module_sequence, slide_count_for(generation.duration))
         try:
@@ -151,10 +153,11 @@ def run(generation_id: int) -> None:
             founder_quotes=founder_quotes,
             report_passages=report_passages,
             topic_flow=topic_flow,
+            style_guide=style_guide,
         )
         script = chat_json(messages)
-        ScriptPayload.model_validate(script)
         script = align_script_to_topics(script, topic_flow, modules)
+        ScriptPayload.model_validate(script)
 
         _set_status(db, generation, "validating")
         script, violations = _validate_and_repair_budget(
@@ -180,10 +183,11 @@ def run(generation_id: int) -> None:
                     topic_flow=topic_flow,
                     corrections=violations,
                     draft=script,
+                    style_guide=style_guide,
                 )
             )
-            ScriptPayload.model_validate(script)
             script = align_script_to_topics(script, topic_flow, modules)
+            ScriptPayload.model_validate(script)
             script, violations = _validate_and_repair_budget(
                 script, facts, resolved.module_sequence, resolved.word_budget, topic_flow
             )
@@ -194,11 +198,21 @@ def run(generation_id: int) -> None:
             _set_status(db, generation, "failed")
             return
 
-        review = review_pratham_voice(script, founder_quotes)
+        review = review_pratham_voice(
+            script,
+            founder_quotes,
+            style_guide=style_guide,
+            duration=generation.duration,
+            channel=generation.channel,
+            intent=generation.intent,
+            context_note=generation.context_note,
+        )
         for _attempt in range(2):
             if review["passed"]:
                 break
-            voice_notes = review["violations"] or ["The draft does not sound like Pratham Mittal speaking."]
+            voice_notes = review["violations"] or [
+                "The draft does not sound like a Masters' Union employee using the approved founder-derived style."
+            ]
             script = chat_json(
                 script_messages(
                     audience_cluster=generation.audience_cluster,
@@ -216,21 +230,30 @@ def run(generation_id: int) -> None:
                     topic_flow=topic_flow,
                     corrections=voice_notes,
                     draft=script,
+                    style_guide=style_guide,
                 )
             )
-            ScriptPayload.model_validate(script)
             script = align_script_to_topics(script, topic_flow, modules)
+            ScriptPayload.model_validate(script)
             script, violations = _validate_and_repair_budget(
                 script, facts, resolved.module_sequence, resolved.word_budget, topic_flow
             )
             if violations:
                 continue
-            review = review_pratham_voice(script, founder_quotes)
+            review = review_pratham_voice(
+                script,
+                founder_quotes,
+                style_guide=style_guide,
+                duration=generation.duration,
+                channel=generation.channel,
+                intent=generation.intent,
+                context_note=generation.context_note,
+            )
         generation.script_json = json.dumps(script, ensure_ascii=False)
         generation.validation_report = "\n".join(violations or review["violations"])
         if violations or not review["passed"]:
             generation.error = (
-                "Script failed the Pratham Mittal voice check"
+                "Script failed the employee voice and style check"
                 if not violations
                 else "Script failed validation after voice rewrite"
             )

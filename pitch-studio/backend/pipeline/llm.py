@@ -52,17 +52,27 @@ def _error_message(response: httpx.Response) -> str:
     return f"{response.status_code} {response.reason_phrase}: {response.text[:500]}"
 
 
-def _request_payload(messages: list[dict[str, str]]) -> dict[str, Any]:
-    return {
-        "model": settings.openrouter_model,
+def _request_payload(
+    messages: list[dict[str, str]],
+    *,
+    model: str | None = None,
+    reasoning: bool = True,
+    max_tokens: int | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "model": model or settings.openrouter_model,
         "messages": messages,
         "response_format": {"type": "json_object"},
+        "reasoning": {"enabled": reasoning},
+    }
+    if reasoning:
         # Claude 4.6 uses adaptive thinking. OpenRouter maps ``verbosity`` to
         # Anthropic's output_config.effort; medium balances script quality,
         # latency, and token cost.
-        "reasoning": {"enabled": True},
-        "verbosity": settings.openrouter_verbosity,
-    }
+        payload["verbosity"] = settings.openrouter_verbosity
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
+    return payload
 
 
 def _headers() -> dict[str, str]:
@@ -129,8 +139,21 @@ def _multimodal_payload(text: str, images: list[bytes]) -> dict[str, Any]:
     }
 
 
-def chat_json(messages: list[dict[str, str]], timeout: float = 120.0) -> dict[str, Any]:
-    return _extract_json(_post_openrouter(_request_payload(messages), timeout))
+def chat_json(
+    messages: list[dict[str, str]],
+    timeout: float = 120.0,
+    *,
+    model: str | None = None,
+    reasoning: bool = True,
+    max_tokens: int | None = None,
+) -> dict[str, Any]:
+    payload = _request_payload(
+        messages,
+        model=model,
+        reasoning=reasoning,
+        max_tokens=max_tokens,
+    )
+    return _extract_json(_post_openrouter(payload, timeout))
 
 
 def chat_text_multimodal(text: str, images: list[bytes], timeout: float = 120.0) -> str:

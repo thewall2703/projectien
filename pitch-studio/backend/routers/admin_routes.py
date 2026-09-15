@@ -43,8 +43,26 @@ from backend.media_index import (
     sha256_text,
     touch,
 )
-from backend.models import Asset, DeckTopic, FounderQuote, LockedFact, MediaIndex, Module, Objection, Recipe, User, utc_now
+from backend.models import (
+    Asset,
+    DeckTopic,
+    FounderQuote,
+    LockedFact,
+    MediaIndex,
+    Module,
+    Objection,
+    Recipe,
+    StyleTranscript,
+    User,
+    utc_now,
+)
 from backend.pipeline.llm import LLMError
+from backend.pipeline.style_guide import (
+    DuplicateStyleTranscriptError,
+    ingest_style_transcript,
+    latest_style_guide_row,
+    save_style_guide,
+)
 from backend.recipe_cache import invalidate_recipe_cache, list_recipe_options
 from backend.schemas import (
     AddUsecaseIn,
@@ -68,6 +86,11 @@ from backend.schemas import (
     RecipeIn,
     RecipeOut,
     SeedCounts,
+    StyleGuideIn,
+    StyleGuideOut,
+    StyleTranscriptIn,
+    StyleTranscriptIngestOut,
+    StyleTranscriptOut,
     SyncCounts,
     TranscriptIn,
     TranscriptIngestCounts,
@@ -368,6 +391,52 @@ def delete_founder_quote(quote_id: int, db: Session = Depends(get_db)) -> dict[s
     db.delete(item)
     db.commit()
     return {"ok": True}
+
+
+@router.get("/style-transcripts", response_model=list[StyleTranscriptOut])
+def list_style_transcripts(db: Session = Depends(get_db)) -> list[StyleTranscriptOut]:
+    rows = db.query(StyleTranscript).order_by(StyleTranscript.id.desc()).all()
+    return [
+        StyleTranscriptOut(
+            id=row.id,
+            name=row.name,
+            status=row.status,
+            created_at=row.created_at,
+            text_length=len(row.raw_text or ""),
+        )
+        for row in rows
+    ]
+
+
+@router.post("/style-transcripts", response_model=StyleTranscriptIngestOut)
+def create_style_transcript(
+    payload: StyleTranscriptIn,
+    db: Session = Depends(get_db),
+) -> StyleTranscriptIngestOut:
+    try:
+        result = ingest_style_transcript(db, payload.name, payload.text)
+    except DuplicateStyleTranscriptError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LLMError as exc:
+        db.rollback()
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return StyleTranscriptIngestOut(**result)
+
+
+@router.get("/style-guide", response_model=StyleGuideOut)
+def get_style_guide(db: Session = Depends(get_db)) -> StyleGuideOut:
+    row = latest_style_guide_row(db)
+    if row is None or not isinstance(getattr(row, "guide_text", None), str):
+        return StyleGuideOut(version=0, guide_text="")
+    return StyleGuideOut(version=row.version, guide_text=row.guide_text)
+
+
+@router.put("/style-guide", response_model=StyleGuideOut)
+def update_style_guide(payload: StyleGuideIn, db: Session = Depends(get_db)) -> StyleGuideOut:
+    item = save_style_guide(db, payload.guide_text)
+    return StyleGuideOut(version=item.version, guide_text=item.guide_text)
 
 
 @router.post("/ingest-transcripts", response_model=TranscriptIngestCounts)

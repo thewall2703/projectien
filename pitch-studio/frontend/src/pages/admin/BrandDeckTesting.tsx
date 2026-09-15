@@ -40,9 +40,12 @@ export default function BrandDeckTesting() {
   const selectedIdRef = useRef(0);
   const pollRef = useRef(0);
 
-  const applyCurrent = (row: DeckTopicRow) => {
+  const applyCurrent = (row: DeckTopicRow, { syncDrafts = false }: { syncDrafts?: boolean } = {}) => {
+    const switching = selectedIdRef.current !== row.id;
     setCurrent(row);
-    setVisionDraft(row.vision);
+    if (switching || syncDrafts) {
+      setVisionDraft(row.vision);
+    }
     selectedIdRef.current = row.id;
   };
 
@@ -126,26 +129,23 @@ export default function BrandDeckTesting() {
     }
   };
 
-  useEffect(() => {
+  const saveVision = async () => {
     if (!current || current.vision_frozen) return;
     if (visionDraft.trim() === (current.vision || "").trim()) return;
-    const handle = window.setTimeout(() => {
-      const id = current.id;
-      setBusy("vision");
-      setVisionSaved(false);
-      setError("");
-      api
-        .saveDeckTopicVision(id, visionDraft)
-        .then((row) => {
-          applyCurrent(row);
-          setVisionSaved(true);
-          return reloadList(row.id);
-        })
-        .catch((err) => setError(errMessage(err)))
-        .finally(() => setBusy(""));
-    }, 1500);
-    return () => window.clearTimeout(handle);
-  }, [visionDraft, current?.id, current?.vision, current?.vision_frozen]);
+    setBusy("vision");
+    setVisionSaved(false);
+    setError("");
+    try {
+      const row = await api.saveDeckTopicVision(current.id, visionDraft);
+      applyCurrent(row, { syncDrafts: true });
+      setVisionSaved(true);
+      await reloadList(row.id);
+    } catch (err) {
+      setError(errMessage(err));
+    } finally {
+      setBusy("");
+    }
+  };
 
   useEffect(() => {
     if (!visionSaved) return;
@@ -298,7 +298,7 @@ export default function BrandDeckTesting() {
                 </div>
                 <p className="text-sm text-muted">
                   Optional. Personas are recommended from the topic analysis automatically.
-                  Add a vision to refine those matches.
+                  Add a vision to refine those matches. Press Enter for a new line, then Save vision when ready.
                 </p>
                 <textarea
                   className="field min-h-32"
@@ -307,11 +307,24 @@ export default function BrandDeckTesting() {
                   onChange={(event) => setVisionDraft(event.target.value)}
                 />
                 {current.stale && (
-                  <p className="text-sm text-warn">Vision changed — indexing it into the context now.</p>
+                  <p className="text-sm text-warn">Saved vision differs from the indexed context — save again or refresh recommendations.</p>
                 )}
-                <Button loading={busy === "freeze"} onClick={freeze}>
-                  {current.vision_frozen ? "Unfreeze" : "Freeze vision"}
-                </Button>
+                <div className="flex flex-wrap gap-3">
+                  <Button
+                    variant="accent"
+                    loading={busy === "vision"}
+                    disabled={
+                      current.vision_frozen ||
+                      visionDraft.trim() === (current.vision || "").trim()
+                    }
+                    onClick={saveVision}
+                  >
+                    Save vision
+                  </Button>
+                  <Button loading={busy === "freeze"} onClick={freeze}>
+                    {current.vision_frozen ? "Unfreeze" : "Freeze vision"}
+                  </Button>
+                </div>
               </div>
 
               {current.context_index && (

@@ -1,35 +1,45 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { AXES } from "../axes";
 import { Button, ErrorBanner, Skeleton } from "../components/ui";
 import { axisLabel } from "../labels";
-import type { AxisOption, Generation, RecipeOption } from "../types";
+import type { AxisOption, Generation, InterpretResult, RecipeOption } from "../types";
 
-const STEPS = [
-  "audience",
-  "persona",
-  "duration",
-  "channel",
-  "intent",
-  "temperature",
-  "context",
-  "review",
-] as const;
+const STEPS = ["audience", "setting", "goal", "review"] as const;
 
 type StepId = (typeof STEPS)[number];
 
 const STEP_TITLES: Record<StepId, string> = {
-  audience: "Who is this for?",
-  persona: "Which persona?",
-  duration: "How long?",
-  channel: "Which channel?",
-  intent: "What's the intent?",
-  temperature: "How warm are they?",
-  context: "Any context?",
+  audience: "Who are you pitching to?",
+  setting: "What's the setting?",
+  goal: "What do you want from it?",
   review: "Ready to generate?",
 };
+
+const AUDIENCE_CHIPS = [
+  "Prospective parents",
+  "An investor evaluating us",
+  "A potential hire",
+  "A corporate partner",
+  "A journalist",
+];
+
+const SETTING_CHIPS = [
+  "A 30-minute Zoom call with a deck",
+  "A quick 2-minute phone intro",
+  "A 10-minute seated pitch in person",
+  "A 90-minute campus walkthrough",
+  "A short 30-second video message",
+];
+
+const GOAL_CHIPS = [
+  "A first introduction — they don't know us",
+  "Persuade a warm lead to commit",
+  "Reassure them after they've decided",
+  "Inform and update",
+];
 
 function personaOptionLabel(recipe: RecipeOption, siblings: RecipeOption[]): string {
   const clash = siblings.filter((row) => row.audience_label === recipe.audience_label).length > 1;
@@ -68,12 +78,53 @@ function OptionCard({
   );
 }
 
+function ChipRow({
+  chips,
+  active,
+  onPick,
+}: {
+  chips: string[];
+  active: string;
+  onPick: (value: string) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {chips.map((chip) => {
+        const selected = active === chip;
+        return (
+          <button
+            key={chip}
+            type="button"
+            onClick={() => onPick(chip)}
+            className={`rounded-full border px-3 py-1.5 text-sm transition ${
+              selected
+                ? "border-black bg-black text-white"
+                : "border-black/15 bg-white/50 text-grey-dark hover:border-black/40 hover:bg-white/80"
+            }`}
+          >
+            {chip}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function briefKey(audience: string, setting: string, goal: string) {
+  return `${audience.trim()}\n${setting.trim()}\n${goal.trim()}`;
+}
+
 export default function Generate() {
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [direction, setDirection] = useState(1);
   const [recipes, setRecipes] = useState<RecipeOption[]>([]);
   const [recipesLoading, setRecipesLoading] = useState(true);
+
+  const [audienceText, setAudienceText] = useState("");
+  const [settingText, setSettingText] = useState("");
+  const [goalText, setGoalText] = useState("");
+
   const [selected, setSelected] = useState("");
   const [audience, setAudience] = useState("");
   const [duration, setDuration] = useState("");
@@ -81,8 +132,16 @@ export default function Generate() {
   const [intent, setIntent] = useState("");
   const [temperature, setTemperature] = useState("");
   const [context, setContext] = useState("");
+  const [interpretSummary, setInterpretSummary] = useState("");
+  const [interpretNotes, setInterpretNotes] = useState("");
+  const [interpretedKey, setInterpretedKey] = useState("");
+  const [interpreting, setInterpreting] = useState(false);
+  const [interpretFailed, setInterpretFailed] = useState(false);
+  const [manualOpen, setManualOpen] = useState(false);
+
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const interpretRequestId = useRef(0);
 
   const applyRecipe = (recipe: RecipeOption) => {
     setSelected(recipe.ref);
@@ -90,6 +149,28 @@ export default function Generate() {
     setDuration(recipe.duration);
     setChannel(recipe.channel);
     setIntent(recipe.intent);
+  };
+
+  const applyInterpretation = (result: InterpretResult) => {
+    setAudience(result.audience_cluster);
+    setDuration(result.duration);
+    setChannel(result.channel);
+    setIntent(result.intent);
+    setTemperature(result.temperature);
+    setSelected(result.recipe_ref || "");
+    setInterpretSummary(result.summary);
+    setInterpretNotes(result.notes || "");
+  };
+
+  const clearInterpretationAxes = () => {
+    setSelected("");
+    setAudience("");
+    setDuration("");
+    setChannel("");
+    setIntent("");
+    setTemperature("");
+    setInterpretSummary("");
+    setInterpretNotes("");
   };
 
   useEffect(() => {
@@ -102,8 +183,44 @@ export default function Generate() {
       .finally(() => setRecipesLoading(false));
   }, []);
 
+  const currentBriefKey = briefKey(audienceText, settingText, goalText);
+
+  useEffect(() => {
+    if (STEPS[step] !== "review") return;
+    if (!audienceText.trim() || !settingText.trim() || !goalText.trim()) return;
+    if (currentBriefKey === interpretedKey) return;
+
+    const requestId = ++interpretRequestId.current;
+    setInterpreting(true);
+    setInterpretFailed(false);
+    setError("");
+
+    api
+      .interpretBrief({
+        audience_text: audienceText.trim(),
+        setting_text: settingText.trim(),
+        goal_text: goalText.trim(),
+      })
+      .then((result) => {
+        if (requestId !== interpretRequestId.current) return;
+        applyInterpretation(result);
+        setInterpretedKey(currentBriefKey);
+        setManualOpen(false);
+      })
+      .catch(() => {
+        if (requestId !== interpretRequestId.current) return;
+        clearInterpretationAxes();
+        setInterpretedKey(currentBriefKey);
+        setInterpretFailed(true);
+        setManualOpen(true);
+      })
+      .finally(() => {
+        if (requestId === interpretRequestId.current) setInterpreting(false);
+      });
+  }, [step, currentBriefKey, interpretedKey, audienceText, settingText, goalText]);
+
   const personas = useMemo(
-    () => recipes.filter((recipe) => recipe.audience_cluster === audience),
+    () => recipes.filter((recipe) => !audience || recipe.audience_cluster === audience),
     [audience, recipes],
   );
 
@@ -116,39 +233,10 @@ export default function Generate() {
 
   const canAdvance = (index: number): boolean => {
     const id = STEPS[index];
-    if (id === "audience") return Boolean(audience);
-    if (id === "persona") return true;
-    if (id === "duration") return Boolean(duration);
-    if (id === "channel") return Boolean(channel);
-    if (id === "intent") return Boolean(intent);
-    if (id === "temperature") return Boolean(temperature);
-    if (id === "context") return true;
+    if (id === "audience") return Boolean(audienceText.trim());
+    if (id === "setting") return Boolean(settingText.trim());
+    if (id === "goal") return Boolean(goalText.trim());
     return Boolean(temperature && (selected || (audience && duration && channel && intent)));
-  };
-
-  const selectAndAdvance = (after: () => void) => {
-    after();
-    window.setTimeout(() => {
-      if (step < STEPS.length - 1) go(step + 1);
-    }, 180);
-  };
-
-  const onAudience = (code: string) => {
-    selectAndAdvance(() => {
-      setAudience(code);
-      setSelected("");
-    });
-  };
-
-  const onPersona = (ref: string) => {
-    selectAndAdvance(() => {
-      if (!ref) {
-        setSelected("");
-        return;
-      }
-      const recipe = recipes.find((row) => row.ref === ref);
-      if (recipe) applyRecipe(recipe);
-    });
   };
 
   const matchRecipe = (next: { audience: string; duration: string; channel: string; intent: string }) => {
@@ -160,48 +248,59 @@ export default function Generate() {
     return recipes.find((recipe) => sameAxes(recipe) && recipe.valid) || recipes.find(sameAxes);
   };
 
-  const onDuration = (code: string) => {
-    selectAndAdvance(() => {
-      setDuration(code);
-      const match = matchRecipe({ audience, duration: code, channel, intent });
-      setSelected(match?.ref ?? "");
-    });
+  const onManualAudience = (code: string) => {
+    setAudience(code);
+    setSelected("");
   };
 
-  const onChannel = (code: string) => {
-    selectAndAdvance(() => {
-      setChannel(code);
-      const match = matchRecipe({ audience, duration, channel: code, intent });
-      setSelected(match?.ref ?? "");
-    });
+  const onManualPersona = (ref: string) => {
+    if (!ref) {
+      setSelected("");
+      return;
+    }
+    const recipe = recipes.find((row) => row.ref === ref);
+    if (recipe) applyRecipe(recipe);
   };
 
-  const onIntent = (code: string) => {
-    selectAndAdvance(() => {
-      setIntent(code);
-      const match = matchRecipe({ audience, duration, channel, intent: code });
-      setSelected(match?.ref ?? "");
-    });
+  const onManualDuration = (code: string) => {
+    setDuration(code);
+    const match = matchRecipe({ audience, duration: code, channel, intent });
+    setSelected(match?.ref ?? "");
   };
 
-  const onTemperature = (code: string) => {
-    selectAndAdvance(() => setTemperature(code));
+  const onManualChannel = (code: string) => {
+    setChannel(code);
+    const match = matchRecipe({ audience, duration, channel: code, intent });
+    setSelected(match?.ref ?? "");
+  };
+
+  const onManualIntent = (code: string) => {
+    setIntent(code);
+    const match = matchRecipe({ audience, duration, channel, intent: code });
+    setSelected(match?.ref ?? "");
+  };
+
+  const composedContextNote = () => {
+    const parts = [context.trim(), interpretNotes.trim()].filter(Boolean);
+    return parts.join("\n");
   };
 
   const submit = async () => {
     setBusy(true);
     setError("");
     try {
-      const body = selected
-        ? { recipe_ref: selected, temperature, context_note: context }
-        : {
-            audience_cluster: audience,
-            duration,
-            channel,
-            intent,
-            temperature,
-            context_note: context,
-          };
+      const context_note = composedContextNote();
+      // Always send the reviewed axes. A matched persona supplies module sequence
+      // via recipe_ref, but must not silently overwrite the user's stated length.
+      const body = {
+        audience_cluster: audience,
+        duration,
+        channel,
+        intent,
+        temperature,
+        context_note,
+        ...(selected ? { recipe_ref: selected } : {}),
+      };
       const generation = (await api.createGeneration(body)) as Generation;
       navigate(`/result/${generation.id}`);
     } catch (err) {
@@ -221,7 +320,7 @@ export default function Generate() {
   };
 
   const renderAxisOptions = (options: AxisOption[], value: string, onChange: (code: string) => void) => (
-    <div className="grid max-h-[55vh] gap-3 overflow-y-auto pr-1 sm:grid-cols-2">
+    <div className="grid max-h-[40vh] gap-3 overflow-y-auto pr-1 sm:grid-cols-2">
       {options.map((item) => (
         <OptionCard
           key={item.code}
@@ -234,6 +333,30 @@ export default function Generate() {
     </div>
   );
 
+  const renderTextStep = (
+    value: string,
+    onChange: (next: string) => void,
+    chips: string[],
+    placeholder: string,
+  ) => (
+    <div className="glass-panel space-y-5 p-6">
+      <label className="block">
+        <span className="kicker">Your answer</span>
+        <textarea
+          className="field mt-3 min-h-[140px]"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          autoFocus
+        />
+      </label>
+      <div>
+        <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-grey">Examples</p>
+        <ChipRow chips={chips} active={value} onPick={onChange} />
+      </div>
+    </div>
+  );
+
   return (
     <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-4xl flex-col px-6 py-8 md:px-10">
       <div className="mb-8">
@@ -241,7 +364,7 @@ export default function Generate() {
           <span>
             Step {step + 1} of {STEPS.length}
           </span>
-          <span className="capitalize">{stepId.replace("-", " ")}</span>
+          <span className="capitalize">{stepId}</span>
         </div>
         <div className="mt-3 h-1 overflow-hidden rounded-full bg-grey-light">
           <motion.div
@@ -271,107 +394,174 @@ export default function Generate() {
               </h1>
             </div>
 
-            {recipesLoading && stepId !== "context" && stepId !== "review" && (
-              <div className="grid gap-3 sm:grid-cols-2">
-                {Array.from({ length: 4 }).map((_, index) => (
-                  <Skeleton key={index} className="h-28 w-full rounded-2xl" />
-                ))}
-              </div>
-            )}
+            {stepId === "audience" &&
+              renderTextStep(
+                audienceText,
+                setAudienceText,
+                AUDIENCE_CHIPS,
+                "e.g. parents considering the programme for their child",
+              )}
 
-            {!recipesLoading && stepId === "audience" &&
-              renderAxisOptions(AXES.audience_clusters, audience, onAudience)}
+            {stepId === "setting" &&
+              renderTextStep(
+                settingText,
+                setSettingText,
+                SETTING_CHIPS,
+                "e.g. a 30-minute video call with a short deck",
+              )}
 
-            {!recipesLoading && stepId === "persona" && (
-              <div className="grid max-h-[55vh] gap-3 overflow-y-auto pr-1 sm:grid-cols-2">
-                <OptionCard
-                  label="Skip persona"
-                  description="Continue with axes only — generation will follow your selections."
-                  selected={!selected}
-                  onSelect={() => onPersona("")}
-                />
-                {personas.map((recipe) => (
-                  <OptionCard
-                    key={recipe.ref}
-                    label={personaOptionLabel(recipe, personas)}
-                    description={
-                      recipe.valid
-                        ? `${axisLabel(AXES.durations, recipe.duration)} · ${axisLabel(AXES.channels, recipe.channel)} · ${axisLabel(AXES.intents, recipe.intent)}`
-                        : "This persona’s recipe still needs a module sequence."
-                    }
-                    selected={selected === recipe.ref}
-                    disabled={!recipe.valid}
-                    onSelect={() => onPersona(recipe.ref)}
-                  />
-                ))}
-                {personas.length === 0 && (
-                  <p className="text-sm text-grey sm:col-span-2">
-                    No personas in this audience. You can continue without one.
-                  </p>
-                )}
-              </div>
-            )}
-
-            {!recipesLoading && stepId === "duration" &&
-              renderAxisOptions(AXES.durations, duration, onDuration)}
-
-            {!recipesLoading && stepId === "channel" &&
-              renderAxisOptions(AXES.channels, channel, onChannel)}
-
-            {!recipesLoading && stepId === "intent" &&
-              renderAxisOptions(AXES.intents, intent, onIntent)}
-
-            {!recipesLoading && stepId === "temperature" &&
-              renderAxisOptions(AXES.temperatures, temperature, onTemperature)}
-
-            {stepId === "context" && (
-              <div className="glass-panel p-6">
-                <label className="block">
-                  <span className="kicker">Context note</span>
-                  <textarea
-                    className="field mt-3 min-h-[160px]"
-                    value={context}
-                    onChange={(e) => setContext(e.target.value)}
-                    placeholder="What specifically matters in this conversation?"
-                    autoFocus
-                  />
-                </label>
-              </div>
-            )}
+            {stepId === "goal" &&
+              renderTextStep(
+                goalText,
+                setGoalText,
+                GOAL_CHIPS,
+                "e.g. introduce us clearly and invite them to campus",
+              )}
 
             {stepId === "review" && (
-              <div className="glass-panel space-y-4 p-6">
-                <dl className="grid gap-4 sm:grid-cols-2">
-                  {[
-                    ["Audience", axisLabel(AXES.audience_clusters, audience)],
-                    ["Persona", chosen?.audience_label || "Axes only"],
-                    ["Duration", axisLabel(AXES.durations, duration)],
-                    ["Channel", axisLabel(AXES.channels, channel)],
-                    ["Intent", axisLabel(AXES.intents, intent)],
-                    ["Temperature", axisLabel(AXES.temperatures, temperature)],
-                  ].map(([label, value]) => (
-                    <div key={label}>
-                      <dt className="text-[11px] font-semibold uppercase tracking-[0.18em] text-grey">{label}</dt>
-                      <dd className="mt-1 text-base text-black">{value || "—"}</dd>
+              <div className="space-y-5">
+                {interpreting && (
+                  <div className="glass-panel space-y-4 p-6">
+                    <p className="text-sm text-grey">Reading your answers…</p>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {Array.from({ length: 4 }).map((_, index) => (
+                        <Skeleton key={index} className="h-16 w-full rounded-2xl" />
+                      ))}
                     </div>
-                  ))}
-                </dl>
-                {context && (
-                  <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-grey">Context</p>
-                    <p className="mt-1 text-sm text-grey-dark">{context}</p>
                   </div>
                 )}
-                <ErrorBanner message={error} />
-                <Button
-                  variant="accent"
-                  className="w-full py-3 text-base sm:w-auto"
-                  loading={busy}
-                  disabled={!canAdvance(step)}
-                  onClick={submit}
-                >
-                  Generate now
-                </Button>
+
+                {!interpreting && (
+                  <div className="glass-panel space-y-4 p-6">
+                    {interpretFailed && (
+                      <p className="text-sm text-grey-dark">
+                        Couldn't auto-read your answers — pick the settings below.
+                      </p>
+                    )}
+                    {!interpretFailed && interpretSummary && (
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-grey">
+                          What we'll write
+                        </p>
+                        <p className="mt-2 text-lg leading-relaxed text-black">{interpretSummary}</p>
+                      </div>
+                    )}
+                    {!interpretFailed && (
+                      <dl className="grid gap-4 sm:grid-cols-2">
+                        {[
+                          ["Audience", axisLabel(AXES.audience_clusters, audience)],
+                          ["Persona", chosen?.audience_label || "Axes only"],
+                          ["Duration", axisLabel(AXES.durations, duration)],
+                          ["Channel", axisLabel(AXES.channels, channel)],
+                          ["Intent", axisLabel(AXES.intents, intent)],
+                          ["Temperature", axisLabel(AXES.temperatures, temperature)],
+                        ].map(([label, value]) => (
+                          <div key={label}>
+                            <dt className="text-[11px] font-semibold uppercase tracking-[0.18em] text-grey">
+                              {label}
+                            </dt>
+                            <dd className="mt-1 text-base text-black">{value || "—"}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    )}
+
+                    <label className="block">
+                      <span className="kicker">Anything else we should know?</span>
+                      <textarea
+                        className="field mt-3 min-h-[120px]"
+                        value={context}
+                        onChange={(e) => setContext(e.target.value)}
+                        placeholder="Optional details to fold into the pitch"
+                      />
+                    </label>
+
+                    <div>
+                      <button
+                        type="button"
+                        className="text-sm font-medium text-black underline-offset-4 hover:underline"
+                        onClick={() => setManualOpen((open) => !open)}
+                      >
+                        {manualOpen ? "Hide manual settings" : "Adjust manually"}
+                      </button>
+                      {manualOpen && (
+                        <div className="mt-5 space-y-8 border-t border-black/8 pt-5">
+                          {recipesLoading ? (
+                            <div className="grid gap-3 sm:grid-cols-2">
+                              {Array.from({ length: 4 }).map((_, index) => (
+                                <Skeleton key={index} className="h-28 w-full rounded-2xl" />
+                              ))}
+                            </div>
+                          ) : (
+                            <>
+                              <div>
+                                <p className="kicker mb-3">Audience</p>
+                                {renderAxisOptions(AXES.audience_clusters, audience, onManualAudience)}
+                              </div>
+                              <div>
+                                <p className="kicker mb-3">Persona</p>
+                                <div className="grid max-h-[40vh] gap-3 overflow-y-auto pr-1 sm:grid-cols-2">
+                                  <OptionCard
+                                    label="Skip persona"
+                                    description="Continue with axes only — generation will follow your selections."
+                                    selected={!selected}
+                                    onSelect={() => onManualPersona("")}
+                                  />
+                                  {personas.map((recipe) => (
+                                    <OptionCard
+                                      key={recipe.ref}
+                                      label={personaOptionLabel(recipe, personas)}
+                                      description={
+                                        recipe.valid
+                                          ? `${axisLabel(AXES.durations, recipe.duration)} · ${axisLabel(AXES.channels, recipe.channel)} · ${axisLabel(AXES.intents, recipe.intent)}`
+                                          : "This persona’s recipe still needs a module sequence."
+                                      }
+                                      selected={selected === recipe.ref}
+                                      disabled={!recipe.valid}
+                                      onSelect={() => onManualPersona(recipe.ref)}
+                                    />
+                                  ))}
+                                  {personas.length === 0 && (
+                                    <p className="text-sm text-grey sm:col-span-2">
+                                      No personas in this audience. You can continue without one.
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                              <div>
+                                <p className="kicker mb-3">Duration</p>
+                                {renderAxisOptions(AXES.durations, duration, onManualDuration)}
+                              </div>
+                              <div>
+                                <p className="kicker mb-3">Channel</p>
+                                {renderAxisOptions(AXES.channels, channel, onManualChannel)}
+                              </div>
+                              <div>
+                                <p className="kicker mb-3">Intent</p>
+                                {renderAxisOptions(AXES.intents, intent, onManualIntent)}
+                              </div>
+                              <div>
+                                <p className="kicker mb-3">Temperature</p>
+                                {renderAxisOptions(AXES.temperatures, temperature, setTemperature)}
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    <ErrorBanner message={error} />
+                    <Button
+                      variant="accent"
+                      className="w-full py-3 text-base sm:w-auto"
+                      loading={busy}
+                      disabled={!canAdvance(step) || interpreting}
+                      onClick={submit}
+                    >
+                      Generate now
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
           </motion.div>
@@ -379,15 +569,11 @@ export default function Generate() {
       </div>
 
       <div className="mt-10 flex items-center justify-between gap-4 border-t border-black/8 pt-6">
-        <Button variant="ghost" disabled={step === 0 || busy} onClick={() => go(step - 1)}>
+        <Button variant="ghost" disabled={step === 0 || busy || interpreting} onClick={() => go(step - 1)}>
           Back
         </Button>
         {stepId !== "review" && (
-          <Button
-            variant="accent"
-            disabled={!canAdvance(step) || recipesLoading}
-            onClick={() => go(step + 1)}
-          >
+          <Button variant="accent" disabled={!canAdvance(step)} onClick={() => go(step + 1)}>
             Next
           </Button>
         )}
