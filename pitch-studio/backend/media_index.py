@@ -221,6 +221,124 @@ def _recommendation_sort_key(item: dict[str, Any], temperature: str) -> tuple[in
     return (mismatch, -float(item.get("confidence") or 0.0))
 
 
+def video_limit_for(duration: str) -> int:
+    return {
+        "T0": 1,
+        "T1": 2,
+        "T2": 3,
+        "T3": 3,
+        "T4": 4,
+        "T5": 5,
+    }.get(duration, MAX_RECOMMENDED_VIDEOS)
+
+
+def _recipe_cluster(recipe_ref: str) -> str:
+    token = (recipe_ref or "").strip().upper()
+    return token[0] if token and token[0] in {"A", "B", "C", "D", "E", "F"} else ""
+
+
+def _rejected_for_ref(row: MediaIndex, recipe_ref: str) -> bool:
+    feedback = parse_feedback(row.feedback_json)
+    verdicts = feedback.get("verdicts") or {}
+    verdict = verdicts.get(recipe_ref) if isinstance(verdicts, dict) else None
+    return isinstance(verdict, dict) and str(verdict.get("verdict") or "").strip().lower() == "no"
+
+
+def _fallback_recommendation(row: MediaIndex, recipe_ref: str) -> tuple[int, dict[str, Any]] | None:
+    """Widen beyond an exact persona match for long sessions.
+
+    Tier 1 is the same audience cluster; tier 2 is any scored usecase.
+    """
+    if _rejected_for_ref(row, recipe_ref):
+        return None
+    items = [
+        item
+        for item in (parse_recommendations(row.recommendations_json).get("items") or [])
+        if isinstance(item, dict) and str(item.get("recipe_ref") or "").strip()
+    ]
+    if not items:
+        return None
+    cluster = _recipe_cluster(recipe_ref)
+
+    def _score(item: dict[str, Any]) -> float:
+        return float(item.get("confidence") or 0.0)
+
+    same_cluster = [
+        item
+        for item in items
+        if cluster and _recipe_cluster(str(item.get("recipe_ref") or "")) == cluster
+    ]
+    if same_cluster:
+        match = max(same_cluster, key=_score)
+        return 1, {
+            "recipe_ref": str(match.get("recipe_ref") or ""),
+            "temperatures": list(match.get("temperatures") or []),
+            "confidence": _score(match),
+            "rationale": str(match.get("rationale") or ""),
+            "added": False,
+        }
+    match = max(items, key=_score)
+    return 2, {
+        "recipe_ref": str(match.get("recipe_ref") or ""),
+        "temperatures": list(match.get("temperatures") or []),
+        "confidence": _score(match),
+        "rationale": str(match.get("rationale") or ""),
+        "added": False,
+    }
+
+
+_TITLE_STOP = {
+    "the",
+    "a",
+    "an",
+    "and",
+    "of",
+    "for",
+    "to",
+    "in",
+    "on",
+    "at",
+    "with",
+    "mu",
+    "masters",
+    "union",
+    "video",
+    "film",
+    "clip",
+}
+
+
+def _title_tokens(title: str) -> set[str]:
+    words = re.findall(r"[a-z0-9]+", (title or "").lower())
+    return {word for word in words if len(word) > 2 and word not in _TITLE_STOP}
+
+
+def _diversify_videos(
+    ranked: list[RecommendedMediaOut],
+    limit: int,
+) -> list[RecommendedMediaOut]:
+    if len(ranked) <= limit:
+        return ranked
+    selected: list[RecommendedMediaOut] = []
+    used: set[str] = set()
+    remaining = list(ranked)
+    while remaining and len(selected) < limit:
+        best_index = 0
+        best_score = -1.0
+        for index, candidate in enumerate(remaining):
+            tokens = _title_tokens(candidate.title)
+            overlap = (len(tokens & used) / len(tokens)) if tokens else 1.0
+            # Prefer a different topic, then keep the original ranking as a tie-break.
+            score = (1.0 - overlap) * 10.0 - index * 0.01
+            if score > best_score:
+                best_score = score
+                best_index = index
+        chosen = remaining.pop(best_index)
+        selected.append(chosen)
+        used |= _title_tokens(chosen.title)
+    return selected
+
+
 def _media_source_url(asset: Asset | None) -> str:
     if asset is None:
         return ""
@@ -260,11 +378,15 @@ def pick_recommended_media(
     db: Session,
     recipe_ref: str,
     temperature: str = "",
-    video_limit: int = MAX_RECOMMENDED_VIDEOS,
+    duration: str = "",
+    video_limit: int | None = None,
     picture_limit: int = MAX_RECOMMENDED_PICTURES,
 ) -> tuple[list[RecommendedMediaOut], list[RecommendedMediaOut]]:
     if not (recipe_ref or "").strip():
         return [], []
+    if video_limit is None:
+        video_limit = video_limit_for(duration)
+    allow_fallback = duration in {"T4", "T5"}
     _ensure_media_schema()
     rows = db.query(MediaIndex).filter(MediaIndex.recommendations_json != "").all()
     if not rows:
@@ -273,18 +395,24 @@ def pick_recommended_media(
         asset.id: asset
         for asset in db.query(Asset).filter(Asset.id.in_([row.asset_id for row in rows])).all()
     }
-    videos: list[tuple[tuple[int, float], RecommendedMediaOut]] = []
+    videos: list[tuple[tuple[int, int, float], RecommendedMediaOut]] = []
     photo_sets: list[tuple[tuple[int, float], Asset, dict[str, Any]]] = []
     for row in rows:
         asset = assets.get(row.asset_id)
         if asset is None:
             continue
         item = _recommendation_for_ref(row, recipe_ref)
-        if item is None:
+        tier = 0
+        if item is None and allow_fallback and row.media_kind == "video":
+            fallback = _fallback_recommendation(row, recipe_ref)
+            if fallback is None:
+                continue
+            tier, item = fallback
+        elif item is None:
             continue
         key = _recommendation_sort_key(item, temperature)
         if row.media_kind == "video":
-            videos.append((key, _recommended_video(asset, item)))
+            videos.append(((tier, key[0], key[1]), _recommended_video(asset, item)))
         elif row.media_kind == "photo":
             photo_sets.append((key, asset, item))
     videos.sort(key=lambda entry: entry[0])
@@ -303,7 +431,8 @@ def pick_recommended_media(
             pictures.append(_recommended_picture(queue.popleft(), parents[index], items_by_queue[index]))
             if len(pictures) >= picture_limit:
                 break
-    return [item for _key, item in videos[:video_limit]], pictures
+    ranked_videos = [item for _key, item in videos]
+    return _diversify_videos(ranked_videos, video_limit), pictures
 
 
 def list_image_assets(db: Session, asset: Asset) -> list[Asset]:

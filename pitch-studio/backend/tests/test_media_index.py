@@ -501,6 +501,48 @@ class RecommendedMediaPickTests(unittest.TestCase):
         self.assertEqual(len(videos), 1)
         self.assertEqual(pictures, [])
 
+    def test_long_session_fills_five_diversified_videos(self):
+        rows = [
+            _rec_row(1, "video", [{"recipe_ref": "A2-5", "temperatures": ["X2"], "confidence": 0.9, "rationale": "exact"}]),
+            _rec_row(2, "video", [{"recipe_ref": "A1-1", "temperatures": ["X2"], "confidence": 0.8, "rationale": "parents"}]),
+            _rec_row(3, "video", [{"recipe_ref": "A1-1", "temperatures": ["X2"], "confidence": 0.79, "rationale": "parents-again"}]),
+            _rec_row(4, "video", [{"recipe_ref": "B2-1", "temperatures": ["X2"], "confidence": 0.7, "rationale": "talent"}]),
+            _rec_row(5, "video", [{"recipe_ref": "C1-1", "temperatures": ["X2"], "confidence": 0.6, "rationale": "capital"}]),
+            _rec_row(6, "video", [{"recipe_ref": "D1-1", "temperatures": ["X2"], "confidence": 0.5, "rationale": "hire"}]),
+        ]
+        assets = [
+            _asset(1, "Campus walkthrough tour", "https://youtu.be/one"),
+            _asset(2, "Parent AMA evening", "https://youtu.be/two"),
+            _asset(3, "Parent AMA highlights", "https://youtu.be/three"),
+            _asset(4, "Faculty classroom day", "https://youtu.be/four"),
+            _asset(5, "Investor thesis conversation", "https://youtu.be/five"),
+            _asset(6, "Recruiter hiring stories", "https://youtu.be/six"),
+        ]
+        db = mock.Mock()
+        db.query.return_value.filter.return_value.all.side_effect = [rows, assets]
+        with mock.patch("backend.media_index._ensure_media_schema"):
+            videos, pictures = pick_recommended_media(db, "A2-5", "X2", duration="T5")
+        self.assertEqual(len(videos), 5)
+        self.assertEqual(videos[0].asset_id, 1)
+        self.assertNotIn(3, [item.asset_id for item in videos])
+        self.assertEqual(len({item.asset_id for item in videos}), 5)
+        self.assertEqual(pictures, [])
+
+    def test_short_session_stays_on_exact_persona_matches(self):
+        rows = [
+            _rec_row(1, "video", [{"recipe_ref": "A1-1", "temperatures": ["X2"], "confidence": 0.9, "rationale": "exact"}]),
+            _rec_row(2, "video", [{"recipe_ref": "B2-1", "temperatures": ["X2"], "confidence": 0.8, "rationale": "other"}]),
+        ]
+        assets = [
+            _asset(1, "Exact film", "https://youtu.be/one"),
+            _asset(2, "Other film", "https://youtu.be/two"),
+        ]
+        db = mock.Mock()
+        db.query.return_value.filter.return_value.all.side_effect = [rows, assets]
+        with mock.patch("backend.media_index._ensure_media_schema"):
+            videos, _pictures = pick_recommended_media(db, "A1-1", "X2", duration="T1")
+        self.assertEqual([item.asset_id for item in videos], [1])
+
 
 if __name__ == "__main__":
     unittest.main()

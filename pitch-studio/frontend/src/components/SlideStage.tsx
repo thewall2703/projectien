@@ -41,8 +41,11 @@ export default function SlideStage({ slides }: { slides: DeckSlide[] }) {
   }, [focused, total]);
 
   useEffect(() => {
-    const node = filmRef.current?.querySelector<HTMLElement>(`[data-thumb="${index}"]`);
-    node?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+    const scroller = filmRef.current;
+    const node = scroller?.querySelector<HTMLElement>(`[data-thumb="${index}"]`);
+    if (!scroller || !node) return;
+    const left = node.offsetLeft - (scroller.clientWidth - node.offsetWidth) / 2;
+    scroller.scrollTo({ left: Math.max(0, left), behavior: "smooth" });
   }, [index]);
 
   if (!total || !current) {

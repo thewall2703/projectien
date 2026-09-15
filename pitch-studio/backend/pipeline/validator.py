@@ -25,6 +25,55 @@ def _words(text: str) -> list[str]:
     return re.findall(r"[A-Za-z0-9₹.%]+", text)
 
 
+_ABBREV_END_RE = re.compile(r"\b(?:Mr|Mrs|Ms|Dr|Jr|Sr|vs|etc|Inc|Ltd|St)\.$", re.IGNORECASE)
+
+
+def split_spoken_sentences(text: str) -> list[str]:
+    pieces = [part.strip() for part in re.split(r"(?<=[.!?])\s+", (text or "").strip()) if part.strip()]
+    sentences: list[str] = []
+    buf = ""
+    for piece in pieces:
+        candidate = f"{buf} {piece}".strip() if buf else piece
+        last = candidate.split()[-1] if candidate.split() else ""
+        if _ABBREV_END_RE.search(candidate) or (candidate.endswith(".") and len(last) <= 2):
+            buf = candidate
+            continue
+        sentences.append(candidate)
+        buf = ""
+    if buf:
+        sentences.append(buf)
+    return sentences
+
+
+def paragraphize_spoken_text(text: str, sentences_per_para: int = 2) -> str:
+    """Break a spoken blob into blank-line paragraphs without changing the words."""
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+    if re.search(r"\n\s*\n", raw):
+        parts = [re.sub(r"[ \t]+", " ", part).strip() for part in re.split(r"\n\s*\n", raw)]
+        return "\n\n".join(part for part in parts if part)
+    lines = [re.sub(r"\s+", " ", line).strip() for line in raw.splitlines() if line.strip()]
+    if len(lines) >= 2:
+        return "\n\n".join(lines)
+    collapsed = re.sub(r"\s+", " ", raw)
+    sentences = split_spoken_sentences(collapsed)
+    if len(sentences) <= 2:
+        return collapsed
+    step = max(1, sentences_per_para)
+    chunks = [" ".join(sentences[index : index + step]) for index in range(0, len(sentences), step)]
+    return "\n\n".join(chunks)
+
+
+def paragraphize_script(script: dict[str, Any]) -> dict[str, Any]:
+    updated = deepcopy(script)
+    for section in updated.get("sections") or []:
+        section["text"] = paragraphize_spoken_text(section.get("text") or "")
+    if updated.get("cta"):
+        updated["cta"] = re.sub(r"\s+", " ", str(updated["cta"])).strip()
+    return updated
+
+
 def script_text(script: dict[str, Any]) -> str:
     body = "\n".join(section.get("text", "") for section in script.get("sections", []))
     cta = (script.get("cta") or "").strip()
@@ -46,7 +95,7 @@ def trim_script_to_budget(script: dict[str, Any], word_budget: int) -> dict[str,
     _low, high = budget_range(word_budget)
     excess = count_script_words(script) - high
     if excess <= 0:
-        return script
+        return paragraphize_script(script)
 
     trimmed = deepcopy(script)
     cta = (trimmed.get("cta") or "").strip()
@@ -75,7 +124,7 @@ def trim_script_to_budget(script: dict[str, Any], word_budget: int) -> dict[str,
         section["text"] = shortened
         excess -= remove
 
-    return trimmed
+    return paragraphize_script(trimmed)
 
 
 def _section_pages(section: dict[str, Any]) -> list[int]:
@@ -148,7 +197,7 @@ def align_script_to_topics(
                 "text": text,
             }
         )
-    return {"sections": aligned, "cta": script.get("cta") or ""}
+    return paragraphize_script({"sections": aligned, "cta": script.get("cta") or ""})
 
 
 def align_script_to_recipe(
@@ -190,7 +239,7 @@ def align_script_to_recipe(
         if module_id == "M14" and script.get("cta") and script["cta"] not in text:
             text = f"{text} {script['cta']}".strip()
         aligned.append({"module_id": module_id, "heading": heading, "text": text})
-    return {"sections": aligned, "cta": script.get("cta") or ""}
+    return paragraphize_script({"sections": aligned, "cta": script.get("cta") or ""})
 
 
 def validate_script(

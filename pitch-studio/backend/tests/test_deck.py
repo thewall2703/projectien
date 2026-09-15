@@ -18,7 +18,7 @@ from backend.pipeline.brand_deck import (
     render_pptx,
     resolve_source,
 )
-from backend.pipeline.deck import slide_count_for
+from backend.pipeline.deck import SLIDE_COUNTS, slide_count_for
 from backend.pipeline.resolver import FALLBACK_BY_INTENT
 
 
@@ -37,6 +37,10 @@ class BrandDeckMapTests(unittest.TestCase):
 
 
 class BrandDeckPlanTests(unittest.TestCase):
+    def test_ninety_minute_deck_is_longer_than_thirty(self):
+        self.assertGreater(SLIDE_COUNTS["T5"], SLIDE_COUNTS["T4"])
+        self.assertEqual(slide_count_for("T5"), 50)
+
     def test_plan_is_bookended_and_within_budget(self):
         plan = plan_pages(["M01", "M04", "M07", "M14"], 12)
         self.assertEqual(len(plan), 12)

@@ -19,6 +19,7 @@ from backend.pipeline.validator import (
     align_script_to_recipe,
     align_script_to_topics,
     count_script_words,
+    paragraphize_spoken_text,
     trim_script_to_budget,
     validate_script,
 )
@@ -386,6 +387,25 @@ class PromptTests(unittest.TestCase):
         self.assertIn("IMPACT MUST BE PROPORTIONAL TO TIME", system)
         self.assertIn("Duration strategy — follow this as the governing narrative brief", user)
         self.assertIn("emotional state", user)
+        self.assertIn("never more than 20 minutes", user)
+
+    def test_long_sessions_cap_spoken_script_at_twenty_minutes(self):
+        messages = script_messages(
+            audience_cluster="A",
+            duration="T5",
+            channel="CH4",
+            intent="I2",
+            temperature="X3",
+            context_note="",
+            modules=[],
+            sequence=["M01"],
+            facts=[],
+            word_budget=2400,
+        )
+        user = messages[1]["content"]
+        self.assertIn("20-minute spoken script", user)
+        self.assertIn("never more than 20 minutes", user)
+        self.assertIn("2400", user)
 
     def test_university_status_uses_natural_approved_wording(self):
         old_wording = "Masters' Union University — bill passed by the Government of Haryana"
@@ -506,6 +526,29 @@ class PromptTests(unittest.TestCase):
         self.assertIn("Role: CLOSE", user)
         self.assertIn("This is the first thing the listener hears", system)
         self.assertIn("Add no new argument or evidence", system)
+        self.assertIn("blank line", system)
+        self.assertIn("wall of text", system)
+
+
+class ParagraphizeTests(unittest.TestCase):
+    def test_keeps_existing_blank_lines(self):
+        text = "First beat lands here.\n\nSecond beat follows after a pause."
+        self.assertEqual(paragraphize_spoken_text(text), text)
+
+    def test_splits_a_spoken_blob_every_two_sentences(self):
+        text = (
+            "You already know the ranking story. That is not why this room exists. "
+            "Look at who taught last week's class. Then look at where those students went."
+        )
+        result = paragraphize_spoken_text(text)
+        self.assertEqual(result.count("\n\n"), 1)
+        self.assertIn("ranking story", result.split("\n\n")[0])
+        self.assertIn("taught last week's class", result.split("\n\n")[1])
+        self.assertEqual(count_script_words({"sections": [{"text": result}], "cta": ""}), 28)
+
+    def test_leaves_short_copy_alone(self):
+        text = "Come sit in a class this Saturday."
+        self.assertEqual(paragraphize_spoken_text(text), text)
 
 
 class VoiceReviewTests(unittest.TestCase):

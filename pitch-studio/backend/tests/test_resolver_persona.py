@@ -72,8 +72,10 @@ class ResolverPersonaTests(unittest.TestCase):
     def test_word_limits_are_derived_at_120_words_per_minute(self) -> None:
         self.assertEqual(
             {duration: word_limit_for_duration(duration) for duration in ("T0", "T1", "T2", "T3", "T4", "T5")},
-            {"T0": 60, "T1": 240, "T2": 600, "T3": 1200, "T4": 3600, "T5": 10800},
+            {"T0": 60, "T1": 240, "T2": 600, "T3": 1200, "T4": 2400, "T5": 2400},
         )
+        self.assertLessEqual(word_limit_for_duration("T5"), 20 * 120)
+        self.assertEqual(word_limit_for_duration("T3"), 10 * 120)
 
     def test_every_valid_ref_is_reachable(self) -> None:
         recipes = self.db.query(Recipe).all()

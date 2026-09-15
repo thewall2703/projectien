@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from backend.models import FounderQuote, LockedFact, Module
+from backend.pipeline.resolver import MAX_SCRIPT_MINUTES, script_minutes_for_duration
 from backend.pipeline.validator import budget_range, count_script_words
 from backend.schemas import AUDIENCE_CLUSTERS, CHANNELS, DURATIONS, INTENTS, TEMPERATURES
 from backend.transcripts import format_founder_line
@@ -54,14 +55,13 @@ _DURATION_FRAMEWORK = {
         "student case studies. Depth must come from specificity, not repetition."
     ),
     "T4": (
-        "30 minutes: Extend the 10-minute audience-aware story into a deck-led conversation. Let the "
-        "approved assets carry evidence and structure; connect them with anecdotes, relevant FAQs, "
-        "and pauses for dialogue. Do not turn the script into a continuous lecture."
+        "30-minute session, 20-minute spoken script: write a 20-minute deck-led talk and leave the "
+        "rest of the hour for dialogue, slides, and questions. Let approved assets carry evidence; "
+        "do not write a 30-minute monologue or pad to fill the session."
     ),
     "T5": (
-        "90 minutes: Treat this as a guided campus experience, not a 90-minute monologue. Read the "
-        "audience's emotional state, use each physical stop or approved asset as proof, tell relevant "
-        "student stories, and answer FAQs as they naturally arise."
+        "90-minute session, 20-minute spoken script: write a 20-minute guided talk. The remaining "
+        "time is campus, assets, and Q&A — not more spoken copy. Do not write a 90-minute monologue."
     ),
 }
 
@@ -190,7 +190,9 @@ def script_messages(
         "'holistic', 'boasts', 'nestled', 'at the end of the day', 'it's worth noting', 'game-changer', "
         "'testament to'. Kill stacked three-adjective phrases and generic hype.\n"
         "- Inside a section's text: it is spoken prose. No headings, no bullet points, no numbered lists, "
-        "no markdown. Just what the speaker says.\n\n"
+        "no markdown. Separate spoken beats with a blank line so the reader can breathe — a new "
+        "paragraph every two or three sentences, or whenever the idea, example, or addressee shifts. "
+        "Longer sessions (10 minutes and up) must never be one unbroken wall of text.\n\n"
         "SPEAKER IDENTITY — DO NOT CONFUSE STYLE WITH IDENTITY:\n"
         "- This script will be delivered by a Masters' Union EMPLOYEE or representative. The speaker is "
         "not Pratham Mittal and must never impersonate him.\n"
@@ -223,8 +225,8 @@ def script_messages(
         "or approved asset they will receive best, and create desire for Masters' Union.\n"
         "- 10 minutes: use the same audience-aware story with richer storytelling, relevant FAQs, anecdotes, "
         "and student case studies.\n"
-        "- Longer sessions extend the 10-minute approach through dialogue, assets, and physical experience — "
-        "never through padding or repetition.\n\n"
+        "- Longer sessions (20 minutes and up): write at most a 20-minute spoken script. Extra session "
+        "time is dialogue, deck, campus, and Q&A — never more spoken copy or padding.\n\n"
         "HARD FACTUAL RULES:\n"
         "- Stay inside the hard word range given in the user message.\n"
         "- LOCKED facts must be used verbatim where relevant.\n"
@@ -278,6 +280,8 @@ def script_messages(
         f"Temperature: {_axis_line(TEMPERATURES, temperature)}\n"
         f"Context note: {context_note or '(none)'}\n"
         f"Duration strategy — follow this as the governing narrative brief:\n{duration_framework(duration)}\n"
+        f"Spoken script length: {script_minutes_for_duration(duration):g} minutes "
+        f"(never more than {MAX_SCRIPT_MINUTES} minutes, even if the session is longer). "
         f"Word limit: {word_budget} words at 120 spoken words per minute. "
         f"Write {low}-{high} words and never exceed {high}.\n"
         f"{flow_block}\n\n"

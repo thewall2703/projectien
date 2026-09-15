@@ -93,7 +93,12 @@ def _enrich(db: Session, generation: Generation) -> GenerationOut:
             ]
         except (json.JSONDecodeError, ValueError):
             payload.report_passages = []
-    videos, pictures = pick_recommended_media(db, generation.recipe_ref, generation.temperature)
+    videos, pictures = pick_recommended_media(
+        db,
+        generation.recipe_ref,
+        generation.temperature,
+        duration=generation.duration,
+    )
     payload.recommended_videos = videos
     payload.recommended_pictures = pictures
     return payload

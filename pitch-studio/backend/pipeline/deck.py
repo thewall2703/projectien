@@ -14,14 +14,15 @@ SLIDE_W = 13.333
 SLIDE_H = 7.5
 
 # Slides available per duration axis: T0 30s, T1 2m, T2 5m, T3 10m, T4 30m,
-# T5 90m (a campus walkthrough leans on the walk, not the deck).
+# T5 90m. T5 used to sit below T4 on the assumption that a campus walk
+# replaces the deck; a 90-minute seated pitch still needs a full-length deck.
 SLIDE_COUNTS = {
     "T0": 8,
     "T1": 12,
     "T2": 16,
     "T3": 22,
     "T4": 30,
-    "T5": 26,
+    "T5": 50,
 }
 
 

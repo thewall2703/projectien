@@ -261,9 +261,18 @@ function UserChip({ user, onLogout }: { user: User; onLogout: () => void }) {
   );
 }
 
+function ScrollToTop() {
+  const { pathname } = useLocation();
+  useLayoutEffect(() => {
+    window.scrollTo(0, 0);
+  }, [pathname]);
+  return null;
+}
+
 function Shell({ user, onLogout, children }: { user: User; onLogout: () => void; children: ReactNode }) {
   return (
     <div className="app-canvas">
+      <ScrollToTop />
       <header className="glass-nav sticky top-0 z-40">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-5 md:px-8">
           <div className="flex min-w-0 items-center gap-6 md:gap-10">

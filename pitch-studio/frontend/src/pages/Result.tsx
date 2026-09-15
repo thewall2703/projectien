@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../api";
 import SlideStage from "../components/SlideStage";
@@ -64,6 +64,40 @@ function highlight(text: string, values: string[]) {
   );
 }
 
+function scriptParagraphs(text: string): string[] {
+  const raw = text.replace(/\r\n/g, "\n").trim();
+  if (!raw) return [];
+  const byBlank = raw
+    .split(/\n\s*\n/)
+    .map((part) => part.replace(/[ \t]+/g, " ").trim())
+    .filter(Boolean);
+  if (byBlank.length > 1) return byBlank;
+  const lines = raw
+    .split("\n")
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  if (lines.length > 1) return lines;
+  const sentences = raw.split(/(?<=[.!?])\s+(?=[A-Z“"'])/).map((part) => part.trim()).filter(Boolean);
+  if (sentences.length <= 2) return [raw];
+  const paragraphs: string[] = [];
+  for (let index = 0; index < sentences.length; index += 2) {
+    paragraphs.push(sentences.slice(index, index + 2).join(" "));
+  }
+  return paragraphs;
+}
+
+function ScriptBody({ text, factValues }: { text: string; factValues: string[] }) {
+  return (
+    <div className="mt-4 space-y-5">
+      {scriptParagraphs(text).map((paragraph, index) => (
+        <p key={index} className="text-base leading-8 text-grey-dark">
+          {highlight(paragraph, factValues)}
+        </p>
+      ))}
+    </div>
+  );
+}
+
 function slidesForSection(pages: number[] | undefined, slides: DeckSlide[]): DeckSlide[] {
   if (!pages?.length || !slides.length) return [];
   const byPage = new Map<number, DeckSlide>();
@@ -82,6 +116,11 @@ export default function Result() {
   const [activeSection, setActiveSection] = useState<string>("section-script");
   const [openObjection, setOpenObjection] = useState<number | null>(null);
   const [navReady, setNavReady] = useState(false);
+  const wasGenerating = useRef(false);
+
+  useLayoutEffect(() => {
+    window.scrollTo(0, 0);
+  }, [id]);
 
   useEffect(() => {
     if (!id) return;
@@ -124,6 +163,18 @@ export default function Result() {
       .then(setFacts)
       .catch(() => setFacts([]));
   }, [generation?.script, facts.length]);
+
+  useLayoutEffect(() => {
+    if (!generation) return;
+    if (generation.status !== "done" && generation.status !== "failed") {
+      wasGenerating.current = true;
+      return;
+    }
+    if (wasGenerating.current) {
+      wasGenerating.current = false;
+      window.scrollTo(0, 0);
+    }
+  }, [generation?.status, generation?.id]);
 
   useEffect(() => {
     if (generation?.status !== "done") {
@@ -259,9 +310,7 @@ export default function Result() {
                 <div className="max-w-3xl pb-10">
                   <p className="kicker">{topicName}</p>
                   <h2 className="mt-2 font-display text-2xl text-black md:text-3xl">{section.heading}</h2>
-                  <p className="mt-4 whitespace-pre-wrap text-base leading-8 text-grey-dark">
-                    {highlight(section.text, factValues)}
-                  </p>
+                  <ScriptBody text={section.text} factValues={factValues} />
                 </div>
               </article>
             );
@@ -499,42 +548,61 @@ function VideoCarousel({ videos, ready }: { videos: RecommendedMedia[]; ready: b
         className="flex gap-4 overflow-x-auto pb-4 snap-x snap-mandatory"
         style={{ scrollbarWidth: "thin" }}
       >
-        {videos.map((video) => {
-          const embed = driveEmbed(video.source_url) || youtubeEmbed(video.source_url);
-          return (
-            <article
-              key={video.asset_id}
-              className="glass-panel w-[min(100%,22rem)] shrink-0 snap-start overflow-hidden"
-            >
-              {embed ? (
-                <div className="aspect-video bg-black">
-                  <iframe
-                    className="h-full w-full"
-                    src={embed}
-                    title={video.title}
-                    allow="autoplay; fullscreen"
-                    allowFullScreen
-                  />
-                </div>
-              ) : video.thumbnail_url ? (
-                <div className="aspect-video bg-grey-light">
-                  <img src={video.thumbnail_url} alt="" className="h-full w-full object-cover" />
-                </div>
-              ) : null}
-              <div className="space-y-2 p-4">
-                <h3 className="font-medium text-black">{video.title}</h3>
-                {video.rationale ? <p className="text-sm text-grey">{video.rationale}</p> : null}
-                {video.source_url ? (
-                  <a className="text-sm text-grey-dark underline" href={video.source_url} target="_blank" rel="noreferrer">
-                    Open source
-                  </a>
-                ) : null}
-              </div>
-            </article>
-          );
-        })}
+        {videos.map((video) => (
+          <VideoCard key={video.asset_id} video={video} />
+        ))}
       </div>
     </div>
+  );
+}
+
+function VideoCard({ video }: { video: RecommendedMedia }) {
+  const [playing, setPlaying] = useState(false);
+  const embed = driveEmbed(video.source_url) || youtubeEmbed(video.source_url);
+
+  return (
+    <article className="glass-panel w-[min(100%,22rem)] shrink-0 snap-start overflow-hidden">
+      {playing && embed ? (
+        <div className="aspect-video bg-black">
+          <iframe
+            className="h-full w-full"
+            src={embed}
+            title={video.title}
+            allow="autoplay; fullscreen"
+            allowFullScreen
+          />
+        </div>
+      ) : embed || video.thumbnail_url ? (
+        <button
+          type="button"
+          className="relative aspect-video w-full bg-grey-light text-left"
+          onClick={() => (embed ? setPlaying(true) : undefined)}
+          aria-label={embed ? `Play ${video.title}` : video.title}
+        >
+          {video.thumbnail_url ? (
+            <img src={video.thumbnail_url} alt="" className="h-full w-full object-cover" />
+          ) : (
+            <span className="absolute inset-0 bg-black" />
+          )}
+          {embed && (
+            <span className="absolute inset-0 flex items-center justify-center bg-black/25">
+              <span className="flex h-12 w-12 items-center justify-center rounded-full bg-black/70 text-lg text-offwhite">
+                ▶
+              </span>
+            </span>
+          )}
+        </button>
+      ) : null}
+      <div className="space-y-2 p-4">
+        <h3 className="font-medium text-black">{video.title}</h3>
+        {video.rationale ? <p className="text-sm text-grey">{video.rationale}</p> : null}
+        {video.source_url ? (
+          <a className="text-sm text-grey-dark underline" href={video.source_url} target="_blank" rel="noreferrer">
+            Open source
+          </a>
+        ) : null}
+      </div>
+    </article>
   );
 }
 

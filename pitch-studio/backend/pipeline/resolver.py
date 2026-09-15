@@ -10,6 +10,7 @@ from backend.models import Recipe
 _MODULE_RE = re.compile(r"^M\d+$")
 
 WORDS_PER_MINUTE = 120
+MAX_SCRIPT_MINUTES = 20
 DURATION_MINUTES = {
     "T0": 0.5,
     "T1": 2,
@@ -19,13 +20,18 @@ DURATION_MINUTES = {
     "T5": 90,
 }
 WORD_BUDGETS = {
-    duration: int(minutes * WORDS_PER_MINUTE)
+    duration: int(min(minutes, MAX_SCRIPT_MINUTES) * WORDS_PER_MINUTE)
     for duration, minutes in DURATION_MINUTES.items()
 }
 
 
+def script_minutes_for_duration(duration: str) -> float:
+    minutes = DURATION_MINUTES.get(duration, DURATION_MINUTES["T1"])
+    return min(minutes, MAX_SCRIPT_MINUTES)
+
+
 def word_limit_for_duration(duration: str) -> int:
-    return WORD_BUDGETS.get(duration, WORD_BUDGETS["T1"])
+    return int(script_minutes_for_duration(duration) * WORDS_PER_MINUTE)
 
 DURATION_ORDER = ["T0", "T1", "T2", "T3", "T4", "T5"]
 PRIORITY_ORDER = {"P0": 0, "P1": 1, "P2": 2}
