@@ -94,6 +94,22 @@ GENERATION_COLUMN_SQL = {
     "report_passages_json": "ALTER TABLE generations ADD COLUMN report_passages_json TEXT DEFAULT ''",
 }
 
+OBJECTION_COLUMN_SQL = {
+    "source_name": "ALTER TABLE objections ADD COLUMN source_name VARCHAR(300) DEFAULT ''",
+    "source_transcript_id": "ALTER TABLE objections ADD COLUMN source_transcript_id INTEGER DEFAULT 0",
+    "source_candidate_id": "ALTER TABLE objections ADD COLUMN source_candidate_id INTEGER DEFAULT 0",
+}
+
+FOUNDER_QUOTE_COLUMN_SQL = {
+    "source_style_transcript_id": (
+        "ALTER TABLE founder_quotes ADD COLUMN source_style_transcript_id INTEGER DEFAULT 0"
+    ),
+}
+
+VOICE_STYLE_GUIDE_COLUMN_SQL = {
+    "persona_label": "ALTER TABLE voice_style_guides ADD COLUMN persona_label VARCHAR(255) DEFAULT ''",
+}
+
 
 def _add_missing_columns(table: str, statements: dict[str, str]) -> None:
     inspector = inspect(engine)
@@ -104,6 +120,45 @@ def _add_missing_columns(table: str, statements: dict[str, str]) -> None:
         for name, statement in statements.items():
             if name not in existing:
                 connection.execute(text(statement))
+
+
+def _backfill_founder_quote_style_provenance() -> None:
+    """Fill source_style_transcript_id from legacy source_file_id=style-{id}."""
+    inspector = inspect(engine)
+    if "founder_quotes" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("founder_quotes")}
+    if "source_style_transcript_id" not in columns:
+        return
+    with engine.begin() as connection:
+        if settings.database_url.startswith("sqlite"):
+            connection.execute(
+                text(
+                    """
+                    UPDATE founder_quotes
+                    SET source_style_transcript_id = CAST(
+                        substr(source_file_id, 7) AS INTEGER
+                    )
+                    WHERE COALESCE(source_style_transcript_id, 0) = 0
+                      AND source_file_id LIKE 'style-%'
+                      AND length(source_file_id) > 6
+                      AND substr(source_file_id, 7) GLOB '[0-9]*'
+                    """
+                )
+            )
+        else:
+            connection.execute(
+                text(
+                    """
+                    UPDATE founder_quotes
+                    SET source_style_transcript_id = CAST(
+                        substring(source_file_id FROM 7) AS INTEGER
+                    )
+                    WHERE COALESCE(source_style_transcript_id, 0) = 0
+                      AND source_file_id ~ '^style-[0-9]+$'
+                    """
+                )
+            )
 
 
 _SCHEMA_READY = False
@@ -122,6 +177,10 @@ def ensure_schema() -> None:
     Base.metadata.create_all(bind=engine)
     _add_missing_columns("assets", ASSET_COLUMN_SQL)
     _add_missing_columns("generations", GENERATION_COLUMN_SQL)
+    _add_missing_columns("objections", OBJECTION_COLUMN_SQL)
+    _add_missing_columns("founder_quotes", FOUNDER_QUOTE_COLUMN_SQL)
+    _add_missing_columns("voice_style_guides", VOICE_STYLE_GUIDE_COLUMN_SQL)
+    _backfill_founder_quote_style_provenance()
     _SCHEMA_READY = True
 
 

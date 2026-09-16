@@ -188,6 +188,9 @@ class ObjectionIn(BaseModel):
     move: str = ""
     answer: str = ""
     status: str = "approved"
+    source_name: str = ""
+    source_transcript_id: int = 0
+    source_candidate_id: int = 0
 
 
 class ObjectionOut(ObjectionIn):
@@ -195,6 +198,64 @@ class ObjectionOut(ObjectionIn):
     edited: bool = False
 
     model_config = {"from_attributes": True}
+
+
+class QaExtractionRunOut(BaseModel):
+    id: int
+    style_transcript_id: int
+    transcript_hash: str = ""
+    status: str = "queued"
+    stage: str = ""
+    error: str = ""
+    candidate_count: int = 0
+    job_id: int = 0
+    created_at: datetime | None = None
+    finished_at: datetime | None = None
+    transcript_name: str = ""
+
+    model_config = {"from_attributes": True}
+
+
+class QaCandidateOut(BaseModel):
+    id: int
+    run_id: int
+    style_transcript_id: int
+    fingerprint: str = ""
+    match_type: str = "new"
+    matched_objection_id: int = 0
+    confidence: float = 0.0
+    status: str = "pending"
+    question_verbatim: str = ""
+    answer_verbatim: str = ""
+    proposed_question: str = ""
+    proposed_who_asks: str = ""
+    proposed_move: str = ""
+    proposed_answer: str = ""
+    evidence_json: str = ""
+    prior_question: str = ""
+    prior_who_asks: str = ""
+    prior_move: str = ""
+    prior_answer: str = ""
+    applied_objection_id: int = 0
+    review_note: str = ""
+    error: str = ""
+    created_at: datetime | None = None
+    reviewed_at: datetime | None = None
+    transcript_name: str = ""
+
+    model_config = {"from_attributes": True}
+
+
+class QaCandidateApproveIn(BaseModel):
+    question: str | None = None
+    who_asks: str | None = None
+    move: str | None = None
+    answer: str | None = None
+    review_note: str = ""
+
+
+class QaCandidateRejectIn(BaseModel):
+    review_note: str = ""
 
 
 class FounderQuoteIn(BaseModel):
@@ -250,6 +311,12 @@ class InterpretRequest(BaseModel):
     goal_text: str = ""
 
 
+class InterpretPersonaCandidate(BaseModel):
+    recipe_ref: str
+    confidence: float = Field(ge=0.0, le=1.0)
+    rationale: str = ""
+
+
 class InterpretResult(BaseModel):
     audience_cluster: str
     duration: str
@@ -257,6 +324,7 @@ class InterpretResult(BaseModel):
     intent: str
     temperature: str
     recipe_ref: str = ""
+    persona_candidates: list[InterpretPersonaCandidate] = Field(default_factory=list)
     summary: str = ""
     notes: str = ""
 
@@ -337,6 +405,11 @@ class TranscriptIngestCounts(BaseModel):
 class StyleTranscriptIn(BaseModel):
     name: str
     text: str
+    persona_labels: list[str] = Field(min_length=1)
+
+
+class StyleTranscriptPersonasIn(BaseModel):
+    persona_labels: list[str] = Field(min_length=1)
 
 
 class StyleTranscriptOut(BaseModel):
@@ -345,6 +418,7 @@ class StyleTranscriptOut(BaseModel):
     status: str
     created_at: datetime | None = None
     text_length: int = 0
+    persona_labels: list[str] = Field(default_factory=list)
 
 
 class StyleTranscriptIngestOut(BaseModel):
@@ -352,15 +426,20 @@ class StyleTranscriptIngestOut(BaseModel):
     quotes_kept: int
     quotes_skipped: int
     transcript_id: int
+    persona_labels: list[str] = Field(default_factory=list)
+    guides_updated: list[str] = Field(default_factory=list)
 
 
 class StyleGuideIn(BaseModel):
     guide_text: str
+    persona_label: str
 
 
 class StyleGuideOut(BaseModel):
     version: int = 0
     guide_text: str = ""
+    persona_label: str = ""
+    source_transcript_ids: str = ""
 
 
 class ExtractResultOut(BaseModel):
@@ -414,6 +493,24 @@ class RecommendedMediaOut(BaseModel):
     preview_url: str = ""
     confidence: float = 0.0
     rationale: str = ""
+
+
+class VideoClickIn(BaseModel):
+    asset_id: int
+    displayed_rank: int = 0
+    interaction_type: str = "play"
+
+
+class VideoClickOut(BaseModel):
+    id: int
+    generation_id: int
+    asset_id: int
+    recipe_ref: str = ""
+    displayed_rank: int = 0
+    click_order: int = 0
+    interaction_type: str = "play"
+    created_at: datetime | None = None
+    created: bool = False
 
 
 class MediaRecommendationItem(BaseModel):

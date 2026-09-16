@@ -24,6 +24,9 @@ def valid_raw(**overrides):
         "intent": "I1",
         "temperature": "X1",
         "recipe_ref": "A1-1",
+        "persona_candidates": [
+            {"recipe_ref": "A1-1", "confidence": 0.92, "rationale": "Parents of UG aspirants"},
+        ],
         "summary": "A cold introduction to prospective parents on a 30-minute Zoom with a deck.",
         "notes": "Emphasise campus visit next.",
     }
@@ -40,6 +43,9 @@ class NormalizeInterpretTests(unittest.TestCase):
         self.assertEqual(result.intent, "I1")
         self.assertEqual(result.temperature, "X1")
         self.assertEqual(result.recipe_ref, "A1-1")
+        self.assertEqual(len(result.persona_candidates), 1)
+        self.assertEqual(result.persona_candidates[0].recipe_ref, "A1-1")
+        self.assertAlmostEqual(result.persona_candidates[0].confidence, 0.92)
         self.assertIn("prospective parents", result.summary.lower())
         self.assertEqual(result.notes, "Emphasise campus visit next.")
 
@@ -49,9 +55,61 @@ class NormalizeInterpretTests(unittest.TestCase):
         self.assertIn("duration", str(ctx.exception))
 
     def test_unknown_recipe_ref_is_blanked(self):
-        result = normalize_interpret_payload(valid_raw(recipe_ref="NOPE-9"), {"A1-1"})
+        result = normalize_interpret_payload(
+            valid_raw(recipe_ref="NOPE-9", persona_candidates=[]),
+            {"A1-1"},
+        )
         self.assertEqual(result.recipe_ref, "")
         self.assertEqual(result.audience_cluster, "A")
+
+    def test_close_persona_race_leaves_recipe_ref_blank(self):
+        result = normalize_interpret_payload(
+            valid_raw(
+                recipe_ref="",
+                persona_candidates=[
+                    {"recipe_ref": "A4-1", "confidence": 0.62, "rationale": "PG undergrad"},
+                    {"recipe_ref": "A5-1", "confidence": 0.58, "rationale": "Working professional"},
+                ],
+            ),
+            {"A4-1", "A5-1"},
+        )
+        self.assertEqual(result.recipe_ref, "")
+        self.assertEqual([c.recipe_ref for c in result.persona_candidates], ["A4-1", "A5-1"])
+
+    def test_top_persona_at_seventy_is_auto_selected(self):
+        result = normalize_interpret_payload(
+            valid_raw(
+                recipe_ref="",
+                persona_candidates=[
+                    {"recipe_ref": "A5-2", "confidence": 0.8, "rationale": "Working professional"},
+                    {"recipe_ref": "A7-3", "confidence": 0.7, "rationale": "Mid-career"},
+                ],
+            ),
+            {"A5-2", "A7-3"},
+        )
+        self.assertEqual(result.recipe_ref, "A5-2")
+
+    def test_clear_persona_winner_is_auto_selected(self):
+        result = normalize_interpret_payload(
+            valid_raw(
+                recipe_ref="",
+                persona_candidates=[
+                    {"recipe_ref": "A5-1", "confidence": 0.81, "rationale": "Career switcher"},
+                    {"recipe_ref": "A4-1", "confidence": 0.4, "rationale": "Less likely"},
+                ],
+            ),
+            {"A4-1", "A5-1"},
+        )
+        self.assertEqual(result.recipe_ref, "A5-1")
+
+    def test_recipe_ref_without_candidates_is_kept(self):
+        result = normalize_interpret_payload(
+            valid_raw(persona_candidates=[]),
+            {"A1-1"},
+        )
+        self.assertEqual(result.recipe_ref, "A1-1")
+        self.assertEqual(result.persona_candidates[0].recipe_ref, "A1-1")
+        self.assertAlmostEqual(result.persona_candidates[0].confidence, 1.0)
 
 
 class BuildMessagesTests(unittest.TestCase):
@@ -78,6 +136,7 @@ class BuildMessagesTests(unittest.TestCase):
         self.assertIn("School student", user)
         self.assertIn("Prospective parents", user)
         self.assertIn("30-minute Zoom", user)
+        self.assertIn("persona_candidates", messages[0]["content"])
 
 
 class InterpretBriefTests(unittest.TestCase):
@@ -133,10 +192,11 @@ class InterpretBriefTests(unittest.TestCase):
         ]
         with mock.patch(
             "backend.pipeline.interpret.chat_json",
-            return_value=valid_raw(recipe_ref="MISSING"),
+            return_value=valid_raw(recipe_ref="MISSING", persona_candidates=[]),
         ):
             result = interpret_brief(db, InterpretRequest(audience_text="Parents"))
         self.assertEqual(result.recipe_ref, "")
+        self.assertEqual(result.persona_candidates, [])
 
 
 class InterpretRouteTests(unittest.TestCase):

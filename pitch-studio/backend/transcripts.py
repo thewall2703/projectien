@@ -169,10 +169,37 @@ def is_pratham_quote(quote: FounderQuote) -> bool:
     return "pratham" in (getattr(quote, "speaker", "") or "").lower()
 
 
+def quote_matches_persona(
+    quote: FounderQuote,
+    *,
+    persona_label: str = "",
+    allowed_transcript_ids: set[int] | None = None,
+) -> bool:
+    """Style-harvested quotes must match the persona; legacy quotes stay global."""
+    source_id = int(getattr(quote, "source_style_transcript_id", 0) or 0)
+    if source_id <= 0:
+        source_file_id = (getattr(quote, "source_file_id", "") or "").strip()
+        if source_file_id.startswith("style-"):
+            token = source_file_id[6:]
+            if token.isdigit():
+                source_id = int(token)
+    if source_id <= 0:
+        return True
+    label = (persona_label or "").strip()
+    if not label:
+        return False
+    if allowed_transcript_ids is None:
+        return False
+    return source_id in allowed_transcript_ids
+
+
 def pick_founder_quotes(
     quotes: list[FounderQuote],
     sequence: list[str],
     limit: int = 6,
+    *,
+    persona_label: str = "",
+    allowed_transcript_ids: set[int] | None = None,
 ) -> list[FounderQuote]:
     sequence_set = set(sequence)
     buckets: dict[str, list[FounderQuote]] = {}
@@ -180,7 +207,13 @@ def pick_founder_quotes(
     usable = [
         quote
         for quote in quotes
-        if quote.status == "approved" and is_pratham_quote(quote)
+        if quote.status == "approved"
+        and is_pratham_quote(quote)
+        and quote_matches_persona(
+            quote,
+            persona_label=persona_label,
+            allowed_transcript_ids=allowed_transcript_ids,
+        )
     ]
     usable.sort(key=lambda quote: (0 if getattr(quote, "verbatim", False) else 1, quote.id if hasattr(quote, "id") else 0))
     for quote in usable:

@@ -65,10 +65,10 @@ class VerbatimTests(unittest.TestCase):
 class QuoteSelectTests(unittest.TestCase):
     def test_selects_by_sequence_and_topic_diversity(self):
         quotes = [
-            SimpleNamespace(id=1, status="approved", topic="vision", module_ids="M12", speaker="Pratham Mittal", verbatim=True),
-            SimpleNamespace(id=2, status="approved", topic="vision", module_ids="M12", speaker="Pratham Mittal", verbatim=True),
-            SimpleNamespace(id=3, status="approved", topic="students", module_ids="M07,M13", speaker="Pratham Mittal", verbatim=True),
-            SimpleNamespace(id=4, status="rejected", topic="students", module_ids="M07", speaker="Pratham Mittal", verbatim=True),
+            SimpleNamespace(id=1, status="approved", topic="vision", module_ids="M12", speaker="Pratham Mittal", verbatim=True, source_style_transcript_id=0),
+            SimpleNamespace(id=2, status="approved", topic="vision", module_ids="M12", speaker="Pratham Mittal", verbatim=True, source_style_transcript_id=0),
+            SimpleNamespace(id=3, status="approved", topic="students", module_ids="M07,M13", speaker="Pratham Mittal", verbatim=True, source_style_transcript_id=0),
+            SimpleNamespace(id=4, status="rejected", topic="students", module_ids="M07", speaker="Pratham Mittal", verbatim=True, source_style_transcript_id=0),
         ]
         selected = pick_founder_quotes(quotes, ["M02", "M07", "M12", "M13"], limit=3)
         ids = [item.id for item in selected]
@@ -78,11 +78,85 @@ class QuoteSelectTests(unittest.TestCase):
 
     def test_ignores_non_pratham_speakers(self):
         quotes = [
-            SimpleNamespace(id=1, status="approved", topic="vision", module_ids="M12", speaker="Guest Host", verbatim=True),
-            SimpleNamespace(id=2, status="approved", topic="students", module_ids="M07", speaker="Pratham Mittal", verbatim=True),
-            SimpleNamespace(id=3, status="approved", topic="founder", module_ids="M01", speaker="", verbatim=True),
+            SimpleNamespace(id=1, status="approved", topic="vision", module_ids="M12", speaker="Guest Host", verbatim=True, source_style_transcript_id=0),
+            SimpleNamespace(id=2, status="approved", topic="students", module_ids="M07", speaker="Pratham Mittal", verbatim=True, source_style_transcript_id=0),
+            SimpleNamespace(id=3, status="approved", topic="founder", module_ids="M01", speaker="", verbatim=True, source_style_transcript_id=0),
         ]
         selected = pick_founder_quotes(quotes, ["M01", "M07", "M12"], limit=4)
+        self.assertEqual([item.id for item in selected], [2])
+
+    def test_filters_style_quotes_by_persona_transcripts(self):
+        quotes = [
+            SimpleNamespace(
+                id=1,
+                status="approved",
+                topic="vision",
+                module_ids="M12",
+                speaker="Pratham Mittal",
+                verbatim=True,
+                source_style_transcript_id=11,
+                source_file_id="style-11",
+            ),
+            SimpleNamespace(
+                id=2,
+                status="approved",
+                topic="students",
+                module_ids="M07",
+                speaker="Pratham Mittal",
+                verbatim=True,
+                source_style_transcript_id=22,
+                source_file_id="style-22",
+            ),
+            SimpleNamespace(
+                id=3,
+                status="approved",
+                topic="founder",
+                module_ids="M01",
+                speaker="Pratham Mittal",
+                verbatim=True,
+                source_style_transcript_id=0,
+                source_file_id="legacy.json",
+            ),
+        ]
+        selected = pick_founder_quotes(
+            quotes,
+            ["M01", "M07", "M12"],
+            limit=5,
+            persona_label="International / NRI applicant",
+            allowed_transcript_ids={11},
+        )
+        self.assertEqual([item.id for item in selected], [3, 1])
+
+    def test_style_quotes_excluded_without_persona_match(self):
+        quotes = [
+            SimpleNamespace(
+                id=1,
+                status="approved",
+                topic="vision",
+                module_ids="M12",
+                speaker="Pratham Mittal",
+                verbatim=True,
+                source_style_transcript_id=11,
+                source_file_id="style-11",
+            ),
+            SimpleNamespace(
+                id=2,
+                status="approved",
+                topic="founder",
+                module_ids="M01",
+                speaker="Pratham Mittal",
+                verbatim=True,
+                source_style_transcript_id=0,
+                source_file_id="legacy.json",
+            ),
+        ]
+        selected = pick_founder_quotes(
+            quotes,
+            ["M01", "M12"],
+            limit=5,
+            persona_label="Mid-career executive",
+            allowed_transcript_ids=set(),
+        )
         self.assertEqual([item.id for item in selected], [2])
 
 

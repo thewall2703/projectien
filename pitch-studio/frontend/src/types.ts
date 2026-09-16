@@ -63,6 +63,12 @@ export type RecipeOption = {
   valid: boolean;
 };
 
+export type InterpretPersonaCandidate = {
+  recipe_ref: string;
+  confidence: number;
+  rationale: string;
+};
+
 export type InterpretResult = {
   audience_cluster: string;
   duration: string;
@@ -70,6 +76,7 @@ export type InterpretResult = {
   intent: string;
   temperature: string;
   recipe_ref: string;
+  persona_candidates: InterpretPersonaCandidate[];
   summary: string;
   notes: string;
 };
@@ -121,6 +128,9 @@ export type ObjectionRow = {
   answer: string;
   status: string;
   edited: boolean;
+  source_name?: string;
+  source_transcript_id?: number;
+  source_candidate_id?: number;
 };
 
 export type FounderQuoteRow = {
@@ -205,6 +215,7 @@ export type FieldConfig = {
   label: string;
   type?: "text" | "textarea" | "select" | "number" | "checkbox";
   options?: string[];
+  optionLabels?: Record<string, string>;
 };
 
 export type MediaImageAsset = {
@@ -323,6 +334,7 @@ export type StyleTranscriptRow = {
   status: string;
   created_at: string | null;
   text_length: number;
+  persona_labels: string[];
 };
 
 export type StyleTranscriptCreateResult = {
@@ -330,9 +342,55 @@ export type StyleTranscriptCreateResult = {
   quotes_kept: number;
   quotes_skipped: number;
   transcript_id: number;
+  persona_labels: string[];
+  guides_updated: string[];
+};
+
+export type QaExtractionRun = {
+  id: number;
+  style_transcript_id: number;
+  transcript_hash: string;
+  status: string;
+  stage: string;
+  error: string;
+  candidate_count: number;
+  job_id: number;
+  created_at: string | null;
+  finished_at: string | null;
+  transcript_name: string;
+};
+
+export type QaCandidate = {
+  id: number;
+  run_id: number;
+  style_transcript_id: number;
+  fingerprint: string;
+  match_type: string;
+  matched_objection_id: number;
+  confidence: number;
+  status: string;
+  question_verbatim: string;
+  answer_verbatim: string;
+  proposed_question: string;
+  proposed_who_asks: string;
+  proposed_move: string;
+  proposed_answer: string;
+  evidence_json: string;
+  prior_question: string;
+  prior_who_asks: string;
+  prior_move: string;
+  prior_answer: string;
+  applied_objection_id: number;
+  review_note: string;
+  error: string;
+  created_at: string | null;
+  reviewed_at: string | null;
+  transcript_name: string;
 };
 
 export type StyleGuide = {
   version: number;
   guide_text: string;
+  persona_label: string;
+  source_transcript_ids?: string;
 };

@@ -51,6 +51,8 @@ from backend.models import (
     MediaIndex,
     Module,
     Objection,
+    QaCandidate,
+    QaExtractionRun,
     Recipe,
     StyleTranscript,
     User,
@@ -59,9 +61,18 @@ from backend.models import (
 from backend.pipeline.llm import LLMError
 from backend.pipeline.style_guide import (
     DuplicateStyleTranscriptError,
+    StyleTranscriptPersonaError,
     ingest_style_transcript,
     latest_style_guide_row,
+    personas_for_transcripts,
     save_style_guide,
+    update_style_transcript_personas,
+)
+from backend.qa_extraction import (
+    QaExtractionError,
+    approve_candidate,
+    enqueue_qa_extraction,
+    reject_candidate,
 )
 from backend.recipe_cache import invalidate_recipe_cache, list_recipe_options
 from backend.schemas import (
@@ -83,6 +94,10 @@ from backend.schemas import (
     ModuleOut,
     ObjectionIn,
     ObjectionOut,
+    QaCandidateApproveIn,
+    QaCandidateOut,
+    QaCandidateRejectIn,
+    QaExtractionRunOut,
     RecipeIn,
     RecipeOut,
     SeedCounts,
@@ -91,6 +106,7 @@ from backend.schemas import (
     StyleTranscriptIn,
     StyleTranscriptIngestOut,
     StyleTranscriptOut,
+    StyleTranscriptPersonasIn,
     SyncCounts,
     TranscriptIn,
     TranscriptIngestCounts,
@@ -396,6 +412,7 @@ def delete_founder_quote(quote_id: int, db: Session = Depends(get_db)) -> dict[s
 @router.get("/style-transcripts", response_model=list[StyleTranscriptOut])
 def list_style_transcripts(db: Session = Depends(get_db)) -> list[StyleTranscriptOut]:
     rows = db.query(StyleTranscript).order_by(StyleTranscript.id.desc()).all()
+    personas = personas_for_transcripts(db, [row.id for row in rows])
     return [
         StyleTranscriptOut(
             id=row.id,
@@ -403,6 +420,7 @@ def list_style_transcripts(db: Session = Depends(get_db)) -> list[StyleTranscrip
             status=row.status,
             created_at=row.created_at,
             text_length=len(row.raw_text or ""),
+            persona_labels=personas.get(row.id, []),
         )
         for row in rows
     ]
@@ -414,9 +432,16 @@ def create_style_transcript(
     db: Session = Depends(get_db),
 ) -> StyleTranscriptIngestOut:
     try:
-        result = ingest_style_transcript(db, payload.name, payload.text)
+        result = ingest_style_transcript(
+            db,
+            payload.name,
+            payload.text,
+            persona_labels=payload.persona_labels,
+        )
     except DuplicateStyleTranscriptError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except StyleTranscriptPersonaError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except LLMError as exc:
@@ -425,18 +450,225 @@ def create_style_transcript(
     return StyleTranscriptIngestOut(**result)
 
 
+@router.put("/style-transcripts/{transcript_id}/personas", response_model=StyleTranscriptOut)
+def set_style_transcript_personas(
+    transcript_id: int,
+    payload: StyleTranscriptPersonasIn,
+    db: Session = Depends(get_db),
+) -> StyleTranscriptOut:
+    try:
+        result = update_style_transcript_personas(
+            db,
+            transcript_id,
+            persona_labels=payload.persona_labels,
+        )
+    except StyleTranscriptPersonaError as exc:
+        status = 404 if "not found" in str(exc).lower() else 400
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    except LLMError as exc:
+        db.rollback()
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    row = db.get(StyleTranscript, transcript_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Style transcript not found")
+    return StyleTranscriptOut(
+        id=row.id,
+        name=row.name,
+        status=row.status,
+        created_at=row.created_at,
+        text_length=len(row.raw_text or ""),
+        persona_labels=result["persona_labels"],
+    )
+
+
 @router.get("/style-guide", response_model=StyleGuideOut)
-def get_style_guide(db: Session = Depends(get_db)) -> StyleGuideOut:
-    row = latest_style_guide_row(db)
+def get_style_guide(
+    persona_label: str = Query(""),
+    db: Session = Depends(get_db),
+) -> StyleGuideOut:
+    label = (persona_label or "").strip()
+    if not label:
+        return StyleGuideOut(version=0, guide_text="", persona_label="", source_transcript_ids="")
+    row = latest_style_guide_row(db, persona_label=label)
     if row is None or not isinstance(getattr(row, "guide_text", None), str):
-        return StyleGuideOut(version=0, guide_text="")
-    return StyleGuideOut(version=row.version, guide_text=row.guide_text)
+        return StyleGuideOut(version=0, guide_text="", persona_label=label, source_transcript_ids="")
+    return StyleGuideOut(
+        version=row.version,
+        guide_text=row.guide_text,
+        persona_label=row.persona_label or label,
+        source_transcript_ids=row.source_transcript_ids or "",
+    )
 
 
 @router.put("/style-guide", response_model=StyleGuideOut)
 def update_style_guide(payload: StyleGuideIn, db: Session = Depends(get_db)) -> StyleGuideOut:
-    item = save_style_guide(db, payload.guide_text)
-    return StyleGuideOut(version=item.version, guide_text=item.guide_text)
+    try:
+        item = save_style_guide(db, payload.guide_text, payload.persona_label)
+    except StyleTranscriptPersonaError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return StyleGuideOut(
+        version=item.version,
+        guide_text=item.guide_text,
+        persona_label=item.persona_label or "",
+        source_transcript_ids=item.source_transcript_ids or "",
+    )
+
+
+def _transcript_names(db: Session, ids: set[int]) -> dict[int, str]:
+    if not ids:
+        return {}
+    rows = db.query(StyleTranscript).filter(StyleTranscript.id.in_(ids)).all()
+    return {row.id: row.name for row in rows}
+
+
+def _serialize_run(run: QaExtractionRun, transcript_name: str = "") -> QaExtractionRunOut:
+    return QaExtractionRunOut(
+        id=run.id,
+        style_transcript_id=run.style_transcript_id,
+        transcript_hash=run.transcript_hash,
+        status=run.status,
+        stage=run.stage,
+        error=run.error,
+        candidate_count=run.candidate_count,
+        job_id=run.job_id,
+        created_at=run.created_at,
+        finished_at=run.finished_at,
+        transcript_name=transcript_name,
+    )
+
+
+def _serialize_candidate(candidate: QaCandidate, transcript_name: str = "") -> QaCandidateOut:
+    return QaCandidateOut(
+        id=candidate.id,
+        run_id=candidate.run_id,
+        style_transcript_id=candidate.style_transcript_id,
+        fingerprint=candidate.fingerprint,
+        match_type=candidate.match_type,
+        matched_objection_id=candidate.matched_objection_id,
+        confidence=candidate.confidence,
+        status=candidate.status,
+        question_verbatim=candidate.question_verbatim,
+        answer_verbatim=candidate.answer_verbatim,
+        proposed_question=candidate.proposed_question,
+        proposed_who_asks=candidate.proposed_who_asks,
+        proposed_move=candidate.proposed_move,
+        proposed_answer=candidate.proposed_answer,
+        evidence_json=candidate.evidence_json,
+        prior_question=candidate.prior_question,
+        prior_who_asks=candidate.prior_who_asks,
+        prior_move=candidate.prior_move,
+        prior_answer=candidate.prior_answer,
+        applied_objection_id=candidate.applied_objection_id,
+        review_note=candidate.review_note,
+        error=candidate.error,
+        created_at=candidate.created_at,
+        reviewed_at=candidate.reviewed_at,
+        transcript_name=transcript_name,
+    )
+
+
+@router.post("/style-transcripts/{transcript_id}/extract-qa", response_model=QaExtractionRunOut)
+def start_qa_extraction(
+    transcript_id: int,
+    force: bool = Query(False),
+    db: Session = Depends(get_db),
+) -> QaExtractionRunOut:
+    try:
+        run, _job = enqueue_qa_extraction(db, transcript_id, force=force)
+    except QaExtractionError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    names = _transcript_names(db, {run.style_transcript_id})
+    return _serialize_run(run, names.get(run.style_transcript_id, ""))
+
+
+@router.get("/qa-extractions", response_model=list[QaExtractionRunOut])
+def list_qa_extractions(
+    transcript_id: int | None = Query(None),
+    db: Session = Depends(get_db),
+) -> list[QaExtractionRunOut]:
+    query = db.query(QaExtractionRun)
+    if transcript_id is not None:
+        query = query.filter(QaExtractionRun.style_transcript_id == transcript_id)
+    rows = query.order_by(QaExtractionRun.id.desc()).limit(100).all()
+    names = _transcript_names(db, {row.style_transcript_id for row in rows})
+    return [_serialize_run(row, names.get(row.style_transcript_id, "")) for row in rows]
+
+
+@router.get("/qa-extractions/{run_id}", response_model=QaExtractionRunOut)
+def get_qa_extraction(run_id: int, db: Session = Depends(get_db)) -> QaExtractionRunOut:
+    run = db.get(QaExtractionRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Extraction run not found")
+    names = _transcript_names(db, {run.style_transcript_id})
+    return _serialize_run(run, names.get(run.style_transcript_id, ""))
+
+
+@router.get("/qa-candidates", response_model=list[QaCandidateOut])
+def list_qa_candidates(
+    status: str | None = Query(None),
+    run_id: int | None = Query(None),
+    transcript_id: int | None = Query(None),
+    db: Session = Depends(get_db),
+) -> list[QaCandidateOut]:
+    query = db.query(QaCandidate)
+    if status:
+        query = query.filter(QaCandidate.status == status)
+    if run_id is not None:
+        query = query.filter(QaCandidate.run_id == run_id)
+    if transcript_id is not None:
+        query = query.filter(QaCandidate.style_transcript_id == transcript_id)
+    rows = query.order_by(QaCandidate.id.desc()).limit(300).all()
+    names = _transcript_names(db, {row.style_transcript_id for row in rows})
+    return [_serialize_candidate(row, names.get(row.style_transcript_id, "")) for row in rows]
+
+
+@router.get("/qa-candidates/{candidate_id}", response_model=QaCandidateOut)
+def get_qa_candidate(candidate_id: int, db: Session = Depends(get_db)) -> QaCandidateOut:
+    candidate = db.get(QaCandidate, candidate_id)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    names = _transcript_names(db, {candidate.style_transcript_id})
+    return _serialize_candidate(candidate, names.get(candidate.style_transcript_id, ""))
+
+
+@router.post("/qa-candidates/{candidate_id}/approve", response_model=QaCandidateOut)
+def approve_qa_candidate(
+    candidate_id: int,
+    payload: QaCandidateApproveIn,
+    db: Session = Depends(get_db),
+) -> QaCandidateOut:
+    try:
+        candidate = approve_candidate(
+            db,
+            candidate_id,
+            question=payload.question,
+            who_asks=payload.who_asks,
+            move=payload.move,
+            answer=payload.answer,
+            review_note=payload.review_note,
+        )
+    except QaExtractionError as exc:
+        detail = str(exc)
+        code = 404 if "not found" in detail.lower() else 400
+        raise HTTPException(status_code=code, detail=detail) from exc
+    names = _transcript_names(db, {candidate.style_transcript_id})
+    return _serialize_candidate(candidate, names.get(candidate.style_transcript_id, ""))
+
+
+@router.post("/qa-candidates/{candidate_id}/reject", response_model=QaCandidateOut)
+def reject_qa_candidate(
+    candidate_id: int,
+    payload: QaCandidateRejectIn,
+    db: Session = Depends(get_db),
+) -> QaCandidateOut:
+    try:
+        candidate = reject_candidate(db, candidate_id, review_note=payload.review_note)
+    except QaExtractionError as exc:
+        detail = str(exc)
+        code = 404 if "not found" in detail.lower() else 400
+        raise HTTPException(status_code=code, detail=detail) from exc
+    names = _transcript_names(db, {candidate.style_transcript_id})
+    return _serialize_candidate(candidate, names.get(candidate.style_transcript_id, ""))
 
 
 @router.post("/ingest-transcripts", response_model=TranscriptIngestCounts)

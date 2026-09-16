@@ -12,7 +12,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from backend.database import ensure_schema
-from backend.models import Asset, Job, MediaIndex, utc_now
+from backend.models import Asset, Job, MediaIndex, VideoClickEvent, utc_now
 
 _schema_ready = False
 
@@ -50,8 +50,13 @@ CHILD_TITLE_SEP = " — "
 MAX_IMAGES = 6
 MAX_IMAGE_EDGE = 1024
 MAX_RECOMMENDATIONS = 15
-MAX_RECOMMENDED_VIDEOS = 5
+MAX_RECOMMENDED_VIDEOS = 5  # retained for admin/tooling defaults; result pages return all videos
 MAX_RECOMMENDED_PICTURES = 5
+FEEDBACK_MIN_GENERATIONS = 3
+FEEDBACK_MAX_BOOST = 0.35
+REJECTION_PENALTY = 0.55
+CLICK_ORDER_WEIGHTS = (1.0, 0.7, 0.45, 0.3, 0.2)
+VALID_VIDEO_INTERACTIONS = {"play", "open_source"}
 DRIVE_FILE_RE = re.compile(r"/file/d/([a-zA-Z0-9_-]+)")
 DRIVE_ID_RE = re.compile(r"[?&]id=([a-zA-Z0-9_-]+)")
 VALID_TEMPERATURES = {item.code for item in TEMPERATURES}
@@ -183,14 +188,13 @@ def drive_image_url(url: str) -> str:
     return f"https://drive.google.com/uc?export=view&id={file_id}"
 
 
-def _recommendation_for_ref(row: MediaIndex, recipe_ref: str) -> dict[str, Any] | None:
-    if not recipe_ref:
+def _recommendation_for_ref(row: MediaIndex | None, recipe_ref: str) -> dict[str, Any] | None:
+    if row is None or not recipe_ref:
         return None
     feedback = parse_feedback(row.feedback_json)
     verdicts = feedback.get("verdicts") or {}
     verdict = verdicts.get(recipe_ref) if isinstance(verdicts, dict) else None
-    if isinstance(verdict, dict) and str(verdict.get("verdict") or "").strip().lower() == "no":
-        return None
+    rejected = isinstance(verdict, dict) and str(verdict.get("verdict") or "").strip().lower() == "no"
     items = parse_recommendations(row.recommendations_json).get("items") or []
     match = next(
         (
@@ -204,7 +208,7 @@ def _recommendation_for_ref(row: MediaIndex, recipe_ref: str) -> dict[str, Any] 
         isinstance(entry, dict) and str(entry.get("recipe_ref") or "") == recipe_ref
         for entry in (feedback.get("added") or [])
     )
-    if match is None and not added:
+    if match is None and not added and not rejected:
         return None
     return {
         "recipe_ref": recipe_ref,
@@ -212,6 +216,7 @@ def _recommendation_for_ref(row: MediaIndex, recipe_ref: str) -> dict[str, Any] 
         "confidence": float(match.get("confidence") or 0.0) if match else 0.0,
         "rationale": str(match.get("rationale") or "") if match else "",
         "added": added,
+        "rejected": rejected,
     }
 
 
@@ -221,15 +226,10 @@ def _recommendation_sort_key(item: dict[str, Any], temperature: str) -> tuple[in
     return (mismatch, -float(item.get("confidence") or 0.0))
 
 
-def video_limit_for(duration: str) -> int:
-    return {
-        "T0": 1,
-        "T1": 2,
-        "T2": 3,
-        "T3": 3,
-        "T4": 4,
-        "T5": 5,
-    }.get(duration, MAX_RECOMMENDED_VIDEOS)
+def video_limit_for(duration: str) -> int | None:
+    """Result pages return every linked video; duration no longer caps the list."""
+    _ = duration
+    return None
 
 
 def _recipe_cluster(recipe_ref: str) -> str:
@@ -237,112 +237,146 @@ def _recipe_cluster(recipe_ref: str) -> str:
     return token[0] if token and token[0] in {"A", "B", "C", "D", "E", "F"} else ""
 
 
-def _rejected_for_ref(row: MediaIndex, recipe_ref: str) -> bool:
+def _rejected_for_ref(row: MediaIndex | None, recipe_ref: str) -> bool:
+    if row is None:
+        return False
     feedback = parse_feedback(row.feedback_json)
     verdicts = feedback.get("verdicts") or {}
     verdict = verdicts.get(recipe_ref) if isinstance(verdicts, dict) else None
     return isinstance(verdict, dict) and str(verdict.get("verdict") or "").strip().lower() == "no"
 
 
-def _fallback_recommendation(row: MediaIndex, recipe_ref: str) -> tuple[int, dict[str, Any]] | None:
-    """Widen beyond an exact persona match for long sessions.
+def _has_exact_recipe_item(row: MediaIndex, recipe_ref: str) -> bool:
+    items = parse_recommendations(row.recommendations_json).get("items") or []
+    return any(
+        isinstance(item, dict) and str(item.get("recipe_ref") or "") == recipe_ref for item in items
+    )
 
-    Tier 1 is the same audience cluster; tier 2 is any scored usecase.
-    """
-    if _rejected_for_ref(row, recipe_ref):
-        return None
+
+def _best_scored_item(row: MediaIndex | None, recipe_ref: str) -> tuple[int, dict[str, Any]]:
+    """Return (tier, item): 0 exact, 1 same cluster, 2 other usecase, 3 unscored."""
+    empty = {
+        "recipe_ref": recipe_ref,
+        "temperatures": [],
+        "confidence": 0.0,
+        "rationale": "",
+        "added": False,
+        "rejected": False,
+    }
+    if row is None:
+        return 3, empty
+    rejected = _rejected_for_ref(row, recipe_ref)
+    exact = _recommendation_for_ref(row, recipe_ref)
+    if exact is not None and (
+        exact.get("added")
+        or float(exact.get("confidence") or 0.0) > 0
+        or _has_exact_recipe_item(row, recipe_ref)
+    ):
+        exact["rejected"] = rejected
+        return 0, exact
     items = [
         item
         for item in (parse_recommendations(row.recommendations_json).get("items") or [])
         if isinstance(item, dict) and str(item.get("recipe_ref") or "").strip()
     ]
-    if not items:
-        return None
     cluster = _recipe_cluster(recipe_ref)
 
     def _score(item: dict[str, Any]) -> float:
         return float(item.get("confidence") or 0.0)
 
-    same_cluster = [
-        item
-        for item in items
-        if cluster and _recipe_cluster(str(item.get("recipe_ref") or "")) == cluster
-    ]
-    if same_cluster:
-        match = max(same_cluster, key=_score)
-        return 1, {
+    if items:
+        same_cluster = [
+            item
+            for item in items
+            if cluster and _recipe_cluster(str(item.get("recipe_ref") or "")) == cluster
+        ]
+        if same_cluster:
+            match = max(same_cluster, key=_score)
+            return 1, {
+                "recipe_ref": str(match.get("recipe_ref") or ""),
+                "temperatures": list(match.get("temperatures") or []),
+                "confidence": _score(match),
+                "rationale": str(match.get("rationale") or ""),
+                "added": False,
+                "rejected": rejected,
+            }
+        match = max(items, key=_score)
+        return 2, {
             "recipe_ref": str(match.get("recipe_ref") or ""),
             "temperatures": list(match.get("temperatures") or []),
             "confidence": _score(match),
             "rationale": str(match.get("rationale") or ""),
             "added": False,
+            "rejected": rejected,
         }
-    match = max(items, key=_score)
-    return 2, {
-        "recipe_ref": str(match.get("recipe_ref") or ""),
-        "temperatures": list(match.get("temperatures") or []),
-        "confidence": _score(match),
-        "rationale": str(match.get("rationale") or ""),
-        "added": False,
-    }
+    empty["rejected"] = rejected
+    return 3, empty
 
 
-_TITLE_STOP = {
-    "the",
-    "a",
-    "an",
-    "and",
-    "of",
-    "for",
-    "to",
-    "in",
-    "on",
-    "at",
-    "with",
-    "mu",
-    "masters",
-    "union",
-    "video",
-    "film",
-    "clip",
-}
+def _click_order_weight(order: int) -> float:
+    if order < 1:
+        return 0.0
+    if order <= len(CLICK_ORDER_WEIGHTS):
+        return CLICK_ORDER_WEIGHTS[order - 1]
+    return CLICK_ORDER_WEIGHTS[-1] * (0.5 ** (order - len(CLICK_ORDER_WEIGHTS)))
 
 
-def _title_tokens(title: str) -> set[str]:
-    words = re.findall(r"[a-z0-9]+", (title or "").lower())
-    return {word for word in words if len(word) > 2 and word not in _TITLE_STOP}
+def feedback_boosts_for_recipe(db: Session, recipe_ref: str) -> dict[int, float]:
+    """Bounded global boosts from unique per-generation click order."""
+    if not (recipe_ref or "").strip():
+        return {}
+    _ensure_media_schema()
+    events = (
+        db.query(VideoClickEvent)
+        .filter(VideoClickEvent.recipe_ref == recipe_ref)
+        .order_by(VideoClickEvent.generation_id.asc(), VideoClickEvent.click_order.asc())
+        .all()
+    )
+    if not events:
+        return {}
+    generations = {event.generation_id for event in events}
+    if len(generations) < FEEDBACK_MIN_GENERATIONS:
+        return {}
+    raw: dict[int, float] = {}
+    for event in events:
+        raw[event.asset_id] = raw.get(event.asset_id, 0.0) + _click_order_weight(event.click_order)
+    peak = max(raw.values()) if raw else 0.0
+    if peak <= 0:
+        return {}
+    return {asset_id: FEEDBACK_MAX_BOOST * (score / peak) for asset_id, score in raw.items()}
 
 
-def _diversify_videos(
-    ranked: list[RecommendedMediaOut],
-    limit: int,
-) -> list[RecommendedMediaOut]:
-    if len(ranked) <= limit:
-        return ranked
-    selected: list[RecommendedMediaOut] = []
-    used: set[str] = set()
-    remaining = list(ranked)
-    while remaining and len(selected) < limit:
-        best_index = 0
-        best_score = -1.0
-        for index, candidate in enumerate(remaining):
-            tokens = _title_tokens(candidate.title)
-            overlap = (len(tokens & used) / len(tokens)) if tokens else 1.0
-            # Prefer a different topic, then keep the original ranking as a tie-break.
-            score = (1.0 - overlap) * 10.0 - index * 0.01
-            if score > best_score:
-                best_score = score
-                best_index = index
-        chosen = remaining.pop(best_index)
-        selected.append(chosen)
-        used |= _title_tokens(chosen.title)
-    return selected
+def _video_rank_key(
+    tier: int,
+    item: dict[str, Any],
+    temperature: str,
+    feedback_boost: float,
+) -> tuple[float, int, int, float, int]:
+    """Lower is better. Semantic tier dominates; feedback only reorders nearby."""
+    rejected = 1 if item.get("rejected") else 0
+    temp_mismatch, neg_confidence = _recommendation_sort_key(item, temperature)
+    primary = float(tier) + (REJECTION_PENALTY if rejected else 0.0) - float(feedback_boost)
+    return (primary, temp_mismatch, rejected, neg_confidence, -int(feedback_boost * 1000))
 
 
 def _media_source_url(asset: Asset | None) -> str:
     if asset is None:
         return ""
-    return asset.source_url or asset.url or ""
+    return (asset.source_url or asset.url or "").strip()
+
+
+def _video_thumbnail_url(url: str) -> str:
+    from backend.youtube_apify import VIDEO_ID_RE, is_youtube_url
+
+    if is_youtube_url(url):
+        match = VIDEO_ID_RE.search(url or "")
+        if match:
+            return f"https://img.youtube.com/vi/{match.group(1)}/hqdefault.jpg"
+        return ""
+    file_id = drive_file_id(url)
+    if file_id:
+        return f"https://drive.google.com/thumbnail?id={file_id}&sz=w1000"
+    return ""
 
 
 def _recommended_video(asset: Asset, item: dict[str, Any]) -> RecommendedMediaOut:
@@ -354,6 +388,7 @@ def _recommended_video(asset: Asset, item: dict[str, Any]) -> RecommendedMediaOu
         title=asset.title,
         source_url=source,
         preview_url=source,
+        thumbnail_url=_video_thumbnail_url(source),
         confidence=float(item.get("confidence") or 0.0),
         rationale=str(item.get("rationale") or ""),
     )
@@ -382,46 +417,54 @@ def pick_recommended_media(
     video_limit: int | None = None,
     picture_limit: int = MAX_RECOMMENDED_PICTURES,
 ) -> tuple[list[RecommendedMediaOut], list[RecommendedMediaOut]]:
+    _ = duration
     if not (recipe_ref or "").strip():
         return [], []
-    if video_limit is None:
-        video_limit = video_limit_for(duration)
-    allow_fallback = duration in {"T4", "T5"}
     _ensure_media_schema()
+    boosts = feedback_boosts_for_recipe(db, recipe_ref)
+
+    video_assets = db.query(Asset).filter(Asset.type == "video").order_by(Asset.id.asc()).all()
+    linked_videos = [
+        asset for asset in video_assets if _media_source_url(asset) and is_library_parent(asset)
+    ]
+    index_rows = {
+        row.asset_id: row
+        for row in db.query(MediaIndex).filter(MediaIndex.media_kind == "video").all()
+    }
+    ranked_videos: list[tuple[tuple[Any, ...], RecommendedMediaOut]] = []
+    for asset in linked_videos:
+        row = index_rows.get(asset.id)
+        tier, item = _best_scored_item(row, recipe_ref)
+        key = _video_rank_key(tier, item, temperature, boosts.get(asset.id, 0.0))
+        ranked_videos.append((key, _recommended_video(asset, item)))
+    ranked_videos.sort(key=lambda entry: entry[0])
+    videos = [item for _key, item in ranked_videos]
+    if video_limit is not None and video_limit >= 0:
+        videos = videos[:video_limit]
+
     rows = db.query(MediaIndex).filter(MediaIndex.recommendations_json != "").all()
-    if not rows:
-        return [], []
+    asset_ids = [row.asset_id for row in rows]
     assets = {
         asset.id: asset
-        for asset in db.query(Asset).filter(Asset.id.in_([row.asset_id for row in rows])).all()
+        for asset in (
+            db.query(Asset).filter(Asset.id.in_(asset_ids)).all() if asset_ids else []
+        )
     }
-    videos: list[tuple[tuple[int, int, float], RecommendedMediaOut]] = []
     photo_sets: list[tuple[tuple[int, float], Asset, dict[str, Any]]] = []
     for row in rows:
+        if row.media_kind != "photo":
+            continue
         asset = assets.get(row.asset_id)
         if asset is None:
             continue
         item = _recommendation_for_ref(row, recipe_ref)
-        tier = 0
-        if item is None and allow_fallback and row.media_kind == "video":
-            fallback = _fallback_recommendation(row, recipe_ref)
-            if fallback is None:
-                continue
-            tier, item = fallback
-        elif item is None:
+        if item is None or item.get("rejected"):
             continue
         key = _recommendation_sort_key(item, temperature)
-        if row.media_kind == "video":
-            videos.append(((tier, key[0], key[1]), _recommended_video(asset, item)))
-        elif row.media_kind == "photo":
-            photo_sets.append((key, asset, item))
-    videos.sort(key=lambda entry: entry[0])
+        photo_sets.append((key, asset, item))
     photo_sets.sort(key=lambda entry: entry[0])
     pictures: list[RecommendedMediaOut] = []
-    queues = [
-        deque(list_image_assets(db, asset))
-        for _key, asset, _item in photo_sets
-    ]
+    queues = [deque(list_image_assets(db, asset)) for _key, asset, _item in photo_sets]
     items_by_queue = [item for _key, _asset, item in photo_sets]
     parents = [asset for _key, asset, _item in photo_sets]
     while len(pictures) < picture_limit and any(queues):
@@ -431,8 +474,55 @@ def pick_recommended_media(
             pictures.append(_recommended_picture(queue.popleft(), parents[index], items_by_queue[index]))
             if len(pictures) >= picture_limit:
                 break
-    ranked_videos = [item for _key, item in videos]
-    return _diversify_videos(ranked_videos, video_limit), pictures
+    return videos, pictures
+
+
+def record_video_click(
+    db: Session,
+    *,
+    generation_id: int,
+    user_id: int,
+    asset_id: int,
+    recipe_ref: str,
+    displayed_rank: int,
+    interaction_type: str,
+) -> tuple[VideoClickEvent, bool]:
+    """Store the first meaningful interaction with a video for a generation."""
+    interaction = (interaction_type or "play").strip().lower()
+    if interaction not in VALID_VIDEO_INTERACTIONS:
+        raise ValueError("interaction_type must be play or open_source")
+    existing = (
+        db.query(VideoClickEvent)
+        .filter(
+            VideoClickEvent.generation_id == generation_id,
+            VideoClickEvent.user_id == user_id,
+            VideoClickEvent.asset_id == asset_id,
+        )
+        .first()
+    )
+    if existing is not None:
+        return existing, False
+    prior = (
+        db.query(VideoClickEvent)
+        .filter(
+            VideoClickEvent.generation_id == generation_id,
+            VideoClickEvent.user_id == user_id,
+        )
+        .count()
+    )
+    event = VideoClickEvent(
+        generation_id=generation_id,
+        user_id=user_id,
+        asset_id=asset_id,
+        recipe_ref=(recipe_ref or "").strip(),
+        displayed_rank=max(0, int(displayed_rank or 0)),
+        click_order=prior + 1,
+        interaction_type=interaction,
+    )
+    db.add(event)
+    db.commit()
+    db.refresh(event)
+    return event, True
 
 
 def list_image_assets(db: Session, asset: Asset) -> list[Asset]:

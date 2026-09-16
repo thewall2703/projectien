@@ -365,7 +365,7 @@ export default function BrandDeckTesting() {
                           <div>
                             <p className="font-medium">{name}</p>
                             <p className="mt-1 text-xs text-muted">
-                              {item.recipe_ref} · {axisLabel(AXES.audience_clusters, item.audience_cluster)} ·{" "}
+                              {axisLabel(AXES.audience_clusters, item.audience_cluster)} ·{" "}
                               {axisLabel(AXES.durations, item.duration)} · {axisLabel(AXES.channels, item.channel)} ·{" "}
                               {axisLabel(AXES.intents, item.intent)}
                             </p>

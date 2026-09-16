@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.database import Base
@@ -104,6 +104,9 @@ class Objection(Base):
     answer: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(16), default="approved")
     edited: Mapped[bool] = mapped_column(Boolean, default=False)
+    source_name: Mapped[str] = mapped_column(String(300), default="")
+    source_transcript_id: Mapped[int] = mapped_column(Integer, default=0)
+    source_candidate_id: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class Generation(Base):
@@ -146,6 +149,7 @@ class FounderQuote(Base):
     audiences: Mapped[str] = mapped_column(String(255), default="")
     source_name: Mapped[str] = mapped_column(String(255), default="")
     source_file_id: Mapped[str] = mapped_column(String(128), default="")
+    source_style_transcript_id: Mapped[int] = mapped_column(Integer, default=0, index=True)
     source_url: Mapped[str] = mapped_column(String(1000), default="")
     start_sec: Mapped[float] = mapped_column(Float, default=0.0)
     end_sec: Mapped[float] = mapped_column(Float, default=0.0)
@@ -214,6 +218,28 @@ class Job(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class VideoClickEvent(Base):
+    __tablename__ = "video_click_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "generation_id",
+            "user_id",
+            "asset_id",
+            name="uq_video_click_generation_user_asset",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    generation_id: Mapped[int] = mapped_column(Integer, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    asset_id: Mapped[int] = mapped_column(Integer, index=True)
+    recipe_ref: Mapped[str] = mapped_column(String(32), default="", index=True)
+    displayed_rank: Mapped[int] = mapped_column(Integer, default=0)
+    click_order: Mapped[int] = mapped_column(Integer, default=0)
+    interaction_type: Mapped[str] = mapped_column(String(32), default="play")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class StyleTranscript(Base):
     __tablename__ = "style_transcripts"
 
@@ -225,11 +251,75 @@ class StyleTranscript(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class StyleTranscriptPersona(Base):
+    __tablename__ = "style_transcript_personas"
+    __table_args__ = (
+        UniqueConstraint(
+            "style_transcript_id",
+            "persona_label",
+            name="uq_style_transcript_persona",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    style_transcript_id: Mapped[int] = mapped_column(Integer, index=True)
+    persona_label: Mapped[str] = mapped_column(String(255), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class VoiceStyleGuide(Base):
     __tablename__ = "voice_style_guides"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     version: Mapped[int] = mapped_column(Integer)
+    persona_label: Mapped[str] = mapped_column(String(255), default="", index=True)
     guide_text: Mapped[str] = mapped_column(Text)
     source_transcript_ids: Mapped[str] = mapped_column(String(500), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class QaExtractionRun(Base):
+    __tablename__ = "qa_extraction_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    style_transcript_id: Mapped[int] = mapped_column(Integer, index=True)
+    transcript_hash: Mapped[str] = mapped_column(String(64), default="", index=True)
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    stage: Mapped[str] = mapped_column(String(255), default="")
+    error: Mapped[str] = mapped_column(Text, default="")
+    candidate_count: Mapped[int] = mapped_column(Integer, default=0)
+    job_id: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class QaCandidate(Base):
+    __tablename__ = "qa_candidates"
+    __table_args__ = (
+        UniqueConstraint("style_transcript_id", "fingerprint", name="uq_qa_candidate_transcript_fingerprint"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[int] = mapped_column(Integer, index=True)
+    style_transcript_id: Mapped[int] = mapped_column(Integer, index=True)
+    fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    match_type: Mapped[str] = mapped_column(String(16), default="new")
+    matched_objection_id: Mapped[int] = mapped_column(Integer, default=0)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    question_verbatim: Mapped[str] = mapped_column(Text, default="")
+    answer_verbatim: Mapped[str] = mapped_column(Text, default="")
+    proposed_question: Mapped[str] = mapped_column(Text, default="")
+    proposed_who_asks: Mapped[str] = mapped_column(String(255), default="")
+    proposed_move: Mapped[str] = mapped_column(Text, default="")
+    proposed_answer: Mapped[str] = mapped_column(Text, default="")
+    evidence_json: Mapped[str] = mapped_column(Text, default="")
+    prior_question: Mapped[str] = mapped_column(Text, default="")
+    prior_who_asks: Mapped[str] = mapped_column(String(255), default="")
+    prior_move: Mapped[str] = mapped_column(Text, default="")
+    prior_answer: Mapped[str] = mapped_column(Text, default="")
+    applied_objection_id: Mapped[int] = mapped_column(Integer, default=0)
+    review_note: Mapped[str] = mapped_column(Text, default="")
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

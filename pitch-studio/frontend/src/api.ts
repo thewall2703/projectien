@@ -4,6 +4,8 @@ import type {
   InterpretResult,
   MediaIndexList,
   MediaIndexRow,
+  QaCandidate,
+  QaExtractionRun,
   StyleGuide,
   StyleTranscriptCreateResult,
   StyleTranscriptRow,
@@ -118,6 +120,15 @@ export const api = {
     }),
   getGeneration: (id: number) => request(`/api/generations/${id}`),
   listGenerations: () => request("/api/generations"),
+  recordVideoClick: (
+    generationId: number,
+    body: { asset_id: number; displayed_rank: number; interaction_type: "play" | "open_source" },
+  ) =>
+    request(`/api/generations/${generationId}/video-clicks`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify(body),
+    }),
   mediaIndexList: () => request<MediaIndexList>("/api/admin/media-index"),
   mediaIndexGet: (id: number) => request<MediaIndexRow>(`/api/admin/media-index/${id}`),
   mediaIndexCreate: (assetId: number) =>
@@ -204,17 +215,66 @@ export const api = {
   unfreezeDeckTopic: (id: number) =>
     request<DeckTopicRow>(`/api/admin/deck-topics/${id}/unfreeze`, { method: "POST" }),
   styleTranscriptList: () => request<StyleTranscriptRow[]>("/api/admin/style-transcripts"),
-  styleTranscriptCreate: (name: string, text: string) =>
+  styleTranscriptCreate: (name: string, text: string, personaLabels: string[]) =>
     request<StyleTranscriptCreateResult>("/api/admin/style-transcripts", {
       method: "POST",
       headers: jsonHeaders,
-      body: JSON.stringify({ name, text }),
+      body: JSON.stringify({ name, text, persona_labels: personaLabels }),
     }),
-  styleGuideGet: () => request<StyleGuide>("/api/admin/style-guide"),
-  styleGuideSave: (guideText: string) =>
+  styleTranscriptSetPersonas: (transcriptId: number, personaLabels: string[]) =>
+    request<StyleTranscriptRow>(`/api/admin/style-transcripts/${transcriptId}/personas`, {
+      method: "PUT",
+      headers: jsonHeaders,
+      body: JSON.stringify({ persona_labels: personaLabels }),
+    }),
+  styleGuideGet: (personaLabel: string) =>
+    request<StyleGuide>(
+      `/api/admin/style-guide?persona_label=${encodeURIComponent(personaLabel)}`,
+    ),
+  styleGuideSave: (guideText: string, personaLabel: string) =>
     request<StyleGuide>("/api/admin/style-guide", {
       method: "PUT",
       headers: jsonHeaders,
-      body: JSON.stringify({ guide_text: guideText }),
+      body: JSON.stringify({ guide_text: guideText, persona_label: personaLabel }),
+    }),
+  startQaExtraction: (transcriptId: number, force = false) =>
+    request<QaExtractionRun>(
+      `/api/admin/style-transcripts/${transcriptId}/extract-qa?force=${force ? "true" : "false"}`,
+      { method: "POST" },
+    ),
+  listQaExtractions: (transcriptId?: number) =>
+    request<QaExtractionRun[]>(
+      transcriptId
+        ? `/api/admin/qa-extractions?transcript_id=${transcriptId}`
+        : "/api/admin/qa-extractions",
+    ),
+  listQaCandidates: (params?: { status?: string; runId?: number; transcriptId?: number }) => {
+    const search = new URLSearchParams();
+    if (params?.status) search.set("status", params.status);
+    if (params?.runId != null) search.set("run_id", String(params.runId));
+    if (params?.transcriptId != null) search.set("transcript_id", String(params.transcriptId));
+    const query = search.toString();
+    return request<QaCandidate[]>(`/api/admin/qa-candidates${query ? `?${query}` : ""}`);
+  },
+  approveQaCandidate: (
+    id: number,
+    body: {
+      question?: string;
+      who_asks?: string;
+      move?: string;
+      answer?: string;
+      review_note?: string;
+    } = {},
+  ) =>
+    request<QaCandidate>(`/api/admin/qa-candidates/${id}/approve`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify(body),
+    }),
+  rejectQaCandidate: (id: number, review_note = "") =>
+    request<QaCandidate>(`/api/admin/qa-candidates/${id}/reject`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ review_note }),
     }),
 };

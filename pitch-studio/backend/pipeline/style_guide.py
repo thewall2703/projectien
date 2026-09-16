@@ -6,7 +6,13 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from backend.models import FounderQuote, StyleTranscript, VoiceStyleGuide
+from backend.models import (
+    FounderQuote,
+    Recipe,
+    StyleTranscript,
+    StyleTranscriptPersona,
+    VoiceStyleGuide,
+)
 from backend.pipeline.llm import chat_json
 from backend.transcripts import chunk_sentences, curate_chunk, is_verbatim, quote_hash
 
@@ -49,6 +55,10 @@ DISTILL_SYSTEM = (
 
 class DuplicateStyleTranscriptError(Exception):
     """Raised when a transcript with the same hash already exists."""
+
+
+class StyleTranscriptPersonaError(Exception):
+    """Raised when persona labels are missing or invalid."""
 
 
 def _split_speaker(line: str) -> tuple[str | None, str]:
@@ -125,12 +135,89 @@ def pratham_lines(lines: list[str]) -> str:
     return "\n".join(utterances)
 
 
-def latest_style_guide_row(db: Session) -> VoiceStyleGuide | None:
-    return db.query(VoiceStyleGuide).order_by(VoiceStyleGuide.version.desc()).first()
+def normalize_persona_labels(labels: list[str] | None) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for raw in labels or []:
+        label = (raw or "").strip()
+        if not label:
+            continue
+        key = label.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(label)
+    return cleaned
 
 
-def latest_style_guide(db: Session) -> str:
-    row = latest_style_guide_row(db)
+def known_persona_labels(db: Session) -> set[str]:
+    rows = db.query(Recipe.audience_label).all()
+    return {(row[0] or "").strip() for row in rows if (row[0] or "").strip()}
+
+
+def validate_persona_labels(db: Session, labels: list[str] | None) -> list[str]:
+    cleaned = normalize_persona_labels(labels)
+    if not cleaned:
+        raise StyleTranscriptPersonaError("Select at least one persona")
+    known = known_persona_labels(db)
+    if not known:
+        raise StyleTranscriptPersonaError("No personas are configured yet")
+    known_lookup = {label.casefold(): label for label in known}
+    resolved: list[str] = []
+    unknown: list[str] = []
+    for label in cleaned:
+        match = known_lookup.get(label.casefold())
+        if match is None:
+            unknown.append(label)
+        else:
+            resolved.append(match)
+    if unknown:
+        raise StyleTranscriptPersonaError(
+            "Unknown persona(s): " + ", ".join(sorted(unknown))
+        )
+    return normalize_persona_labels(resolved)
+
+
+def transcript_persona_labels(db: Session, transcript_id: int) -> list[str]:
+    rows = (
+        db.query(StyleTranscriptPersona.persona_label)
+        .filter(StyleTranscriptPersona.style_transcript_id == transcript_id)
+        .order_by(StyleTranscriptPersona.persona_label)
+        .all()
+    )
+    return [row[0] for row in rows if row[0]]
+
+
+def personas_for_transcripts(db: Session, transcript_ids: list[int]) -> dict[int, list[str]]:
+    if not transcript_ids:
+        return {}
+    rows = (
+        db.query(StyleTranscriptPersona)
+        .filter(StyleTranscriptPersona.style_transcript_id.in_(transcript_ids))
+        .order_by(StyleTranscriptPersona.persona_label)
+        .all()
+    )
+    mapping: dict[int, list[str]] = {transcript_id: [] for transcript_id in transcript_ids}
+    for row in rows:
+        mapping.setdefault(row.style_transcript_id, []).append(row.persona_label)
+    return mapping
+
+
+def latest_style_guide_row(db: Session, persona_label: str = "") -> VoiceStyleGuide | None:
+    label = (persona_label or "").strip()
+    query = db.query(VoiceStyleGuide)
+    if label:
+        # Persona-scoped lookup never falls back to the legacy global guide.
+        query = query.filter(VoiceStyleGuide.persona_label == label)
+    else:
+        query = query.filter(
+            (VoiceStyleGuide.persona_label == "") | (VoiceStyleGuide.persona_label.is_(None))
+        )
+    return query.order_by(VoiceStyleGuide.version.desc()).first()
+
+
+def latest_style_guide(db: Session, persona_label: str = "") -> str:
+    row = latest_style_guide_row(db, persona_label=persona_label)
     if row is None:
         return ""
     text = getattr(row, "guide_text", None)
@@ -166,11 +253,118 @@ def _append_source_ids(previous: str, transcript_id: int) -> str:
     return joined[:500]
 
 
+def _set_transcript_personas(db: Session, transcript_id: int, labels: list[str]) -> list[str]:
+    cleaned = normalize_persona_labels(labels)
+    existing = (
+        db.query(StyleTranscriptPersona)
+        .filter(StyleTranscriptPersona.style_transcript_id == transcript_id)
+        .all()
+    )
+    existing_by_key = {(row.persona_label or "").casefold(): row for row in existing}
+    keep_keys = {label.casefold() for label in cleaned}
+    for key, row in existing_by_key.items():
+        if key not in keep_keys:
+            db.delete(row)
+    for label in cleaned:
+        if label.casefold() not in existing_by_key:
+            db.add(
+                StyleTranscriptPersona(
+                    style_transcript_id=transcript_id,
+                    persona_label=label,
+                )
+            )
+    return cleaned
+
+
+def _transcripts_for_persona(db: Session, persona_label: str) -> list[StyleTranscript]:
+    label = (persona_label or "").strip()
+    if not label:
+        return []
+    return (
+        db.query(StyleTranscript)
+        .join(
+            StyleTranscriptPersona,
+            StyleTranscriptPersona.style_transcript_id == StyleTranscript.id,
+        )
+        .filter(StyleTranscriptPersona.persona_label == label)
+        .order_by(StyleTranscript.id.asc())
+        .all()
+    )
+
+
+def _rebuild_persona_guide(db: Session, persona_label: str) -> VoiceStyleGuide | None:
+    label = (persona_label or "").strip()
+    if not label:
+        return None
+    transcripts = _transcripts_for_persona(db, label)
+    current = latest_style_guide_row(db, persona_label=label)
+    if not transcripts:
+        # Keep prior versions for history, but leave an empty latest marker so
+        # generation no longer pulls an orphaned guide.
+        empty = VoiceStyleGuide(
+            version=(current.version if current is not None else 0) + 1,
+            persona_label=label,
+            guide_text="",
+            source_transcript_ids="",
+        )
+        db.add(empty)
+        db.flush()
+        return empty
+
+    guide_text = ""
+    source_ids = ""
+    for transcript in transcripts:
+        lines = parse_webvtt(transcript.raw_text or "")
+        body = "\n".join(lines) if lines else (transcript.raw_text or "")
+        guide_text = distill_style(body, guide_text)
+        source_ids = _append_source_ids(source_ids, transcript.id)
+
+    guide = VoiceStyleGuide(
+        version=(current.version if current is not None else 0) + 1,
+        persona_label=label,
+        guide_text=guide_text,
+        source_transcript_ids=source_ids,
+    )
+    db.add(guide)
+    db.flush()
+    return guide
+
+
+def _enrich_persona_guide(
+    db: Session,
+    *,
+    persona_label: str,
+    transcript: StyleTranscript,
+    body: str,
+) -> VoiceStyleGuide:
+    label = (persona_label or "").strip()
+    current = latest_style_guide_row(db, persona_label=label)
+    current_guide = (
+        current.guide_text
+        if current is not None and isinstance(getattr(current, "guide_text", None), str)
+        else ""
+    )
+    guide_text = distill_style(body, current_guide)
+    guide = VoiceStyleGuide(
+        version=(current.version if current is not None else 0) + 1,
+        persona_label=label,
+        guide_text=guide_text,
+        source_transcript_ids=_append_source_ids(
+            current.source_transcript_ids if current is not None else "",
+            transcript.id,
+        ),
+    )
+    db.add(guide)
+    db.flush()
+    return guide
+
+
 def _harvest_quotes(
     db: Session,
     *,
     source_name: str,
     source_file_id: str,
+    source_style_transcript_id: int,
     pratham_text: str,
 ) -> dict[str, int]:
     kept = 0
@@ -194,6 +388,8 @@ def _harvest_quotes(
             digest = quote_hash(source_file_id, snippet["text"])
             existing = db.query(FounderQuote).filter(FounderQuote.text_hash == digest).first()
             if existing:
+                if not getattr(existing, "source_style_transcript_id", 0):
+                    existing.source_style_transcript_id = source_style_transcript_id
                 skipped += 1
                 continue
             db.add(
@@ -204,6 +400,7 @@ def _harvest_quotes(
                     module_ids=snippet["module_ids"],
                     source_name=source_name,
                     source_file_id=source_file_id,
+                    source_style_transcript_id=source_style_transcript_id,
                     source_url="",
                     start_sec=float(chunk["start"]),
                     end_sec=float(chunk["end"]),
@@ -216,21 +413,23 @@ def _harvest_quotes(
     return {"quotes_kept": kept, "quotes_skipped": skipped}
 
 
-def ingest_style_transcript(db: Session, name: str, text: str) -> dict[str, Any]:
+def ingest_style_transcript(
+    db: Session,
+    name: str,
+    text: str,
+    persona_labels: list[str] | None = None,
+) -> dict[str, Any]:
     title = (name or "").strip()
     raw = text or ""
     if not title or not raw.strip():
         raise ValueError("Name and transcript text are required")
+    labels = validate_persona_labels(db, persona_labels)
     digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
     if db.query(StyleTranscript).filter(StyleTranscript.text_hash == digest).first():
         raise DuplicateStyleTranscriptError("This transcript has already been uploaded")
 
     lines = parse_webvtt(raw)
-    current_row = latest_style_guide_row(db)
-    current_guide = current_row.guide_text if current_row is not None and isinstance(
-        getattr(current_row, "guide_text", None), str
-    ) else ""
-    guide_text = distill_style("\n".join(lines) if lines else raw, current_guide)
+    body = "\n".join(lines) if lines else raw
 
     try:
         transcript = StyleTranscript(
@@ -241,40 +440,85 @@ def ingest_style_transcript(db: Session, name: str, text: str) -> dict[str, Any]
         )
         db.add(transcript)
         db.flush()
+        _set_transcript_personas(db, transcript.id, labels)
 
-        next_version = (current_row.version if current_row is not None else 0) + 1
-        previous_ids = current_row.source_transcript_ids if current_row is not None else ""
-        guide = VoiceStyleGuide(
-            version=next_version,
-            guide_text=guide_text,
-            source_transcript_ids=_append_source_ids(previous_ids, transcript.id),
-        )
-        db.add(guide)
+        guides_updated: list[str] = []
+        max_version = 0
+        for label in labels:
+            guide = _enrich_persona_guide(
+                db,
+                persona_label=label,
+                transcript=transcript,
+                body=body,
+            )
+            guides_updated.append(label)
+            max_version = max(max_version, guide.version)
 
         quotes = _harvest_quotes(
             db,
             source_name=title,
             source_file_id=f"style-{transcript.id}",
+            source_style_transcript_id=transcript.id,
             pratham_text=pratham_lines(lines),
         )
         db.commit()
         db.refresh(transcript)
-        db.refresh(guide)
     except Exception:
         db.rollback()
         raise
     return {
-        "guide_version": guide.version,
+        "guide_version": max_version,
         "quotes_kept": quotes["quotes_kept"],
         "quotes_skipped": quotes["quotes_skipped"],
         "transcript_id": transcript.id,
+        "persona_labels": labels,
+        "guides_updated": guides_updated,
     }
 
 
-def save_style_guide(db: Session, guide_text: str) -> VoiceStyleGuide:
-    current = latest_style_guide_row(db)
+def update_style_transcript_personas(
+    db: Session,
+    transcript_id: int,
+    persona_labels: list[str] | None,
+) -> dict[str, Any]:
+    transcript = db.get(StyleTranscript, transcript_id)
+    if transcript is None:
+        raise StyleTranscriptPersonaError("Style transcript not found")
+    labels = validate_persona_labels(db, persona_labels)
+    previous = set(transcript_persona_labels(db, transcript_id))
+    next_labels = set(labels)
+    affected = sorted(previous | next_labels)
+    try:
+        _set_transcript_personas(db, transcript_id, labels)
+        db.flush()
+        for label in affected:
+            _rebuild_persona_guide(db, label)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return {
+        "transcript_id": transcript_id,
+        "persona_labels": labels,
+        "guides_updated": affected,
+    }
+
+
+def save_style_guide(db: Session, guide_text: str, persona_label: str) -> VoiceStyleGuide:
+    label = (persona_label or "").strip()
+    if not label:
+        raise StyleTranscriptPersonaError("persona_label is required")
+    known = known_persona_labels(db)
+    if label not in known:
+        # Allow exact case-insensitive match against recipe labels.
+        match = next((item for item in known if item.casefold() == label.casefold()), None)
+        if match is None:
+            raise StyleTranscriptPersonaError(f"Unknown persona: {label}")
+        label = match
+    current = latest_style_guide_row(db, persona_label=label)
     item = VoiceStyleGuide(
         version=(current.version if current is not None else 0) + 1,
+        persona_label=label,
         guide_text=guide_text,
         source_transcript_ids=current.source_transcript_ids if current is not None else "",
     )

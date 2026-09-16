@@ -83,6 +83,15 @@ function badgeTone(status: string) {
   return "chip";
 }
 
+export function formatStatusLabel(status: string): string {
+  return status
+    .replaceAll("_", " ")
+    .split(" ")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+}
+
 export function StatusBadge({
   status,
   className = "",
@@ -90,7 +99,7 @@ export function StatusBadge({
   status: string;
   className?: string;
 }) {
-  return <span className={`chip ${badgeTone(status)} ${className}`.trim()}>{status.replaceAll("_", " ")}</span>;
+  return <span className={`chip ${badgeTone(status)} ${className}`.trim()}>{formatStatusLabel(status)}</span>;
 }
 
 export function Skeleton({ className = "" }: { className?: string }) {

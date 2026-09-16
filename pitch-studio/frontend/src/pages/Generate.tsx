@@ -1,11 +1,11 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { AXES } from "../axes";
 import { Button, ErrorBanner, Skeleton } from "../components/ui";
 import { axisLabel } from "../labels";
-import type { AxisOption, Generation, InterpretResult, RecipeOption } from "../types";
+import type { AxisOption, Generation, InterpretPersonaCandidate, InterpretResult, RecipeOption } from "../types";
 
 const STEPS = ["audience", "setting", "goal", "review"] as const;
 
@@ -55,12 +55,14 @@ function OptionCard({
   description,
   selected,
   disabled,
+  compact,
   onSelect,
 }: {
   label: string;
   description?: string;
   selected: boolean;
   disabled?: boolean;
+  compact?: boolean;
   onSelect: () => void;
 }) {
   return (
@@ -68,12 +70,22 @@ function OptionCard({
       type="button"
       disabled={disabled}
       onClick={onSelect}
-      className={`glass-panel w-full p-5 text-left transition ${
+      className={`glass-panel w-full text-left transition ${compact ? "p-3.5" : "p-5"} ${
         selected ? "ring-2 ring-black" : "hover:bg-white/70"
       } ${disabled ? "opacity-50" : ""}`}
     >
-      <p className="font-display text-xl text-black md:text-2xl">{label}</p>
-      {description && <p className="mt-2 text-sm leading-relaxed text-grey">{description}</p>}
+      <p
+        className={`font-display tracking-tight text-black ${
+          compact ? "text-base md:text-lg" : "text-xl md:text-2xl"
+        }`}
+      >
+        {label}
+      </p>
+      {description && (
+        <p className={`leading-relaxed text-grey ${compact ? "mt-1.5 text-xs" : "mt-2 text-sm"}`}>
+          {description}
+        </p>
+      )}
     </button>
   );
 }
@@ -134,10 +146,12 @@ export default function Generate() {
   const [context, setContext] = useState("");
   const [interpretSummary, setInterpretSummary] = useState("");
   const [interpretNotes, setInterpretNotes] = useState("");
+  const [personaCandidates, setPersonaCandidates] = useState<InterpretPersonaCandidate[]>([]);
   const [interpretedKey, setInterpretedKey] = useState("");
   const [interpreting, setInterpreting] = useState(false);
   const [interpretFailed, setInterpretFailed] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
+  const [openManualSection, setOpenManualSection] = useState<string | null>(null);
 
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -160,6 +174,7 @@ export default function Generate() {
     setSelected(result.recipe_ref || "");
     setInterpretSummary(result.summary);
     setInterpretNotes(result.notes || "");
+    setPersonaCandidates(result.persona_candidates || []);
   };
 
   const clearInterpretationAxes = () => {
@@ -171,6 +186,7 @@ export default function Generate() {
     setTemperature("");
     setInterpretSummary("");
     setInterpretNotes("");
+    setPersonaCandidates([]);
   };
 
   useEffect(() => {
@@ -262,6 +278,20 @@ export default function Generate() {
     if (recipe) applyRecipe(recipe);
   };
 
+  const onCandidatePersona = (ref: string) => {
+    // Keep interpreted axes; persona only supplies module sequence.
+    setSelected((current) => (current === ref ? "" : ref));
+  };
+
+  const formatConfidence = (score: number) => `${Math.round(Math.max(0, Math.min(1, score)) * 100)}%`;
+
+  const candidateRows = personaCandidates
+    .map((candidate) => {
+      const recipe = recipes.find((row) => row.ref === candidate.recipe_ref);
+      return recipe ? { candidate, recipe } : null;
+    })
+    .filter((row): row is { candidate: InterpretPersonaCandidate; recipe: RecipeOption } => Boolean(row));
+
   const onManualDuration = (code: string) => {
     setDuration(code);
     const match = matchRecipe({ audience, duration: code, channel, intent });
@@ -320,10 +350,11 @@ export default function Generate() {
   };
 
   const renderAxisOptions = (options: AxisOption[], value: string, onChange: (code: string) => void) => (
-    <div className="grid max-h-[40vh] gap-3 overflow-y-auto pr-1 sm:grid-cols-2">
+    <div className="scrollbar-none grid w-full grid-cols-2 gap-2.5 overflow-y-auto sm:grid-cols-3">
       {options.map((item) => (
         <OptionCard
           key={item.code}
+          compact
           label={item.label}
           description={item.description}
           selected={value === item.code}
@@ -352,14 +383,48 @@ export default function Generate() {
       </label>
       <div>
         <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-grey">Examples</p>
-        <ChipRow chips={chips} active={value} onPick={onChange} />
+        <div className="min-h-[5.25rem]">
+          <ChipRow chips={chips} active={value} onPick={onChange} />
+        </div>
       </div>
     </div>
   );
 
+  const toggleManualSection = (id: string) => {
+    setOpenManualSection((current) => (current === id ? null : id));
+  };
+
+  const ManualSection = ({
+    id,
+    title,
+    children,
+  }: {
+    id: string;
+    title: string;
+    children: ReactNode;
+  }) => {
+    const open = openManualSection === id;
+    return (
+      <div className="glass-panel overflow-hidden">
+        <button
+          type="button"
+          className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm font-medium text-black hover:bg-white/40"
+          onClick={() => toggleManualSection(id)}
+          aria-expanded={open}
+        >
+          <span>{title}</span>
+          <span className="text-grey" aria-hidden>
+            {open ? "−" : "+"}
+          </span>
+        </button>
+        {open && <div className="border-t border-black/8 px-3 py-3 sm:px-4">{children}</div>}
+      </div>
+    );
+  };
+
   return (
     <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-4xl flex-col px-6 py-8 md:px-10">
-      <div className="mb-8">
+      <div className="mb-8 shrink-0">
         <div className="flex items-center justify-between gap-4 text-xs text-grey">
           <span>
             Step {step + 1} of {STEPS.length}
@@ -387,7 +452,7 @@ export default function Generate() {
             transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
             className="space-y-8"
           >
-            <div>
+            <div className="min-h-[5.5rem]">
               <p className="kicker">Generate</p>
               <h1 className="mt-3 font-display text-4xl tracking-tight text-black md:text-5xl">
                 {STEP_TITLES[stepId]}
@@ -466,6 +531,45 @@ export default function Generate() {
                       </dl>
                     )}
 
+                    {!interpretFailed && candidateRows.length > 0 && (
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-grey">
+                          {selected ? "Persona confidence" : "Close persona matches — pick one"}
+                        </p>
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                          {candidateRows.map(({ candidate, recipe }) => {
+                            const active = selected === recipe.ref;
+                            return (
+                              <button
+                                key={recipe.ref}
+                                type="button"
+                                className={`rounded-2xl border px-4 py-3 text-left transition ${
+                                  active
+                                    ? "border-black bg-black text-white"
+                                    : "border-black/10 bg-white/60 text-black hover:border-black/30"
+                                }`}
+                                onClick={() => onCandidatePersona(recipe.ref)}
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <span className="text-sm font-medium leading-snug">
+                                    {recipe.audience_label || recipe.ref}
+                                  </span>
+                                  <span className={`shrink-0 text-sm tabular-nums ${active ? "text-white/80" : "text-grey-dark"}`}>
+                                    {formatConfidence(candidate.confidence)}
+                                  </span>
+                                </div>
+                                {candidate.rationale && (
+                                  <p className={`mt-1 text-xs leading-relaxed ${active ? "text-white/70" : "text-grey"}`}>
+                                    {candidate.rationale}
+                                  </p>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
                     <label className="block">
                       <span className="kicker">Anything else we should know?</span>
                       <textarea
@@ -476,16 +580,29 @@ export default function Generate() {
                       />
                     </label>
 
-                    <div>
-                      <button
-                        type="button"
-                        className="text-sm font-medium text-black underline-offset-4 hover:underline"
-                        onClick={() => setManualOpen((open) => !open)}
-                      >
-                        {manualOpen ? "Hide manual settings" : "Adjust manually"}
-                      </button>
+                    <div className="space-y-3 border-t border-black/8 pt-4">
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-grey">
+                          Alternative
+                        </p>
+                        <button
+                          type="button"
+                          className="mt-2 text-sm font-medium text-black underline-offset-4 hover:underline"
+                          onClick={() => {
+                            setManualOpen((open) => {
+                              if (open) setOpenManualSection(null);
+                              return !open;
+                            });
+                          }}
+                        >
+                          {manualOpen ? "Hide manual settings" : "Adjust manually"}
+                        </button>
+                        <p className="mt-1 text-xs text-grey">
+                          Override audience, persona, duration, and other axes yourself.
+                        </p>
+                      </div>
                       {manualOpen && (
-                        <div className="mt-5 space-y-8 border-t border-black/8 pt-5">
+                        <div className="space-y-2">
                           {recipesLoading ? (
                             <div className="grid gap-3 sm:grid-cols-2">
                               {Array.from({ length: 4 }).map((_, index) => (
@@ -494,14 +611,13 @@ export default function Generate() {
                             </div>
                           ) : (
                             <>
-                              <div>
-                                <p className="kicker mb-3">Audience</p>
+                              <ManualSection id="audience" title="Audience">
                                 {renderAxisOptions(AXES.audience_clusters, audience, onManualAudience)}
-                              </div>
-                              <div>
-                                <p className="kicker mb-3">Persona</p>
-                                <div className="grid max-h-[40vh] gap-3 overflow-y-auto pr-1 sm:grid-cols-2">
+                              </ManualSection>
+                              <ManualSection id="persona" title="Persona">
+                                <div className="scrollbar-none grid max-h-[min(50vh,24rem)] w-full grid-cols-1 gap-2.5 overflow-y-auto sm:grid-cols-2">
                                   <OptionCard
+                                    compact
                                     label="Skip persona"
                                     description="Continue with axes only — generation will follow your selections."
                                     selected={!selected}
@@ -510,6 +626,7 @@ export default function Generate() {
                                   {personas.map((recipe) => (
                                     <OptionCard
                                       key={recipe.ref}
+                                      compact
                                       label={personaOptionLabel(recipe, personas)}
                                       description={
                                         recipe.valid
@@ -527,23 +644,19 @@ export default function Generate() {
                                     </p>
                                   )}
                                 </div>
-                              </div>
-                              <div>
-                                <p className="kicker mb-3">Duration</p>
+                              </ManualSection>
+                              <ManualSection id="duration" title="Duration">
                                 {renderAxisOptions(AXES.durations, duration, onManualDuration)}
-                              </div>
-                              <div>
-                                <p className="kicker mb-3">Channel</p>
+                              </ManualSection>
+                              <ManualSection id="channel" title="Channel">
                                 {renderAxisOptions(AXES.channels, channel, onManualChannel)}
-                              </div>
-                              <div>
-                                <p className="kicker mb-3">Intent</p>
+                              </ManualSection>
+                              <ManualSection id="intent" title="Intent">
                                 {renderAxisOptions(AXES.intents, intent, onManualIntent)}
-                              </div>
-                              <div>
-                                <p className="kicker mb-3">Temperature</p>
+                              </ManualSection>
+                              <ManualSection id="temperature" title="Temperature">
                                 {renderAxisOptions(AXES.temperatures, temperature, setTemperature)}
-                              </div>
+                              </ManualSection>
                             </>
                           )}
                         </div>
@@ -551,15 +664,17 @@ export default function Generate() {
                     </div>
 
                     <ErrorBanner message={error} />
-                    <Button
-                      variant="accent"
-                      className="w-full py-3 text-base sm:w-auto"
-                      loading={busy}
-                      disabled={!canAdvance(step) || interpreting}
-                      onClick={submit}
-                    >
-                      Generate now
-                    </Button>
+                    <div className="flex justify-end pt-2">
+                      <Button
+                        variant="accent"
+                        className="w-full py-3 text-base sm:w-auto"
+                        loading={busy}
+                        disabled={!canAdvance(step) || interpreting}
+                        onClick={submit}
+                      >
+                        Generate now
+                      </Button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -568,8 +683,12 @@ export default function Generate() {
         </AnimatePresence>
       </div>
 
-      <div className="mt-10 flex items-center justify-between gap-4 border-t border-black/8 pt-6">
-        <Button variant="ghost" disabled={step === 0 || busy || interpreting} onClick={() => go(step - 1)}>
+      <div className="mt-auto flex shrink-0 items-center justify-between gap-4 border-t border-black/8 pt-6">
+        <Button
+          variant={step === 0 ? "ghost" : "default"}
+          disabled={step === 0 || busy || interpreting}
+          onClick={() => go(step - 1)}
+        >
           Back
         </Button>
         {stepId !== "review" && (

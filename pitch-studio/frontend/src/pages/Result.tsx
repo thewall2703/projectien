@@ -322,7 +322,11 @@ export default function Result() {
 
         <section id="section-videos" className="scroll-mt-28">
           <SectionHeading title="Videos" />
-          <VideoCarousel videos={generation.recommended_videos || []} ready={done} />
+          <VideoCarousel
+            videos={generation.recommended_videos || []}
+            ready={done}
+            generationId={generation.id}
+          />
         </section>
 
         <section id="section-photos" className="scroll-mt-28">
@@ -453,36 +457,68 @@ function TimelineSidebar({
   );
 }
 
-function youtubeEmbed(url: string): string | null {
+function youtubeVideoId(url: string): string | null {
   try {
     const parsed = new URL(url);
     if (parsed.hostname.includes("youtu.be")) {
       const id = parsed.pathname.replace("/", "").split("/")[0];
-      return id ? `https://www.youtube.com/embed/${id}` : null;
+      return id || null;
     }
-    const id = parsed.searchParams.get("v");
-    return id ? `https://www.youtube.com/embed/${id}` : null;
+    if (parsed.pathname.includes("/shorts/")) {
+      const id = parsed.pathname.split("/shorts/")[1]?.split("/")[0];
+      return id || null;
+    }
+    return parsed.searchParams.get("v");
+  } catch {
+    return null;
+  }
+}
+
+function youtubeEmbed(url: string): string | null {
+  const id = youtubeVideoId(url);
+  return id ? `https://www.youtube.com/embed/${id}` : null;
+}
+
+function youtubeThumbnail(url: string): string | null {
+  const id = youtubeVideoId(url);
+  return id ? `https://img.youtube.com/vi/${id}/hqdefault.jpg` : null;
+}
+
+function driveFileId(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    if (!parsed.hostname.includes("drive.google.com")) return null;
+    const pathMatch = parsed.pathname.match(/\/(?:file\/)?d\/([^/]+)/);
+    return pathMatch?.[1] || parsed.searchParams.get("id");
   } catch {
     return null;
   }
 }
 
 function driveEmbed(url: string): string | null {
-  try {
-    const parsed = new URL(url);
-    if (!parsed.hostname.includes("drive.google.com")) return null;
-    const pathMatch = parsed.pathname.match(/\/file\/d\/([^/]+)/);
-    const id = pathMatch?.[1] || parsed.searchParams.get("id");
-    return id ? `https://drive.google.com/file/d/${id}/preview` : null;
-  } catch {
-    return null;
-  }
+  const id = driveFileId(url);
+  return id ? `https://drive.google.com/file/d/${id}/preview` : null;
 }
 
-function VideoCarousel({ videos, ready }: { videos: RecommendedMedia[]; ready: boolean }) {
+function driveThumbnail(url: string): string | null {
+  const id = driveFileId(url);
+  return id ? `https://drive.google.com/thumbnail?id=${id}&sz=w1000` : null;
+}
+
+function VideoCarousel({
+  videos,
+  ready,
+  generationId,
+}: {
+  videos: RecommendedMedia[];
+  ready: boolean;
+  generationId: number;
+}) {
   const scroller = useRef<HTMLDivElement>(null);
   const [canLeft, setCanLeft] = useState(false);
   const [canRight, setCanRight] = useState(false);
+  const [playingId, setPlayingId] = useState<number | null>(null);
+  const reported = useRef<Set<number>>(new Set());
 
   const updateArrows = () => {
     const el = scroller.current;
@@ -491,6 +527,11 @@ function VideoCarousel({ videos, ready }: { videos: RecommendedMedia[]; ready: b
     setCanLeft(el.scrollLeft > 4);
     setCanRight(max > 4 && el.scrollLeft < max - 4);
   };
+
+  useEffect(() => {
+    reported.current = new Set();
+    setPlayingId(null);
+  }, [generationId, videos]);
 
   useEffect(() => {
     if (!ready || !videos.length) return;
@@ -516,6 +557,20 @@ function VideoCarousel({ videos, ready }: { videos: RecommendedMedia[]; ready: b
     el.scrollBy({ left: direction * amount, behavior: "smooth" });
   };
 
+  const trackClick = (video: RecommendedMedia, rank: number, interaction: "play" | "open_source") => {
+    if (reported.current.has(video.asset_id)) return;
+    reported.current.add(video.asset_id);
+    void api
+      .recordVideoClick(generationId, {
+        asset_id: video.asset_id,
+        displayed_rank: rank,
+        interaction_type: interaction,
+      })
+      .catch(() => {
+        reported.current.delete(video.asset_id);
+      });
+  };
+
   if (!ready) {
     return <p className="text-sm text-grey">Videos unlock when generation finishes.</p>;
   }
@@ -524,13 +579,13 @@ function VideoCarousel({ videos, ready }: { videos: RecommendedMedia[]; ready: b
   }
 
   return (
-    <div className="relative">
+    <div className="relative md:px-12">
       <button
         type="button"
         aria-label="Previous videos"
         disabled={!canLeft}
         onClick={() => scrollByCard(-1)}
-        className="btn absolute -left-2 top-1/2 z-10 hidden h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full p-0 shadow-glass disabled:opacity-30 md:flex"
+        className="btn absolute left-0 top-1/2 z-10 hidden h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full p-0 shadow-glass disabled:opacity-30 md:flex"
       >
         ‹
       </button>
@@ -539,29 +594,52 @@ function VideoCarousel({ videos, ready }: { videos: RecommendedMedia[]; ready: b
         aria-label="Next videos"
         disabled={!canRight}
         onClick={() => scrollByCard(1)}
-        className="btn absolute -right-2 top-1/2 z-10 hidden h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full p-0 shadow-glass disabled:opacity-30 md:flex"
+        className="btn absolute right-0 top-1/2 z-10 hidden h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full p-0 shadow-glass disabled:opacity-30 md:flex"
       >
         ›
       </button>
-      <div
-        ref={scroller}
-        className="flex gap-4 overflow-x-auto pb-4 snap-x snap-mandatory"
-        style={{ scrollbarWidth: "thin" }}
-      >
-        {videos.map((video) => (
-          <VideoCard key={video.asset_id} video={video} />
+      <div ref={scroller} className="scrollbar-none flex gap-4 overflow-x-auto snap-x snap-mandatory">
+        {videos.map((video, index) => (
+          <VideoCard
+            key={video.asset_id}
+            video={video}
+            playing={playingId === video.asset_id}
+            onPlay={() => setPlayingId(video.asset_id)}
+            onInteract={(interaction) => trackClick(video, index + 1, interaction)}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-function VideoCard({ video }: { video: RecommendedMedia }) {
-  const [playing, setPlaying] = useState(false);
+function VideoCard({
+  video,
+  playing,
+  onPlay,
+  onInteract,
+}: {
+  video: RecommendedMedia;
+  playing: boolean;
+  onPlay: () => void;
+  onInteract: (interaction: "play" | "open_source") => void;
+}) {
   const embed = driveEmbed(video.source_url) || youtubeEmbed(video.source_url);
+  const initialThumb =
+    video.thumbnail_url ||
+    youtubeThumbnail(video.source_url) ||
+    driveThumbnail(video.source_url) ||
+    "";
+  const [thumb, setThumb] = useState(initialThumb);
+  const [thumbFailed, setThumbFailed] = useState(false);
+
+  useEffect(() => {
+    setThumb(initialThumb);
+    setThumbFailed(false);
+  }, [initialThumb]);
 
   return (
-    <article className="glass-panel w-[min(100%,22rem)] shrink-0 snap-start overflow-hidden">
+    <article className="glass-panel w-[calc((100%-1rem)/2)] shrink-0 snap-start overflow-hidden sm:w-[calc((100%-2rem)/3)] lg:w-[calc((100%-4rem)/5)]">
       {playing && embed ? (
         <div className="aspect-video bg-black">
           <iframe
@@ -572,15 +650,32 @@ function VideoCard({ video }: { video: RecommendedMedia }) {
             allowFullScreen
           />
         </div>
-      ) : embed || video.thumbnail_url ? (
+      ) : embed || thumb ? (
         <button
           type="button"
           className="relative aspect-video w-full bg-grey-light text-left"
-          onClick={() => (embed ? setPlaying(true) : undefined)}
+          onClick={() => {
+            if (!embed) return;
+            onInteract("play");
+            onPlay();
+          }}
           aria-label={embed ? `Play ${video.title}` : video.title}
         >
-          {video.thumbnail_url ? (
-            <img src={video.thumbnail_url} alt="" className="h-full w-full object-cover" />
+          {thumb && !thumbFailed ? (
+            <img
+              src={thumb}
+              alt=""
+              className="h-full w-full object-cover"
+              referrerPolicy="no-referrer"
+              onError={() => {
+                const drive = driveThumbnail(video.source_url);
+                if (drive && thumb !== drive) {
+                  setThumb(drive);
+                  return;
+                }
+                setThumbFailed(true);
+              }}
+            />
           ) : (
             <span className="absolute inset-0 bg-black" />
           )}
@@ -593,11 +688,17 @@ function VideoCard({ video }: { video: RecommendedMedia }) {
           )}
         </button>
       ) : null}
-      <div className="space-y-2 p-4">
-        <h3 className="font-medium text-black">{video.title}</h3>
-        {video.rationale ? <p className="text-sm text-grey">{video.rationale}</p> : null}
+      <div className="space-y-2 p-3">
+        <h3 className="line-clamp-2 text-sm font-medium text-black">{video.title}</h3>
+        {video.rationale ? <p className="line-clamp-2 text-xs text-grey">{video.rationale}</p> : null}
         {video.source_url ? (
-          <a className="text-sm text-grey-dark underline" href={video.source_url} target="_blank" rel="noreferrer">
+          <a
+            className="text-xs text-grey-dark underline"
+            href={video.source_url}
+            target="_blank"
+            rel="noreferrer"
+            onClick={() => onInteract("open_source")}
+          >
             Open source
           </a>
         ) : null}
@@ -625,8 +726,29 @@ function PhotoGrid({ pictures, ready }: { pictures: RecommendedMedia[]; ready: b
 function RecommendedPicture({ picture }: { picture: RecommendedMedia }) {
   const [open, setOpen] = useState(false);
   const [thumbLoaded, setThumbLoaded] = useState(false);
+  const [thumbFailed, setThumbFailed] = useState(false);
+  const [thumbSrc, setThumbSrc] = useState(picture.thumbnail_url || "");
+  const [fullSrc, setFullSrc] = useState(picture.preview_url || picture.thumbnail_url || "");
   const [fullLoaded, setFullLoaded] = useState(false);
   const [fullFailed, setFullFailed] = useState(false);
+
+  const driveThumb = (() => {
+    try {
+      const parsed = new URL(picture.source_url || "");
+      if (!parsed.hostname.includes("drive.google.com")) return "";
+      const match = parsed.pathname.match(/\/d\/([^/]+)/) || parsed.searchParams.get("id");
+      const id = typeof match === "string" ? match : match?.[1];
+      return id ? `https://drive.google.com/thumbnail?id=${id}&sz=w1000` : "";
+    } catch {
+      return "";
+    }
+  })();
+
+  useEffect(() => {
+    setThumbSrc(picture.thumbnail_url || "");
+    setThumbLoaded(false);
+    setThumbFailed(false);
+  }, [picture.asset_id, picture.thumbnail_url]);
 
   useEffect(() => {
     if (!thumbLoaded || !picture.preview_url) return;
@@ -643,26 +765,53 @@ function RecommendedPicture({ picture }: { picture: RecommendedMedia }) {
     return () => window.removeEventListener("keydown", close);
   }, [open]);
 
+  const openLightbox = () => {
+    setFullSrc(picture.preview_url || thumbSrc || driveThumb);
+    setFullLoaded(false);
+    setFullFailed(false);
+    setOpen(true);
+  };
+
   return (
     <>
       <button
         type="button"
         className="overflow-hidden rounded-xl border border-black/8 bg-white/50 text-left"
-        onClick={() => {
-          setFullLoaded(false);
-          setFullFailed(false);
-          setOpen(true);
-        }}
+        onClick={openLightbox}
         aria-label={`View ${picture.title}`}
       >
         <div className="relative aspect-[4/3] bg-grey-light/50">
-          {!thumbLoaded && <Skeleton className="absolute inset-0 h-full w-full rounded-none" />}
-          {picture.thumbnail_url ? (
+          {!thumbLoaded && !thumbFailed && (
+            <Skeleton className="absolute inset-0 z-0 h-full w-full rounded-none" />
+          )}
+          {thumbFailed && (
+            <span className="absolute inset-0 z-[1] grid place-items-center px-2 text-center text-[11px] text-grey">
+              Preview unavailable
+            </span>
+          )}
+          {thumbSrc && !thumbFailed ? (
             <img
-              src={picture.thumbnail_url}
-              alt={picture.title}
-              className="h-full w-full object-cover"
+              src={thumbSrc}
+              alt=""
+              className="relative z-[1] h-full w-full object-cover"
+              loading="lazy"
+              decoding="async"
+              referrerPolicy="no-referrer"
+              ref={(node) => {
+                if (node && node.complete && node.naturalWidth > 0) {
+                  queueMicrotask(() => setThumbLoaded(true));
+                }
+              }}
               onLoad={() => setThumbLoaded(true)}
+              onError={() => {
+                if (driveThumb && thumbSrc !== driveThumb) {
+                  setThumbSrc(driveThumb);
+                  setThumbLoaded(false);
+                  return;
+                }
+                setThumbFailed(true);
+                setThumbLoaded(false);
+              }}
             />
           ) : null}
         </div>
@@ -691,15 +840,24 @@ function RecommendedPicture({ picture }: { picture: RecommendedMedia }) {
                 ) : null}
               </div>
             )}
-            {picture.preview_url && !fullFailed ? (
+            {fullSrc && !fullFailed ? (
               <motion.img
-                src={picture.preview_url}
+                key={fullSrc}
+                src={fullSrc}
                 alt={picture.title}
                 className={`max-h-[90vh] max-w-[94vw] object-contain ${fullLoaded ? "block" : "hidden"}`}
                 initial={{ scale: 0.96, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
                 onLoad={() => setFullLoaded(true)}
-                onError={() => setFullFailed(true)}
+                onError={() => {
+                  const fallback = [thumbSrc, driveThumb].find((src) => src && src !== fullSrc);
+                  if (fallback) {
+                    setFullSrc(fallback);
+                    setFullLoaded(false);
+                    return;
+                  }
+                  setFullFailed(true);
+                }}
                 onClick={(event) => event.stopPropagation()}
               />
             ) : null}

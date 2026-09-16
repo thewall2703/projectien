@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import logging
+import threading
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -10,6 +13,7 @@ from backend.config import PITCH_STUDIO_ROOT, settings
 from backend.routers import admin_routes, auth_routes, generation_routes
 
 FRONTEND_DIST = PITCH_STUDIO_ROOT / "frontend" / "dist"
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Pitch Studio")
 app.add_middleware(
@@ -32,11 +36,21 @@ def database_unavailable(_request: Request, exc: OperationalError) -> JSONRespon
     )
 
 
+def _bootstrap_schema() -> None:
+    """Apply additive schema changes without blocking API startup."""
+    try:
+        from backend.boot import boot
+
+        boot()
+    except Exception:
+        logger.exception("Background schema bootstrap failed")
+
+
 @app.on_event("startup")
 def on_startup() -> None:
-    # Schema/bootstrap is done once at deploy. Doing it on every reload blocks
-    # the API behind DigitalOcean Postgres and leaves /api/auth/me hanging.
-    return
+    # Remote Postgres inspect/create_all can take many seconds. Run it off the
+    # request path so /api/auth/me stays responsive during local --reload.
+    threading.Thread(target=_bootstrap_schema, name="schema-bootstrap", daemon=True).start()
 
 
 @app.get("/api/health")

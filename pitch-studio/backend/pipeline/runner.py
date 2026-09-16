@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from backend.database import SessionLocal
 from backend.extract import pick_report_passages
-from backend.models import Asset, FounderQuote, Generation, LockedFact, Module, Objection
+from backend.models import Asset, FounderQuote, Generation, LockedFact, Module, Objection, Recipe
 from backend.pipeline.brand_deck import (
     brand_deck_file_key,
     deck_spec_from_plan,
@@ -23,6 +23,7 @@ from backend.pipeline.script_flow import ScriptFlowError, load_script_topics, no
 from backend.pipeline.validator import align_script_to_topics, trim_script_to_budget, validate_script
 from backend.schemas import ScriptPayload
 from backend.transcripts import pick_founder_quotes
+from backend.qa_extraction import rank_objections_for_pitch
 
 
 def _set_status(db: Session, generation: Generation, status: str) -> None:
@@ -70,17 +71,55 @@ def _select_assets(db: Session, sequence: list[str]) -> list[Asset]:
     return pick_assets(db.query(Asset).all(), sequence)
 
 
-def _select_founder_quotes(db: Session, sequence: list[str]) -> list[FounderQuote]:
+def _select_founder_quotes(
+    db: Session,
+    sequence: list[str],
+    *,
+    persona_label: str = "",
+) -> list[FounderQuote]:
+    from backend.models import StyleTranscriptPersona
+
     quotes = db.query(FounderQuote).filter(FounderQuote.status == "approved").all()
+    allowed_transcript_ids: set[int] | None = None
+    label = (persona_label or "").strip()
+    if label:
+        rows = (
+            db.query(StyleTranscriptPersona.style_transcript_id)
+            .filter(StyleTranscriptPersona.persona_label == label)
+            .all()
+        )
+        allowed_transcript_ids = {int(row[0]) for row in rows if row[0]}
     # More snippets = a richer tone reference for the spoken-voice prompt.
-    return pick_founder_quotes(quotes, sequence, limit=10)
+    return pick_founder_quotes(
+        quotes,
+        sequence,
+        limit=10,
+        persona_label=label,
+        allowed_transcript_ids=allowed_transcript_ids,
+    )
 
 
-def _select_objections(db: Session, intent: str) -> list[Objection]:
+def _select_objections(
+    db: Session,
+    intent: str,
+    audience_cluster: str = "",
+    recipe_ref: str = "",
+) -> list[Objection]:
     approved = db.query(Objection).filter(Objection.status == "approved").all()
-    if intent == "I3":
-        return approved[:6]
-    return approved[:6]
+    audience_label = ""
+    if recipe_ref:
+        from backend.models import Recipe
+
+        recipe = db.query(Recipe).filter(Recipe.ref == recipe_ref).first()
+        if recipe is not None:
+            audience_label = recipe.audience_label or ""
+    return rank_objections_for_pitch(
+        approved,
+        audience_cluster=audience_cluster,
+        audience_label=audience_label,
+        intent=intent,
+        limit=6,
+    )
 
 
 def _validate_and_repair_budget(
@@ -123,8 +162,19 @@ def run(generation_id: int) -> None:
             .all()
         )
         facts = db.query(LockedFact).all()
-        founder_quotes = _select_founder_quotes(db, resolved.module_sequence)
-        style_guide = latest_style_guide(db)
+        persona_label = ""
+        if generation.recipe_ref:
+            recipe = db.query(Recipe).filter(Recipe.ref == generation.recipe_ref).first()
+            if recipe is not None:
+                raw_label = getattr(recipe, "audience_label", "") or ""
+                if isinstance(raw_label, str):
+                    persona_label = raw_label.strip()
+        founder_quotes = _select_founder_quotes(
+            db,
+            resolved.module_sequence,
+            persona_label=persona_label,
+        )
+        style_guide = latest_style_guide(db, persona_label=persona_label)
         report_passages = pick_report_passages(db.query(Asset).all(), resolved.module_sequence)
         plan = plan_pages(resolved.module_sequence, slide_count_for(generation.duration))
         try:
@@ -272,7 +322,12 @@ def run(generation_id: int) -> None:
         )
 
         assets = _select_assets(db, resolved.module_sequence)
-        objections = _select_objections(db, generation.intent)
+        objections = _select_objections(
+            db,
+            generation.intent,
+            audience_cluster=generation.audience_cluster,
+            recipe_ref=generation.recipe_ref,
+        )
         generation.asset_ids = ",".join(str(asset.id) for asset in assets)
         generation.objection_ids = ",".join(str(item.id) for item in objections)
         generation.founder_quote_ids = ",".join(str(quote.id) for quote in founder_quotes)

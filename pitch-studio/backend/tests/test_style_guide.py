@@ -7,13 +7,16 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from backend.database import Base
-from backend.models import FounderQuote, StyleTranscript, VoiceStyleGuide
+from backend.models import FounderQuote, Recipe, StyleTranscript, StyleTranscriptPersona, VoiceStyleGuide
 from backend.pipeline.prompts import script_messages, voice_review_messages
 from backend.pipeline.style_guide import (
     DuplicateStyleTranscriptError,
+    StyleTranscriptPersonaError,
     ingest_style_transcript,
+    latest_style_guide,
     parse_webvtt,
     pratham_lines,
+    update_style_transcript_personas,
 )
 
 SAMPLE_VTT = """WEBVTT
@@ -90,6 +93,38 @@ class IngestStyleTranscriptTests(unittest.TestCase):
         self.Session = sessionmaker(bind=engine)
         self.db = self.Session()
         self.distill_users: list[str] = []
+        self.db.add_all(
+            [
+                Recipe(
+                    ref="A10-1",
+                    audience_label="International / NRI applicant",
+                    audience_cluster="A",
+                    duration="T2",
+                    channel="CH3",
+                    intent="I2",
+                    module_sequence="M01>M14",
+                ),
+                Recipe(
+                    ref="A10-2",
+                    audience_label="International / NRI applicant",
+                    audience_cluster="A",
+                    duration="T3",
+                    channel="CH3",
+                    intent="I2",
+                    module_sequence="M01>M14",
+                ),
+                Recipe(
+                    ref="A7-3",
+                    audience_label="Mid-career executive",
+                    audience_cluster="A",
+                    duration="T4",
+                    channel="CH3",
+                    intent="I2",
+                    module_sequence="M01>M14",
+                ),
+            ]
+        )
+        self.db.commit()
 
     def tearDown(self) -> None:
         self.db.close()
@@ -100,7 +135,7 @@ class IngestStyleTranscriptTests(unittest.TestCase):
             self.distill_users.append(user)
             if "(empty)" in user:
                 return {"guide": "GUIDE_V1 structure and style"}
-            return {"guide": "GUIDE_V2 merged from earlier rules"}
+            return {"guide": f"GUIDE_MERGED from {len(self.distill_users)}"}
         return {
             "snippets": [
                 {
@@ -112,36 +147,100 @@ class IngestStyleTranscriptTests(unittest.TestCase):
             ]
         }
 
-    def test_creates_v1_then_enriches_v2_and_rejects_duplicate(self):
+    def test_creates_persona_scoped_guides_and_rejects_duplicate(self):
         with mock.patch("backend.pipeline.style_guide.chat_json", side_effect=self._fake_chat_json), mock.patch(
             "backend.transcripts.chat_json", side_effect=self._fake_chat_json
         ):
-            first = ingest_style_transcript(self.db, "AMA one", SAMPLE_VTT)
+            first = ingest_style_transcript(
+                self.db,
+                "AMA one",
+                SAMPLE_VTT,
+                persona_labels=["International / NRI applicant"],
+            )
             second = ingest_style_transcript(
                 self.db,
                 "AMA two",
                 "pratham mittal: Stay in India and do not come to Masters Union.\n",
+                persona_labels=["International / NRI applicant", "Mid-career executive"],
             )
             with self.assertRaises(DuplicateStyleTranscriptError):
-                ingest_style_transcript(self.db, "AMA one again", SAMPLE_VTT)
+                ingest_style_transcript(
+                    self.db,
+                    "AMA one again",
+                    SAMPLE_VTT,
+                    persona_labels=["International / NRI applicant"],
+                )
 
-        self.assertEqual(first["guide_version"], 1)
-        self.assertEqual(second["guide_version"], 2)
+        self.assertEqual(first["persona_labels"], ["International / NRI applicant"])
+        self.assertEqual(
+            second["persona_labels"],
+            ["International / NRI applicant", "Mid-career executive"],
+        )
         self.assertGreaterEqual(first["quotes_kept"], 1)
         self.assertEqual(self.db.query(StyleTranscript).count(), 2)
-        versions = [row.version for row in self.db.query(VoiceStyleGuide).order_by(VoiceStyleGuide.version)]
-        self.assertEqual(versions, [1, 2])
-        latest = self.db.query(VoiceStyleGuide).order_by(VoiceStyleGuide.version.desc()).first()
-        self.assertEqual(latest.guide_text, "GUIDE_V2 merged from earlier rules")
-        self.assertIn(str(first["transcript_id"]), latest.source_transcript_ids)
-        self.assertIn(str(second["transcript_id"]), latest.source_transcript_ids)
-        self.assertEqual(len(self.distill_users), 2)
-        self.assertIn("(empty)", self.distill_users[0])
-        self.assertIn("GUIDE_V1 structure and style", self.distill_users[1])
+        self.assertEqual(self.db.query(StyleTranscriptPersona).count(), 3)
+
+        nri_guide = latest_style_guide(self.db, "International / NRI applicant")
+        exec_guide = latest_style_guide(self.db, "Mid-career executive")
+        global_guide = latest_style_guide(self.db, "")
+        self.assertTrue(nri_guide)
+        self.assertTrue(exec_guide)
+        self.assertEqual(global_guide, "")
+        self.assertNotEqual(nri_guide, exec_guide)
+
         quotes = self.db.query(FounderQuote).all()
         self.assertTrue(quotes)
         self.assertTrue(all(quote.speaker == "Pratham Mittal" for quote in quotes))
-        self.assertTrue(all(quote.status == "approved" for quote in quotes))
+        self.assertTrue(all(quote.source_style_transcript_id > 0 for quote in quotes))
+
+    def test_rejects_unknown_or_empty_personas(self):
+        with self.assertRaises(StyleTranscriptPersonaError):
+            ingest_style_transcript(self.db, "AMA", SAMPLE_VTT, persona_labels=[])
+        with self.assertRaises(StyleTranscriptPersonaError):
+            ingest_style_transcript(
+                self.db,
+                "AMA",
+                SAMPLE_VTT,
+                persona_labels=["Totally Fake Persona"],
+            )
+
+    def test_reassignment_rebuilds_only_affected_personas(self):
+        with mock.patch("backend.pipeline.style_guide.chat_json", side_effect=self._fake_chat_json), mock.patch(
+            "backend.transcripts.chat_json", side_effect=self._fake_chat_json
+        ):
+            first = ingest_style_transcript(
+                self.db,
+                "AMA one",
+                SAMPLE_VTT,
+                persona_labels=["International / NRI applicant"],
+            )
+            update_style_transcript_personas(
+                self.db,
+                first["transcript_id"],
+                ["Mid-career executive"],
+            )
+
+        links = (
+            self.db.query(StyleTranscriptPersona)
+            .filter(StyleTranscriptPersona.style_transcript_id == first["transcript_id"])
+            .all()
+        )
+        self.assertEqual([row.persona_label for row in links], ["Mid-career executive"])
+        self.assertEqual(latest_style_guide(self.db, "International / NRI applicant"), "")
+        self.assertTrue(latest_style_guide(self.db, "Mid-career executive"))
+
+        # Global legacy guides must never become a persona fallback.
+        self.db.add(
+            VoiceStyleGuide(
+                version=99,
+                persona_label="",
+                guide_text="LEGACY GLOBAL",
+                source_transcript_ids="1",
+            )
+        )
+        self.db.commit()
+        self.assertEqual(latest_style_guide(self.db, "International / NRI applicant"), "")
+        self.assertNotEqual(latest_style_guide(self.db, "Mid-career executive"), "LEGACY GLOBAL")
 
 
 class ScriptMessageStyleGuideTests(unittest.TestCase):

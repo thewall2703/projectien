@@ -14,6 +14,7 @@ import Recipes from "./pages/admin/Recipes";
 import Assets from "./pages/admin/Assets";
 import FounderQuotes from "./pages/admin/FounderQuotes";
 import VoiceTranscripts from "./pages/admin/VoiceTranscripts";
+import QaReview from "./pages/admin/QaReview";
 import Objections from "./pages/admin/Objections";
 import Users from "./pages/admin/Users";
 import MediaTesting from "./pages/admin/MediaTesting";
@@ -29,13 +30,14 @@ const ADMIN_LINKS = [
   { to: "/admin/brand-deck-testing", label: "Brand deck testing" },
   { to: "/admin/founder-quotes", label: "Founder voice" },
   { to: "/admin/voice-transcripts", label: "Style guide" },
+  { to: "/admin/qa-review", label: "AMA Q&A" },
   { to: "/admin/objections", label: "Objections" },
   { to: "/admin/users", label: "Users" },
 ] as const;
 
 function navLinkClass({ isActive }: { isActive: boolean }) {
   return `rounded-lg px-3 py-1.5 text-sm transition-colors ${
-    isActive ? "font-semibold text-black" : "text-grey hover:text-black"
+    isActive ? "bg-black/5 font-semibold text-black" : "text-grey hover:bg-black/[0.03] hover:text-black"
   }`;
 }
 
@@ -146,7 +148,9 @@ function LibraryMenu({ isAdmin }: { isAdmin: boolean }) {
         ref={buttonRef}
         type="button"
         className={`rounded-lg px-3 py-1.5 text-sm transition-colors ${
-          libraryActive ? "font-semibold text-black" : "text-grey hover:text-black"
+          libraryActive
+            ? "bg-black/5 font-semibold text-black"
+            : "text-grey hover:bg-black/[0.03] hover:text-black"
         }`}
         aria-expanded={open}
         aria-haspopup="menu"
@@ -164,7 +168,9 @@ function LibraryMenu({ isAdmin }: { isAdmin: boolean }) {
         <Link
           role="menuitem"
           to="/history"
-          className="block px-4 py-2 text-sm text-black hover:bg-black/5"
+          className={`block px-4 py-2 text-sm hover:bg-black/5 ${
+            location.pathname.startsWith("/history") ? "bg-black/5 font-semibold text-black" : "text-black"
+          }`}
           onClick={() => setOpen(false)}
         >
           History
@@ -180,7 +186,9 @@ function LibraryMenu({ isAdmin }: { isAdmin: boolean }) {
                 key={item.to}
                 role="menuitem"
                 to={item.to}
-                className="block px-4 py-2 text-sm text-black hover:bg-black/5"
+                className={`block px-4 py-2 text-sm hover:bg-black/5 ${
+                  location.pathname.startsWith(item.to) ? "bg-black/5 font-semibold text-black" : "text-black"
+                }`}
                 onClick={() => setOpen(false)}
               >
                 {item.label}
@@ -349,6 +357,7 @@ export default function App() {
                     <Route path="/admin/brand-deck-testing" element={<BrandDeckTesting />} />
                     <Route path="/admin/founder-quotes" element={<FounderQuotes />} />
                     <Route path="/admin/voice-transcripts" element={<VoiceTranscripts />} />
+                    <Route path="/admin/qa-review" element={<QaReview />} />
                     <Route path="/admin/objections" element={<Objections />} />
                     <Route path="/admin/users" element={<Users />} />
                   </>

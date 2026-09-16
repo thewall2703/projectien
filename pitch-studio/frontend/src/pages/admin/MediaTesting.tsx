@@ -520,7 +520,7 @@ export default function MediaTesting() {
                           <div>
                             <p className="font-medium">{name}</p>
                             <p className="mt-1 text-xs text-muted">
-                              {item.recipe_ref} · {axisLabel(AXES.audience_clusters, item.audience_cluster)} ·{" "}
+                              {axisLabel(AXES.audience_clusters, item.audience_cluster)} ·{" "}
                               {axisLabel(AXES.durations, item.duration)} · {axisLabel(AXES.channels, item.channel)} ·{" "}
                               {axisLabel(AXES.intents, item.intent)}
                             </p>
@@ -570,10 +570,19 @@ export default function MediaTesting() {
                       value={addNote}
                       onChange={(event) => setAddNote(event.target.value)}
                     />
-                    <Button loading={busy === "add"} disabled={!addRef} onClick={addUsecase}>
+                    <Button
+                      variant="accent"
+                      loading={busy === "add"}
+                      disabled={!addRef}
+                      title={!addRef ? "Select a persona to add" : undefined}
+                      onClick={addUsecase}
+                    >
                       Add
                     </Button>
                   </div>
+                  {!addRef && addNote.trim() ? (
+                    <p className="mt-2 text-xs text-grey">Select a persona to add.</p>
+                  ) : null}
                   {current.feedback.added.length > 0 && (
                     <ul className="mt-3 space-y-1 text-sm">
                       {current.feedback.added.map((item) => (

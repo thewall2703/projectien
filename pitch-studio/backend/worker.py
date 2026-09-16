@@ -11,6 +11,7 @@ from backend.database import SessionLocal, ensure_schema
 from backend.deck_topic_index import JOB_DECK_PREPARE, prepare_deck_topics
 from backend.media_index import JOB_DESCRIBE, JOB_PREPARE, describe_media, prepare_media
 from backend.models import Job, utc_now
+from backend.qa_extraction import JOB_QA_EXTRACT, run_qa_extraction
 
 log = logging.getLogger("backend.worker")
 
@@ -109,6 +110,8 @@ def _run_job(job_id: int) -> None:
             describe_media(db, job.media_id, on_stage=on_stage)
         elif job.job_type == JOB_DECK_PREPARE:
             prepare_deck_topics(db, on_stage=on_stage)
+        elif job.job_type == JOB_QA_EXTRACT:
+            run_qa_extraction(db, job.asset_id, on_stage=on_stage)
         else:
             raise RuntimeError(f"Unknown job type: {job.job_type}")
 
@@ -133,6 +136,15 @@ def _run_job(job_id: int) -> None:
                 failed.error = str(exc)
                 failed.finished_at = utc_now()
                 failed.stage = "Failed"
+                if failed.job_type == JOB_QA_EXTRACT and failed.asset_id:
+                    from backend.models import QaExtractionRun
+
+                    run = db.get(QaExtractionRun, failed.asset_id)
+                    if run is not None and run.status != "done":
+                        run.status = "failed"
+                        run.error = str(exc)
+                        run.stage = "Failed"
+                        run.finished_at = utc_now()
                 db.commit()
         except Exception:
             log.exception("Failed to mark job %s as error", job_id)

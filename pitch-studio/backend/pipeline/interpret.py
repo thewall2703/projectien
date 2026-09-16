@@ -15,9 +15,14 @@ from backend.schemas import (
     INTENTS,
     TEMPERATURES,
     AxisOption,
+    InterpretPersonaCandidate,
     InterpretRequest,
     InterpretResult,
 )
+
+# Auto-select the highest-confidence persona when it is at least this strong.
+PERSONA_AUTO_MIN_CONFIDENCE = 0.7
+PERSONA_CANDIDATE_LIMIT = 2
 
 VALID_AUDIENCE = {item.code for item in AUDIENCE_CLUSTERS}
 VALID_DURATION = {item.code for item in DURATIONS}
@@ -68,12 +73,18 @@ def build_interpret_messages(
     system = (
         "You map plain-language pitch briefs to internal axis codes for Masters' Union Pitch Studio. "
         "Return strict JSON only with these keys: audience_cluster, duration, channel, intent, "
-        "temperature, recipe_ref, summary, notes. "
+        "temperature, recipe_ref, persona_candidates, summary, notes. "
         "Choose codes only from the catalogs provided. "
         "Duration and channel MUST follow the Setting text first. Pick the nearest existing duration "
         "code only: T0=30s, T1=2m, T2=5m, T3=10m, T4=30m, T5=90m. There is no 60-minute code — "
         "map 'about an hour' / 45-75 minutes to T5 (90 minutes), never invent a length. "
-        "Set recipe_ref only when the audience clearly matches that persona. A matched persona must "
+        "persona_candidates must be an array of the 1-2 closest personas from the recipe catalog, "
+        "each as {recipe_ref, confidence, rationale}. confidence is a number from 0 to 1 for how "
+        "well that persona matches Who they are pitching to (audience fit only — ignore that the "
+        "persona’s stored duration/channel may differ from Setting). Prefer distinct audience labels "
+        "when two personas are close. If nothing is remotely close, return an empty array. "
+        "Set recipe_ref to the top candidate’s ref when that match is clear; otherwise set "
+        "recipe_ref to an empty string (the server may still use the scores). A matched persona must "
         "NOT override the duration/channel implied by Setting; keep those from the Setting text. "
         "summary must be one plain-English business sentence describing the pitch that will be written. "
         "notes holds leftover specifics to fold into a context note (empty string if none)."
@@ -90,6 +101,55 @@ def build_interpret_messages(
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
+
+
+def _clamp_confidence(value: Any) -> float | None:
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return None
+    if score != score:  # NaN
+        return None
+    return max(0.0, min(1.0, score))
+
+
+def _normalize_persona_candidates(raw: Any, known_refs: set[str]) -> list[InterpretPersonaCandidate]:
+    if not isinstance(raw, list):
+        return []
+    seen: set[str] = set()
+    candidates: list[InterpretPersonaCandidate] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        ref = str(item.get("recipe_ref") or "").strip()
+        if not ref or ref not in known_refs or ref in seen:
+            continue
+        confidence = _clamp_confidence(item.get("confidence"))
+        if confidence is None:
+            continue
+        seen.add(ref)
+        candidates.append(
+            InterpretPersonaCandidate(
+                recipe_ref=ref,
+                confidence=confidence,
+                rationale=str(item.get("rationale") or "").strip(),
+            )
+        )
+        if len(candidates) >= PERSONA_CANDIDATE_LIMIT:
+            break
+    candidates.sort(key=lambda row: row.confidence, reverse=True)
+    return candidates
+
+
+def _pick_recipe_ref(recipe_ref: str, candidates: list[InterpretPersonaCandidate], known_refs: set[str]) -> str:
+    if candidates:
+        top = candidates[0]
+        if top.confidence >= PERSONA_AUTO_MIN_CONFIDENCE:
+            return top.recipe_ref
+        return ""
+    if recipe_ref and recipe_ref in known_refs:
+        return recipe_ref
+    return ""
 
 
 def normalize_interpret_payload(raw: dict[str, Any], known_refs: set[str]) -> InterpretResult:
@@ -116,8 +176,14 @@ def normalize_interpret_payload(raw: dict[str, Any], known_refs: set[str]) -> In
     if invalid:
         raise InterpretError(f"Interpreter returned invalid axis codes: {', '.join(invalid)}")
 
-    if recipe_ref and recipe_ref not in known_refs:
-        recipe_ref = ""
+    candidates = _normalize_persona_candidates(raw.get("persona_candidates"), known_refs)
+    if recipe_ref and recipe_ref in known_refs and not any(c.recipe_ref == recipe_ref for c in candidates):
+        # Preserve an explicit clear match even if the model omitted the score array.
+        candidates = [
+            InterpretPersonaCandidate(recipe_ref=recipe_ref, confidence=1.0, rationale=""),
+            *candidates,
+        ][:PERSONA_CANDIDATE_LIMIT]
+    recipe_ref = _pick_recipe_ref(recipe_ref, candidates, known_refs)
 
     return InterpretResult(
         audience_cluster=audience,
@@ -126,6 +192,7 @@ def normalize_interpret_payload(raw: dict[str, Any], known_refs: set[str]) -> In
         intent=intent,
         temperature=temperature,
         recipe_ref=recipe_ref,
+        persona_candidates=candidates,
         summary=summary,
         notes=notes,
     )

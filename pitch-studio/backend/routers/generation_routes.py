@@ -4,13 +4,13 @@ import json
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from fastapi.responses import FileResponse, RedirectResponse, Response
+from fastapi.responses import RedirectResponse, Response
 from sqlalchemy.orm import Session, load_only
 
 from backend.auth import get_current_user
-from backend.config import FILES_DIR, settings
+from backend.config import settings
 from backend.database import get_db
-from backend.media_index import pick_recommended_media
+from backend.media_index import pick_recommended_media, record_video_click
 from backend.models import Asset, FounderQuote, Generation, Objection, Recipe, User
 from backend.pipeline.brand_deck import (
     SOURCE_PAGE_COUNT,
@@ -38,6 +38,8 @@ from backend.schemas import (
     ObjectionOut,
     RecipeOption,
     ReportPassageOut,
+    VideoClickIn,
+    VideoClickOut,
 )
 from backend.storage import file_exists, get_url, read_file
 from backend.thumbnails import ensure_thumbnail, thumbnail_key
@@ -257,6 +259,49 @@ def get_generation(
     return _enrich(db, generation)
 
 
+@router.post("/generations/{generation_id}/video-clicks", response_model=VideoClickOut)
+def create_video_click(
+    generation_id: int,
+    payload: VideoClickIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> VideoClickOut:
+    generation = db.get(Generation, generation_id)
+    if generation is None:
+        raise HTTPException(status_code=404, detail="Generation not found")
+    if not user.is_admin and generation.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Not allowed")
+    asset = db.get(Asset, payload.asset_id)
+    if asset is None or asset.type != "video":
+        raise HTTPException(status_code=404, detail="Video asset not found")
+    source = (asset.source_url or asset.url or "").strip()
+    if not source:
+        raise HTTPException(status_code=400, detail="Video has no source URL")
+    try:
+        event, created = record_video_click(
+            db,
+            generation_id=generation.id,
+            user_id=user.id,
+            asset_id=asset.id,
+            recipe_ref=generation.recipe_ref,
+            displayed_rank=payload.displayed_rank,
+            interaction_type=payload.interaction_type,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return VideoClickOut(
+        id=event.id,
+        generation_id=event.generation_id,
+        asset_id=event.asset_id,
+        recipe_ref=event.recipe_ref,
+        displayed_rank=event.displayed_rank,
+        click_order=event.click_order,
+        interaction_type=event.interaction_type,
+        created_at=event.created_at,
+        created=created,
+    )
+
+
 @router.get("/assets/{asset_id}/file")
 def download_asset_file(
     asset_id: int,
@@ -298,19 +343,17 @@ def download_asset_thumbnail(
     key = thumbnail_key(asset)
     if not file_exists(key) and not asset.file_key:
         raise HTTPException(status_code=404, detail="Thumbnail not found")
-    db.close()
     try:
         if not file_exists(key):
             key = ensure_thumbnail(asset)
+        # Stream bytes through the API. Redirecting to a Spaces signed URL often
+        # fails in <img> tags even when the object is readable server-side.
+        data = read_file(key)
     except Exception as exc:
         raise HTTPException(status_code=502, detail="Could not create thumbnail") from exc
 
-    if settings.uses_spaces:
-        url = get_url(key)
-        if url:
-            return RedirectResponse(url, headers={"Cache-Control": "private, max-age=86400"})
-    return FileResponse(
-        FILES_DIR / key,
+    return Response(
+        content=data,
         media_type="image/jpeg",
         headers={"Cache-Control": "private, max-age=86400"},
     )

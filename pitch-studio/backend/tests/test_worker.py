@@ -59,6 +59,29 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(done.error, "")
         db.close()
 
+    def test_process_qa_extract_job(self):
+        db = self.Session()
+        job = Job(job_type="qa_extract", media_id=9, asset_id=22, status="queued")
+        db.add(job)
+        db.commit()
+        job_id = job.id
+        db.close()
+
+        def fake_run(_db, run_id, on_stage=None):
+            self.assertEqual(run_id, 22)
+            if on_stage:
+                on_stage("Extracting Q&A pairs")
+            return mock.Mock()
+
+        with mock.patch.object(worker, "SessionLocal", self.Session):
+            with mock.patch.object(worker, "run_qa_extraction", side_effect=fake_run):
+                self.assertTrue(worker.process_one())
+
+        db = self.Session()
+        done = db.get(Job, job_id)
+        self.assertEqual(done.status, "done")
+        db.close()
+
     def test_process_one_error(self):
         db = self.Session()
         job = Job(job_type="media_prepare", media_id=1, asset_id=4, status="queued")
