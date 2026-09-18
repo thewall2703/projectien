@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import GenerateWizard, { type GenerateWizardPayload } from "../components/generate/GenerateWizard";
@@ -239,6 +239,13 @@ function RatingPanel({
   );
 }
 
+function formatElapsed(seconds: number): string {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  if (mins <= 0) return `${secs}s`;
+  return `${mins}m ${secs.toString().padStart(2, "0")}s`;
+}
+
 function ScriptTestingDetail({ currentUser }: { currentUser: User }) {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -247,40 +254,63 @@ function ScriptTestingDetail({ currentUser }: { currentUser: User }) {
   const [recipes, setRecipes] = useState<RecipeOption[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-
-  const load = useCallback(async () => {
-    if (!Number.isFinite(runId)) throw new Error("Invalid script test");
-    const [detail, recipeData] = await Promise.all([api.getScriptTest(runId), api.recipes()]);
-    setRun(detail);
-    setRecipes(recipeData as RecipeOption[]);
-    return detail;
-  }, [runId]);
+  const [elapsedSec, setElapsedSec] = useState(0);
 
   useEffect(() => {
+    api.recipes().then((data) => setRecipes(data as RecipeOption[])).catch(() => setRecipes([]));
+  }, []);
+
+  useEffect(() => {
+    if (!Number.isFinite(runId)) {
+      setError("Invalid script test");
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     let timer: number | undefined;
-    const poll = async () => {
+
+    const tick = async () => {
       try {
-        const detail = await load();
-        if (cancelled) return;
+        const detail = await api.getScriptTest(runId);
+        if (cancelled) return detail;
+        setRun(detail);
         setError("");
         setLoading(false);
-        if (detail.status !== "done" && detail.status !== "failed") {
-          timer = window.setTimeout(poll, 2000);
-        }
+        return detail;
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Failed to load");
           setLoading(false);
         }
+        return null;
       }
     };
+
+    const poll = async () => {
+      const detail = await tick();
+      if (cancelled) return;
+      // Keep polling through transient errors while the run is incomplete.
+      const incomplete = !detail || (detail.status !== "done" && detail.status !== "failed");
+      if (incomplete) {
+        timer = window.setTimeout(poll, 2000);
+      }
+    };
+
     poll();
     return () => {
       cancelled = true;
       if (timer) window.clearTimeout(timer);
     };
-  }, [load]);
+  }, [runId]);
+
+  useEffect(() => {
+    if (!run || run.status === "done" || run.status === "failed") return;
+    const started = new Date(run.created_at).getTime();
+    const update = () => setElapsedSec(Math.max(0, Math.floor((Date.now() - started) / 1000)));
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, [run?.id, run?.status, run?.created_at]);
 
   const generating = run != null && run.status !== "done" && run.status !== "failed";
   const axisNames = useMemo(() => (run ? generationAxisLabels(run) : null), [run]);
@@ -342,6 +372,10 @@ function ScriptTestingDetail({ currentUser }: { currentUser: User }) {
           <p className="flex items-center gap-2 text-sm text-grey-dark">
             <Spinner /> {statusMessage(run.status)}
           </p>
+          <p className="text-sm text-grey">
+            Elapsed {formatElapsed(elapsedSec)}. Script generation usually takes a few minutes — this page
+            updates automatically when it finishes.
+          </p>
           <div className="grid gap-3 sm:grid-cols-2">
             {Array.from({ length: 4 }).map((_, index) => (
               <Skeleton key={index} className="h-24 w-full rounded-2xl" />
@@ -387,6 +421,15 @@ function ScriptTestingDetail({ currentUser }: { currentUser: User }) {
             onSaved={setRun}
           />
         </>
+      )}
+
+      {run.status === "done" && !run.review_document && (
+        <div className="glass-panel space-y-3 p-6">
+          <p className="text-sm text-grey-dark">
+            Script finished, but the review document is missing. Refresh the page or start a new test.
+          </p>
+          <Button onClick={() => window.location.reload()}>Refresh</Button>
+        </div>
       )}
     </div>
   );

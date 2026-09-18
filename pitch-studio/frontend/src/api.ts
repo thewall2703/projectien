@@ -31,7 +31,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ? 1200000
       : path.includes("/deck-topics") ||
           path.includes("/media-index") ||
-          path.includes("/generations/interpret")
+          path.includes("/generations/interpret") ||
+          path.includes("/script-tests/")
         ? 60000
         : 20000;
   let response: Response;
