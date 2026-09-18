@@ -190,6 +190,91 @@ export type Generation = {
   recommended_pictures?: RecommendedMedia[];
 };
 
+export type ScriptTestSentence = {
+  id: string;
+  index: number;
+  text: string;
+};
+
+export type ScriptTestParagraph = {
+  id: string;
+  index: number;
+  text: string;
+  sentences: ScriptTestSentence[];
+};
+
+export type ScriptTestSection = {
+  index: number;
+  module_id: string;
+  topic_id: number;
+  topic_title: string;
+  heading: string;
+  paragraphs: ScriptTestParagraph[];
+};
+
+export type ScriptTestReviewDocument = {
+  sections: ScriptTestSection[];
+  cta: string;
+};
+
+export type ScriptTestFeedback = {
+  id: number;
+  script_test_run_id: number;
+  reviewer_user_id: number;
+  reviewer_email: string;
+  target_kind: "sentence" | "paragraph" | string;
+  target_id: string;
+  section_index: number;
+  paragraph_index: number;
+  sentence_index: number | null;
+  reference_text: string;
+  comment: string;
+  created_at: string;
+};
+
+export type ScriptTestRating = {
+  id: number;
+  script_test_run_id: number;
+  reviewer_user_id: number;
+  reviewer_email: string;
+  rating: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ScriptTestRunListItem = {
+  id: number;
+  created_by_user_id: number;
+  created_by_email: string;
+  audience_cluster: string;
+  duration: string;
+  channel: string;
+  intent: string;
+  temperature: string;
+  context_note: string;
+  recipe_ref: string;
+  module_sequence: string;
+  status: string;
+  validation_report: string;
+  error: string;
+  created_at: string;
+  finished_at: string | null;
+  average_rating: number | null;
+  rating_count: number;
+};
+
+export type ScriptTestRun = ScriptTestRunListItem & {
+  script_json: string;
+  review_document_json: string;
+  founder_quote_ids: string;
+  report_asset_ids: string;
+  report_passages_json: string;
+  script: { sections: ScriptSection[]; cta: string } | null;
+  review_document: ScriptTestReviewDocument | null;
+  feedback: ScriptTestFeedback[];
+  ratings: ScriptTestRating[];
+};
+
 export type RecommendedMedia = {
   asset_id: number;
   parent_asset_id: number;

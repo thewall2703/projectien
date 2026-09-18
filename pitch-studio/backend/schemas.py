@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 class AxisOption(BaseModel):
@@ -374,6 +374,153 @@ class GenerationOut(BaseModel):
     report_passages: list[ReportPassageOut] = []
     recommended_videos: list[RecommendedMediaOut] = []
     recommended_pictures: list[RecommendedMediaOut] = []
+
+    model_config = {"from_attributes": True}
+
+
+class ScriptTestCreate(BaseModel):
+    audience_cluster: str = ""
+    duration: str = ""
+    channel: str = ""
+    intent: str = ""
+    temperature: str
+    context_note: str = ""
+    recipe_ref: str = ""
+
+
+class ScriptTestSentenceOut(BaseModel):
+    id: str
+    index: int
+    text: str
+
+
+class ScriptTestParagraphOut(BaseModel):
+    id: str
+    index: int
+    text: str
+    sentences: list[ScriptTestSentenceOut] = Field(default_factory=list)
+
+
+class ScriptTestSectionOut(BaseModel):
+    index: int
+    module_id: str = ""
+    topic_id: int = 0
+    topic_title: str = ""
+    heading: str = ""
+    paragraphs: list[ScriptTestParagraphOut] = Field(default_factory=list)
+
+
+class ScriptTestReviewDocument(BaseModel):
+    sections: list[ScriptTestSectionOut] = Field(default_factory=list)
+    cta: str = ""
+
+
+class ScriptTestFeedbackCreate(BaseModel):
+    target_kind: Literal["sentence", "paragraph"]
+    target_id: str
+    comment: str = Field(min_length=1)
+
+    @field_validator("comment")
+    @classmethod
+    def trim_comment(cls, value: str) -> str:
+        trimmed = (value or "").strip()
+        if not trimmed:
+            raise ValueError("comment must not be empty")
+        return trimmed
+
+    @field_validator("target_id")
+    @classmethod
+    def trim_target_id(cls, value: str) -> str:
+        trimmed = (value or "").strip()
+        if not trimmed:
+            raise ValueError("target_id must not be empty")
+        return trimmed
+
+
+class ScriptTestFeedbackOut(BaseModel):
+    id: int
+    script_test_run_id: int
+    reviewer_user_id: int
+    reviewer_email: str = ""
+    target_kind: str
+    target_id: str
+    section_index: int
+    paragraph_index: int
+    sentence_index: int | None = None
+    reference_text: str
+    comment: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ScriptTestRatingUpsert(BaseModel):
+    rating: float = Field(ge=0, le=10)
+
+
+class ScriptTestRatingOut(BaseModel):
+    id: int
+    script_test_run_id: int
+    reviewer_user_id: int
+    reviewer_email: str = ""
+    rating: float
+    created_at: datetime
+    updated_at: datetime
+    average_rating: float | None = None
+    rating_count: int = 0
+
+    model_config = {"from_attributes": True}
+
+
+class ScriptTestRunListItem(BaseModel):
+    id: int
+    created_by_user_id: int
+    created_by_email: str = ""
+    audience_cluster: str
+    duration: str
+    channel: str
+    intent: str
+    temperature: str
+    context_note: str = ""
+    recipe_ref: str
+    module_sequence: str = ""
+    status: str
+    validation_report: str = ""
+    error: str = ""
+    created_at: datetime
+    finished_at: datetime | None = None
+    average_rating: float | None = None
+    rating_count: int = 0
+
+
+class ScriptTestRunOut(BaseModel):
+    id: int
+    created_by_user_id: int
+    created_by_email: str = ""
+    audience_cluster: str
+    duration: str
+    channel: str
+    intent: str
+    temperature: str
+    context_note: str
+    recipe_ref: str
+    module_sequence: str
+    status: str
+    script_json: str = ""
+    review_document_json: str = ""
+    validation_report: str
+    error: str
+    founder_quote_ids: str = ""
+    report_asset_ids: str = ""
+    report_passages_json: str = ""
+    created_at: datetime
+    finished_at: datetime | None = None
+    script: dict[str, Any] | None = None
+    review_document: ScriptTestReviewDocument | None = None
+    feedback: list[ScriptTestFeedbackOut] = Field(default_factory=list)
+    ratings: list[ScriptTestRatingOut] = Field(default_factory=list)
+    average_rating: float | None = None
+    rating_count: int = 0
 
     model_config = {"from_attributes": True}
 

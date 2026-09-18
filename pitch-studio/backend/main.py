@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import OperationalError
 
 from backend.config import PITCH_STUDIO_ROOT, settings
-from backend.routers import admin_routes, auth_routes, generation_routes
+from backend.routers import admin_routes, auth_routes, generation_routes, script_testing_routes
 
 FRONTEND_DIST = PITCH_STUDIO_ROOT / "frontend" / "dist"
 logger = logging.getLogger(__name__)
@@ -26,6 +26,7 @@ app.add_middleware(
 app.include_router(auth_routes.router)
 app.include_router(admin_routes.router)
 app.include_router(generation_routes.router)
+app.include_router(script_testing_routes.router)
 
 
 @app.exception_handler(OperationalError)

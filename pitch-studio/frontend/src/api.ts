@@ -6,6 +6,10 @@ import type {
   MediaIndexRow,
   QaCandidate,
   QaExtractionRun,
+  ScriptTestFeedback,
+  ScriptTestRating,
+  ScriptTestRun,
+  ScriptTestRunListItem,
   StyleGuide,
   StyleTranscriptCreateResult,
   StyleTranscriptRow,
@@ -120,6 +124,32 @@ export const api = {
     }),
   getGeneration: (id: number) => request(`/api/generations/${id}`),
   listGenerations: () => request("/api/generations"),
+  createScriptTest: (body: unknown) =>
+    request<ScriptTestRun>("/api/script-tests", {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify(body),
+    }),
+  listScriptTests: () => request<ScriptTestRunListItem[]>("/api/script-tests"),
+  getScriptTest: (id: number) => request<ScriptTestRun>(`/api/script-tests/${id}`),
+  addScriptTestFeedback: (
+    id: number,
+    body: { target_kind: "sentence" | "paragraph"; target_id: string; comment: string },
+  ) =>
+    request<ScriptTestFeedback>(`/api/script-tests/${id}/feedback`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify(body),
+    }),
+  saveScriptTestRating: (id: number, rating: number) =>
+    request<ScriptTestRating & { average_rating: number | null; rating_count: number }>(
+      `/api/script-tests/${id}/rating`,
+      {
+        method: "PUT",
+        headers: jsonHeaders,
+        body: JSON.stringify({ rating }),
+      },
+    ),
   recordVideoClick: (
     generationId: number,
     body: { asset_id: number; displayed_rank: number; interaction_type: "play" | "open_source" },

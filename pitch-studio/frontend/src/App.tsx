@@ -8,6 +8,7 @@ import Landing from "./pages/Landing";
 import Generate from "./pages/Generate";
 import Result from "./pages/Result";
 import History from "./pages/History";
+import ScriptTesting from "./pages/ScriptTesting";
 import Modules from "./pages/admin/Modules";
 import Facts from "./pages/admin/Facts";
 import Recipes from "./pages/admin/Recipes";
@@ -140,7 +141,9 @@ function LibraryMenu({ isAdmin }: { isAdmin: boolean }) {
   }, [open]);
 
   const libraryActive =
-    location.pathname.startsWith("/history") || location.pathname.startsWith("/admin");
+    location.pathname.startsWith("/history") ||
+    location.pathname.startsWith("/script-testing") ||
+    location.pathname.startsWith("/admin");
 
   return (
     <>
@@ -174,6 +177,18 @@ function LibraryMenu({ isAdmin }: { isAdmin: boolean }) {
           onClick={() => setOpen(false)}
         >
           History
+        </Link>
+        <Link
+          role="menuitem"
+          to="/script-testing"
+          className={`block px-4 py-2 text-sm hover:bg-black/5 ${
+            location.pathname.startsWith("/script-testing")
+              ? "bg-black/5 font-semibold text-black"
+              : "text-black"
+          }`}
+          onClick={() => setOpen(false)}
+        >
+          Script testing
         </Link>
         {isAdmin && (
           <>
@@ -347,6 +362,8 @@ export default function App() {
                 <Route path="/generate" element={<Generate />} />
                 <Route path="/result/:id" element={<Result />} />
                 <Route path="/history" element={<History />} />
+                <Route path="/script-testing" element={<ScriptTesting currentUser={user} />} />
+                <Route path="/script-testing/:id" element={<ScriptTesting currentUser={user} />} />
                 {user.is_admin && (
                   <>
                     <Route path="/admin/modules" element={<Modules />} />

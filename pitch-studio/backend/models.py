@@ -22,6 +22,7 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     generations: Mapped[list[Generation]] = relationship(back_populates="user")
+    script_test_runs: Mapped[list[ScriptTestRun]] = relationship(back_populates="created_by")
 
 
 class Module(Base):
@@ -136,6 +137,75 @@ class Generation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     user: Mapped[User] = relationship(back_populates="generations")
+
+
+class ScriptTestRun(Base):
+    __tablename__ = "script_test_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    audience_cluster: Mapped[str] = mapped_column(String(16))
+    duration: Mapped[str] = mapped_column(String(8))
+    channel: Mapped[str] = mapped_column(String(16))
+    intent: Mapped[str] = mapped_column(String(8))
+    temperature: Mapped[str] = mapped_column(String(8))
+    context_note: Mapped[str] = mapped_column(Text, default="")
+    recipe_ref: Mapped[str] = mapped_column(String(32), default="")
+    module_sequence: Mapped[str] = mapped_column(String(500), default="")
+    status: Mapped[str] = mapped_column(String(32), default="queued")
+    script_json: Mapped[str] = mapped_column(Text, default="")
+    review_document_json: Mapped[str] = mapped_column(Text, default="")
+    validation_report: Mapped[str] = mapped_column(Text, default="")
+    error: Mapped[str] = mapped_column(Text, default="")
+    founder_quote_ids: Mapped[str] = mapped_column(String(255), default="")
+    report_asset_ids: Mapped[str] = mapped_column(String(255), default="")
+    report_passages_json: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    created_by: Mapped[User] = relationship(back_populates="script_test_runs")
+    feedback: Mapped[list[ScriptTestFeedback]] = relationship(back_populates="run")
+    ratings: Mapped[list[ScriptTestRating]] = relationship(back_populates="run")
+
+
+class ScriptTestFeedback(Base):
+    __tablename__ = "script_test_feedback"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    script_test_run_id: Mapped[int] = mapped_column(ForeignKey("script_test_runs.id"), index=True)
+    reviewer_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    target_kind: Mapped[str] = mapped_column(String(16))
+    target_id: Mapped[str] = mapped_column(String(128), index=True)
+    section_index: Mapped[int] = mapped_column(Integer, default=0)
+    paragraph_index: Mapped[int] = mapped_column(Integer, default=0)
+    sentence_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reference_text: Mapped[str] = mapped_column(Text, default="")
+    comment: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    run: Mapped[ScriptTestRun] = relationship(back_populates="feedback")
+    reviewer: Mapped[User] = relationship()
+
+
+class ScriptTestRating(Base):
+    __tablename__ = "script_test_ratings"
+    __table_args__ = (
+        UniqueConstraint(
+            "script_test_run_id",
+            "reviewer_user_id",
+            name="uq_script_test_rating_run_reviewer",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    script_test_run_id: Mapped[int] = mapped_column(ForeignKey("script_test_runs.id"), index=True)
+    reviewer_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    rating: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    run: Mapped[ScriptTestRun] = relationship(back_populates="ratings")
+    reviewer: Mapped[User] = relationship()
 
 
 class FounderQuote(Base):
