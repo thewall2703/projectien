@@ -75,8 +75,9 @@ function ParagraphBlock({
   onOpen: (target: FeedbackTarget) => void;
 }) {
   const paragraphCount = feedback.filter((item) => item.target_id === paragraph.id).length;
+  const showParagraphFeedback = paragraph.sentences.length > 3;
   return (
-    <div className="space-y-3">
+    <div className={showParagraphFeedback ? "space-y-3" : undefined}>
       <p className="text-base leading-7 text-grey-dark md:leading-8">
         {paragraph.sentences.map((sentence) => {
           const count = feedback.filter((item) => item.target_id === sentence.id).length;
@@ -97,26 +98,28 @@ function ParagraphBlock({
           );
         })}
       </p>
-      <div className="flex justify-start md:justify-end">
-        <button
-          type="button"
-          className="inline-flex min-h-11 items-center gap-2 rounded-full border border-black/15 bg-white/60 px-4 text-sm text-grey-dark transition hover:border-black/40 hover:bg-white"
-          onClick={() =>
-            onOpen({
-              kind: "paragraph",
-              targetId: paragraph.id,
-              referenceText: paragraph.text,
-            })
-          }
-        >
-          Give paragraph feedback
-          {paragraphCount > 0 && (
-            <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-black px-1.5 text-[11px] font-semibold text-white">
-              {paragraphCount}
-            </span>
-          )}
-        </button>
-      </div>
+      {showParagraphFeedback && (
+        <div className="flex justify-start md:justify-end">
+          <button
+            type="button"
+            className="inline-flex min-h-11 items-center gap-2 rounded-full border border-black/15 bg-white/60 px-4 text-sm text-grey-dark transition hover:border-black/40 hover:bg-white"
+            onClick={() =>
+              onOpen({
+                kind: "paragraph",
+                targetId: paragraph.id,
+                referenceText: paragraph.text,
+              })
+            }
+          >
+            Give paragraph feedback
+            {paragraphCount > 0 && (
+              <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-black px-1.5 text-[11px] font-semibold text-white">
+                {paragraphCount}
+              </span>
+            )}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
