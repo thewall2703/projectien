@@ -157,18 +157,23 @@ function SectionBlock({
 export default function ScriptReviewReader({
   document,
   feedback,
+  currentUserId,
   onSaveFeedback,
+  onUpdateFeedback,
 }: {
   document: ScriptTestReviewDocument;
   feedback: ScriptTestFeedback[];
+  currentUserId: number;
   onSaveFeedback: (payload: {
     target_kind: "sentence" | "paragraph";
     target_id: string;
     comment: string;
   }) => Promise<void>;
+  onUpdateFeedback: (feedbackId: number, comment: string) => Promise<void>;
 }) {
   const coarse = useIsCoarsePointer();
   const [target, setTarget] = useState<FeedbackTarget | null>(null);
+  const [editingFeedback, setEditingFeedback] = useState<ScriptTestFeedback | null>(null);
   const [comment, setComment] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -185,6 +190,7 @@ export default function ScriptReviewReader({
   const close = () => {
     if (saving) return;
     setTarget(null);
+    setEditingFeedback(null);
     setComment("");
     setError("");
   };
@@ -194,12 +200,17 @@ export default function ScriptReviewReader({
     setSaving(true);
     setError("");
     try {
-      await onSaveFeedback({
-        target_kind: target.kind,
-        target_id: target.targetId,
-        comment: comment.trim(),
-      });
+      if (editingFeedback) {
+        await onUpdateFeedback(editingFeedback.id, comment.trim());
+      } else {
+        await onSaveFeedback({
+          target_kind: target.kind,
+          target_id: target.targetId,
+          comment: comment.trim(),
+        });
+      }
       setTarget(null);
+      setEditingFeedback(null);
       setComment("");
       setSavedFlash(true);
       window.setTimeout(() => setSavedFlash(false), 1800);
@@ -227,7 +238,11 @@ export default function ScriptReviewReader({
             section={section}
             feedback={feedback}
             coarse={coarse}
-            onOpen={setTarget}
+            onOpen={(nextTarget) => {
+              setEditingFeedback(null);
+              setComment("");
+              setTarget(nextTarget);
+            }}
           />
         ))}
       </div>
@@ -253,7 +268,7 @@ export default function ScriptReviewReader({
               disabled={!comment.trim() || saving}
               onClick={save}
             >
-              Save feedback
+              {editingFeedback ? "Update feedback" : "Save feedback"}
             </Button>
           </div>
         }
@@ -273,7 +288,23 @@ export default function ScriptReviewReader({
                     <li key={item.id} className="rounded-2xl border border-black/8 bg-white/70 px-4 py-3">
                       <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-grey">
                         <span>{item.reviewer_email || `User ${item.reviewer_user_id}`}</span>
-                        <span>{new Date(item.created_at).toLocaleString()}</span>
+                        <div className="flex items-center gap-3">
+                          <span>{new Date(item.created_at).toLocaleString()}</span>
+                          {item.reviewer_user_id === currentUserId && (
+                            <button
+                              type="button"
+                              className="font-medium text-black underline-offset-4 hover:underline"
+                              disabled={saving}
+                              onClick={() => {
+                                setEditingFeedback(item);
+                                setComment(item.comment);
+                                setError("");
+                              }}
+                            >
+                              Edit
+                            </button>
+                          )}
+                        </div>
                       </div>
                       <p className="mt-2 text-sm leading-relaxed text-black">{item.comment}</p>
                     </li>
@@ -282,7 +313,7 @@ export default function ScriptReviewReader({
               </div>
             )}
             <label className="block">
-              <span className="kicker">Your feedback</span>
+              <span className="kicker">{editingFeedback ? "Edit your feedback" : "Your feedback"}</span>
               <textarea
                 className="field mt-3 min-h-[120px]"
                 value={comment}

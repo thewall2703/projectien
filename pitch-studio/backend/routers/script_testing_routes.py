@@ -13,6 +13,7 @@ from backend.schemas import (
     ScriptTestCreate,
     ScriptTestFeedbackCreate,
     ScriptTestFeedbackOut,
+    ScriptTestFeedbackUpdate,
     ScriptTestRatingOut,
     ScriptTestRatingUpsert,
     ScriptTestReviewDocument,
@@ -278,6 +279,30 @@ def add_script_test_feedback(
         comment=payload.comment,
     )
     db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _feedback_out(row, user.email)
+
+
+@router.put("/{run_id}/feedback/{feedback_id}", response_model=ScriptTestFeedbackOut)
+def update_script_test_feedback(
+    run_id: int,
+    feedback_id: int,
+    payload: ScriptTestFeedbackUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ScriptTestFeedbackOut:
+    run = db.get(ScriptTestRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Script test not found")
+    if run.status != "done":
+        raise HTTPException(status_code=409, detail="Script test is not ready for feedback")
+    row = db.get(ScriptTestFeedback, feedback_id)
+    if row is None or row.script_test_run_id != run.id:
+        raise HTTPException(status_code=404, detail="Feedback not found")
+    if row.reviewer_user_id != user.id:
+        raise HTTPException(status_code=403, detail="You can only edit your own feedback")
+    row.comment = payload.comment
     db.commit()
     db.refresh(row)
     return _feedback_out(row, user.email)

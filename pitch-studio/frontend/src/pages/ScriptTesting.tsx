@@ -224,7 +224,7 @@ function RatingPanel({
           disabled={!valid || unchanged || saving}
           onClick={save}
         >
-          Save rating
+          {existing ? "Update rating" : "Save rating"}
         </Button>
       </div>
       <p className="text-sm text-grey">
@@ -403,6 +403,7 @@ function ScriptTestingDetail({ currentUser }: { currentUser: User }) {
           <ScriptReviewReader
             document={run.review_document}
             feedback={run.feedback}
+            currentUserId={currentUser.id}
             onSaveFeedback={async (payload) => {
               const item = await api.addScriptTestFeedback(run.id, payload);
               setRun((current) =>
@@ -410,6 +411,17 @@ function ScriptTestingDetail({ currentUser }: { currentUser: User }) {
                   ? {
                       ...current,
                       feedback: [...current.feedback, item],
+                    }
+                  : current,
+              );
+            }}
+            onUpdateFeedback={async (feedbackId, comment) => {
+              const item = await api.updateScriptTestFeedback(run.id, feedbackId, comment);
+              setRun((current) =>
+                current
+                  ? {
+                      ...current,
+                      feedback: current.feedback.map((row) => (row.id === item.id ? item : row)),
                     }
                   : current,
               );

@@ -437,6 +437,18 @@ class ScriptTestFeedbackCreate(BaseModel):
         return trimmed
 
 
+class ScriptTestFeedbackUpdate(BaseModel):
+    comment: str = Field(min_length=1)
+
+    @field_validator("comment")
+    @classmethod
+    def trim_comment(cls, value: str) -> str:
+        trimmed = (value or "").strip()
+        if not trimmed:
+            raise ValueError("comment must not be empty")
+        return trimmed
+
+
 class ScriptTestFeedbackOut(BaseModel):
     id: int
     script_test_run_id: int

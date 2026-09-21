@@ -142,6 +142,12 @@ export const api = {
       headers: jsonHeaders,
       body: JSON.stringify(body),
     }),
+  updateScriptTestFeedback: (id: number, feedbackId: number, comment: string) =>
+    request<ScriptTestFeedback>(`/api/script-tests/${id}/feedback/${feedbackId}`, {
+      method: "PUT",
+      headers: jsonHeaders,
+      body: JSON.stringify({ comment }),
+    }),
   saveScriptTestRating: (id: number, rating: number) =>
     request<ScriptTestRating & { average_rating: number | null; rating_count: number }>(
       `/api/script-tests/${id}/rating`,

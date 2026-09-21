@@ -367,6 +367,41 @@ class ScriptTestingApiTests(unittest.TestCase):
         self.assertEqual(len(sentence_comments), 3)
         self.assertEqual(len([item for item in detail["feedback"] if item["target_id"] == paragraph_id]), 1)
 
+    def test_reviewer_can_edit_only_their_own_feedback(self):
+        run = self._done_run()
+        sentence_id = json.loads(run.review_document_json)["sections"][0]["paragraphs"][0]["sentences"][0]["id"]
+        self.current = self.user
+        created = self.client.post(
+            f"/api/script-tests/{run.id}/feedback",
+            json={"target_kind": "sentence", "target_id": sentence_id, "comment": "Original wording"},
+        )
+        self.assertEqual(created.status_code, 200)
+        feedback_id = created.json()["id"]
+
+        updated = self.client.put(
+            f"/api/script-tests/{run.id}/feedback/{feedback_id}",
+            json={"comment": "  Improved wording  "},
+        )
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(updated.json()["comment"], "Improved wording")
+
+        self.current = self.admin
+        forbidden = self.client.put(
+            f"/api/script-tests/{run.id}/feedback/{feedback_id}",
+            json={"comment": "Admin overwrite"},
+        )
+        self.assertEqual(forbidden.status_code, 403)
+
+        self.current = self.user
+        empty = self.client.put(
+            f"/api/script-tests/{run.id}/feedback/{feedback_id}",
+            json={"comment": "   "},
+        )
+        self.assertEqual(empty.status_code, 422)
+        detail = self.client.get(f"/api/script-tests/{run.id}").json()
+        saved = next(item for item in detail["feedback"] if item["id"] == feedback_id)
+        self.assertEqual(saved["comment"], "Improved wording")
+
     def test_feedback_blocked_before_done(self):
         row = ScriptTestRun(
             created_by_user_id=self.user.id,
