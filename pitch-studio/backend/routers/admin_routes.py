@@ -62,10 +62,11 @@ from backend.pipeline.llm import LLMError
 from backend.pipeline.style_guide import (
     DuplicateStyleTranscriptError,
     StyleTranscriptPersonaError,
-    ingest_style_transcript,
+    index_style_transcript,
     latest_style_guide_row,
     personas_for_transcripts,
     save_style_guide,
+    store_style_transcript,
     update_style_transcript_personas,
 )
 from backend.qa_extraction import (
@@ -103,10 +104,11 @@ from backend.schemas import (
     SeedCounts,
     StyleGuideIn,
     StyleGuideOut,
-    StyleTranscriptIn,
-    StyleTranscriptIngestOut,
+    StyleTranscriptIndexIn,
+    StyleTranscriptIndexOut,
     StyleTranscriptOut,
     StyleTranscriptPersonasIn,
+    StyleTranscriptUploadIn,
     SyncCounts,
     TranscriptIn,
     TranscriptIngestCounts,
@@ -426,28 +428,73 @@ def list_style_transcripts(db: Session = Depends(get_db)) -> list[StyleTranscrip
     ]
 
 
-@router.post("/style-transcripts", response_model=StyleTranscriptIngestOut)
+@router.post("/style-transcripts", response_model=StyleTranscriptOut)
 def create_style_transcript(
-    payload: StyleTranscriptIn,
+    payload: StyleTranscriptUploadIn,
     db: Session = Depends(get_db),
-) -> StyleTranscriptIngestOut:
+) -> StyleTranscriptOut:
     try:
-        result = ingest_style_transcript(
-            db,
-            payload.name,
-            payload.text,
-            persona_labels=payload.persona_labels,
-        )
+        row = store_style_transcript(db, payload.name, payload.text)
     except DuplicateStyleTranscriptError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return StyleTranscriptOut(
+        id=row.id,
+        name=row.name,
+        status=row.status,
+        created_at=row.created_at,
+        text_length=len(row.raw_text or ""),
+        persona_labels=[],
+    )
+
+
+@router.post("/style-transcripts/index", response_model=StyleTranscriptIndexOut)
+def index_stored_style_transcripts(
+    payload: StyleTranscriptIndexIn,
+    db: Session = Depends(get_db),
+) -> StyleTranscriptIndexOut:
+    transcript_ids = list(dict.fromkeys(payload.transcript_ids))
+    rows = db.query(StyleTranscript).filter(StyleTranscript.id.in_(transcript_ids)).all()
+    by_id = {row.id: row for row in rows}
+    missing = [transcript_id for transcript_id in transcript_ids if transcript_id not in by_id]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Transcript(s) not found: {', '.join(map(str, missing))}")
+    already_indexed = [by_id[transcript_id].name for transcript_id in transcript_ids if by_id[transcript_id].status == "processed"]
+    if already_indexed:
+        raise HTTPException(
+            status_code=409,
+            detail="Already indexed: " + ", ".join(already_indexed),
+        )
+
+    guides_updated: list[str] = []
+    quotes_kept = 0
+    quotes_skipped = 0
+    try:
+        for transcript_id in transcript_ids:
+            result = index_style_transcript(
+                db,
+                transcript_id,
+                persona_labels=payload.persona_labels,
+            )
+            quotes_kept += int(result["quotes_kept"])
+            quotes_skipped += int(result["quotes_skipped"])
+            for label in result["guides_updated"]:
+                if label not in guides_updated:
+                    guides_updated.append(label)
     except StyleTranscriptPersonaError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except LLMError as exc:
-        db.rollback()
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return StyleTranscriptIngestOut(**result)
+    return StyleTranscriptIndexOut(
+        transcript_ids=transcript_ids,
+        persona_labels=payload.persona_labels,
+        guides_updated=guides_updated,
+        quotes_kept=quotes_kept,
+        quotes_skipped=quotes_skipped,
+    )
 
 
 @router.put("/style-transcripts/{transcript_id}/personas", response_model=StyleTranscriptOut)

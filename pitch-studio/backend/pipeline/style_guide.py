@@ -286,7 +286,10 @@ def _transcripts_for_persona(db: Session, persona_label: str) -> list[StyleTrans
             StyleTranscriptPersona,
             StyleTranscriptPersona.style_transcript_id == StyleTranscript.id,
         )
-        .filter(StyleTranscriptPersona.persona_label == label)
+        .filter(
+            StyleTranscriptPersona.persona_label == label,
+            StyleTranscript.status == "processed",
+        )
         .order_by(StyleTranscript.id.asc())
         .all()
     )
@@ -419,27 +422,63 @@ def ingest_style_transcript(
     text: str,
     persona_labels: list[str] | None = None,
 ) -> dict[str, Any]:
+    # Preserve the legacy one-step helper for tests and internal callers.
+    validate_persona_labels(db, persona_labels)
+    transcript = store_style_transcript(db, name, text)
+    return index_style_transcript(db, transcript.id, persona_labels)
+
+
+def store_style_transcript(
+    db: Session,
+    name: str,
+    text: str,
+) -> StyleTranscript:
+    """Store a transcript in the library without indexing it."""
     title = (name or "").strip()
     raw = text or ""
     if not title or not raw.strip():
         raise ValueError("Name and transcript text are required")
-    labels = validate_persona_labels(db, persona_labels)
     digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
     if db.query(StyleTranscript).filter(StyleTranscript.text_hash == digest).first():
         raise DuplicateStyleTranscriptError("This transcript has already been uploaded")
-
-    lines = parse_webvtt(raw)
-    body = "\n".join(lines) if lines else raw
 
     try:
         transcript = StyleTranscript(
             name=title,
             raw_text=raw,
             text_hash=digest,
-            status="processed",
+            status="uploaded",
         )
         db.add(transcript)
-        db.flush()
+        db.commit()
+        db.refresh(transcript)
+    except Exception:
+        db.rollback()
+        raise
+    return transcript
+
+
+def index_style_transcript(
+    db: Session,
+    transcript_id: int,
+    persona_labels: list[str] | None = None,
+) -> dict[str, Any]:
+    """Index one stored transcript for the selected personas."""
+    transcript = db.get(StyleTranscript, transcript_id)
+    if transcript is None:
+        raise ValueError("Style transcript not found")
+    if transcript.status == "processed":
+        raise ValueError(f"“{transcript.name}” has already been indexed")
+    labels = validate_persona_labels(db, persona_labels)
+    lines = parse_webvtt(transcript.raw_text or "")
+    body = "\n".join(lines) if lines else (transcript.raw_text or "")
+
+    transcript.status = "indexing"
+    db.commit()
+    try:
+        transcript = db.get(StyleTranscript, transcript_id)
+        if transcript is None:
+            raise ValueError("Style transcript not found")
         _set_transcript_personas(db, transcript.id, labels)
 
         guides_updated: list[str] = []
@@ -456,15 +495,20 @@ def ingest_style_transcript(
 
         quotes = _harvest_quotes(
             db,
-            source_name=title,
+            source_name=transcript.name,
             source_file_id=f"style-{transcript.id}",
             source_style_transcript_id=transcript.id,
             pratham_text=pratham_lines(lines),
         )
+        transcript.status = "processed"
         db.commit()
         db.refresh(transcript)
     except Exception:
         db.rollback()
+        failed = db.get(StyleTranscript, transcript_id)
+        if failed is not None:
+            failed.status = "failed"
+            db.commit()
         raise
     return {
         "guide_version": max_version,

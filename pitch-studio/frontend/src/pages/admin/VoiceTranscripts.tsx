@@ -155,8 +155,9 @@ export default function VoiceTranscripts() {
   const [name, setName] = useState("");
   const [text, setText] = useState("");
   const [personaOptions, setPersonaOptions] = useState<PersonaOption[]>([]);
-  const [selectedPersonas, setSelectedPersonas] = useState<string[]>([]);
-  const [personaFilter, setPersonaFilter] = useState("");
+  const [selectedTranscriptIds, setSelectedTranscriptIds] = useState<number[]>([]);
+  const [indexPersonas, setIndexPersonas] = useState<string[]>([]);
+  const [indexPersonaFilter, setIndexPersonaFilter] = useState("");
   const [rows, setRows] = useState<StyleTranscriptRow[]>([]);
   const [runs, setRuns] = useState<QaExtractionRun[]>([]);
   const [guidePersona, setGuidePersona] = useState("");
@@ -223,23 +224,39 @@ export default function VoiceTranscripts() {
     setBusy("upload");
     setError("");
     setSuccess("");
-    const personasForUpload = [...selectedPersonas];
     try {
-      const result = await api.styleTranscriptCreate(name.trim(), text, personasForUpload);
-      const updated = result.guides_updated?.length
-        ? result.guides_updated.join(", ")
-        : personasForUpload.join(", ");
-      setSuccess(
-        `Updated style guides for ${updated} — ${result.quotes_kept} quotes added`,
-      );
+      const result = await api.styleTranscriptCreate(name.trim(), text);
+      setSuccess(`“${result.name}” was added to the transcript library. Select it below when you are ready to index it.`);
       setName("");
       setText("");
-      setSelectedPersonas([]);
-      setPersonaFilter("");
       if (fileRef.current) fileRef.current.value = "";
-      await reload(personasForUpload[0] || guidePersona);
+      await reload();
     } catch (err) {
       setError(errMessage(err));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const indexSelected = async () => {
+    if (!selectedTranscriptIds.length || !indexPersonas.length) return;
+    setBusy("index");
+    setError("");
+    setSuccess("");
+    const transcriptIds = [...selectedTranscriptIds];
+    const personas = [...indexPersonas];
+    try {
+      const result = await api.styleTranscriptIndex(transcriptIds, personas);
+      setSuccess(
+        `Indexed ${result.transcript_ids.length} transcript${result.transcript_ids.length === 1 ? "" : "s"} for ${result.guides_updated.join(", ")} — ${result.quotes_kept} quotes added.`,
+      );
+      setSelectedTranscriptIds([]);
+      setIndexPersonas([]);
+      setIndexPersonaFilter("");
+      await reload(personas[0] || guidePersona);
+    } catch (err) {
+      setError(errMessage(err));
+      await reload();
     } finally {
       setBusy("");
     }
@@ -331,15 +348,16 @@ export default function VoiceTranscripts() {
   const latestRunFor = (transcriptId: number) =>
     runs.find((run) => run.style_transcript_id === transcriptId) || null;
 
-  const canSubmit =
-    Boolean(name.trim() && text.trim() && selectedPersonas.length > 0) && !busy;
+  const canSubmit = Boolean(name.trim() && text.trim()) && !busy;
+  const unindexedRows = rows.filter((row) => row.status !== "processed");
+  const canIndex = selectedTranscriptIds.length > 0 && indexPersonas.length > 0 && !busy;
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-10 md:px-10">
       <h1 className="font-display text-3xl tracking-tight text-black">Style guide</h1>
       <p className="mt-2 max-w-2xl text-sm text-grey-dark">
-        Upload or paste an AMA or webinar transcript, then choose which named personas it applies to.
-        Each persona keeps its own style guide and only uses quotes from transcripts assigned to it.
+        Add AMA or webinar transcripts to the library first. When you are ready, select unindexed
+        transcripts, choose the personas they apply to, and index them.
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-4">
         <ErrorBanner message={error} />
@@ -350,8 +368,15 @@ export default function VoiceTranscripts() {
       </div>
 
       <div className="glass-panel mt-6 space-y-4 p-6">
+        <div>
+          <p className="kicker">Step 1</p>
+          <h2 className="mt-2 font-display text-xl text-black">Add a meeting transcript</h2>
+          <p className="mt-1 text-sm text-grey">
+            The VTT is stored in the library without changing any style guide.
+          </p>
+        </div>
         <label className="block text-sm text-grey-dark">
-          Name
+          Meeting name
           <input
             className="field mt-1"
             type="text"
@@ -369,23 +394,6 @@ export default function VoiceTranscripts() {
             placeholder="Paste WEBVTT or plain text"
           />
         </label>
-        <div>
-          <p className="text-sm text-grey-dark">Valid for personas</p>
-          <p className="mt-1 text-xs text-grey">
-            Select every named audience persona this transcript should enrich. Recipe duration/channel
-            variants under the same name share one guide.
-          </p>
-          <div className="mt-3">
-            <PersonaMultiselect
-              options={personaOptions}
-              selected={selectedPersonas}
-              onChange={setSelectedPersonas}
-              disabled={Boolean(busy)}
-              filter={personaFilter}
-              onFilterChange={setPersonaFilter}
-            />
-          </div>
-        </div>
         <div className="flex flex-wrap items-center gap-3">
           <input
             ref={fileRef}
@@ -395,14 +403,97 @@ export default function VoiceTranscripts() {
             onChange={(e) => onFile(e.target.files?.[0] || null)}
           />
           <Button variant="accent" loading={busy === "upload"} disabled={!canSubmit} onClick={submit}>
-            {busy === "upload" ? "Distilling style guide…" : "Distill style guide"}
+            {busy === "upload" ? "Adding to library…" : "Add to library"}
           </Button>
         </div>
       </div>
 
+      <div className="glass-panel mt-8 space-y-5 p-6">
+        <div>
+          <p className="kicker">Step 2</p>
+          <h2 className="mt-2 font-display text-xl text-black">Index stored transcripts</h2>
+          <p className="mt-1 text-sm text-grey">
+            Choose one or more unindexed meetings and every persona whose style guide should use them.
+          </p>
+        </div>
+        {unindexedRows.length ? (
+          <>
+            <div className="rounded-xl border border-black/10">
+              <ul className="divide-y divide-black/5">
+                {unindexedRows.map((row) => {
+                  const checked = selectedTranscriptIds.includes(row.id);
+                  return (
+                    <li key={row.id}>
+                      <label className="flex min-h-11 cursor-pointer items-center gap-3 px-4 py-3 hover:bg-black/[0.02]">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={Boolean(busy) || row.status === "indexing"}
+                          onChange={() =>
+                            setSelectedTranscriptIds((current) =>
+                              checked
+                                ? current.filter((id) => id !== row.id)
+                                : [...current, row.id],
+                            )
+                          }
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium text-black">{row.name}</span>
+                          <span className="mt-0.5 block text-xs text-grey">
+                            {row.text_length.toLocaleString()} chars · {row.status === "failed" ? "Indexing failed — retry available" : row.status}
+                          </span>
+                        </span>
+                        <StatusBadge status={row.status} />
+                      </label>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+            <div>
+              <p className="text-sm text-grey-dark">Applicable personas</p>
+              <p className="mt-1 text-xs text-grey">
+                The selected meetings will enrich each selected persona. Duration and channel variants
+                under the same persona share one guide.
+              </p>
+              <div className="mt-3">
+                <PersonaMultiselect
+                  options={personaOptions}
+                  selected={indexPersonas}
+                  onChange={setIndexPersonas}
+                  disabled={Boolean(busy)}
+                  filter={indexPersonaFilter}
+                  onFilterChange={setIndexPersonaFilter}
+                />
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                variant="accent"
+                loading={busy === "index"}
+                disabled={!canIndex}
+                onClick={indexSelected}
+              >
+                {busy === "index"
+                  ? "Indexing transcripts…"
+                  : `Index selected${selectedTranscriptIds.length ? ` (${selectedTranscriptIds.length})` : ""}`}
+              </Button>
+              <span className="text-xs text-grey">
+                Indexing can take several minutes and updates the selected persona guides.
+              </span>
+            </div>
+          </>
+        ) : (
+          <EmptyState
+            title="No unindexed transcripts"
+            description="Add a meeting VTT above. It will appear here when it is ready to index."
+          />
+        )}
+      </div>
+
       <div className="glass-panel mt-8 overflow-x-auto">
         <div className="flex items-center justify-between px-4 py-3">
-          <h2 className="font-display text-xl text-black">Uploaded transcripts</h2>
+          <h2 className="font-display text-xl text-black">Transcript library</h2>
         </div>
         <table className="min-w-full text-left text-sm">
           <thead className="border-b border-black/10 text-grey">
@@ -501,18 +592,23 @@ export default function VoiceTranscripts() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex flex-col gap-2">
-                        {!editingThis && (
+                        {!editingThis && row.status === "processed" && (
                           <Button disabled={Boolean(busy)} onClick={() => startEditPersonas(row)}>
                             Edit personas
                           </Button>
                         )}
-                        <Button
-                          loading={busy === `extract-${row.id}`}
-                          disabled={Boolean(busy)}
-                          onClick={() => extractQa(row.id)}
-                        >
-                          Extract Q&As
-                        </Button>
+                        {row.status === "processed" && (
+                          <Button
+                            loading={busy === `extract-${row.id}`}
+                            disabled={Boolean(busy)}
+                            onClick={() => extractQa(row.id)}
+                          >
+                            Extract Q&As
+                          </Button>
+                        )}
+                        {row.status !== "processed" && (
+                          <span className="text-xs text-grey">Select in Step 2 to index</span>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -524,7 +620,7 @@ export default function VoiceTranscripts() {
           <div className="p-6">
             <EmptyState
               title="No transcripts yet"
-              description="Paste or upload a WEBVTT or plain-text transcript and choose personas to start a guide."
+              description="Add a meeting name and WEBVTT file above to start the transcript library."
             />
           </div>
         )}

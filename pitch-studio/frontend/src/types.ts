@@ -431,6 +431,14 @@ export type StyleTranscriptCreateResult = {
   guides_updated: string[];
 };
 
+export type StyleTranscriptIndexResult = {
+  transcript_ids: number[];
+  persona_labels: string[];
+  guides_updated: string[];
+  quotes_kept: number;
+  quotes_skipped: number;
+};
+
 export type QaExtractionRun = {
   id: number;
   style_transcript_id: number;

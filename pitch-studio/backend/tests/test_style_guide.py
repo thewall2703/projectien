@@ -12,10 +12,12 @@ from backend.pipeline.prompts import script_messages, voice_review_messages
 from backend.pipeline.style_guide import (
     DuplicateStyleTranscriptError,
     StyleTranscriptPersonaError,
+    index_style_transcript,
     ingest_style_transcript,
     latest_style_guide,
     parse_webvtt,
     pratham_lines,
+    store_style_transcript,
     update_style_transcript_personas,
 )
 
@@ -146,6 +148,30 @@ class IngestStyleTranscriptTests(unittest.TestCase):
                 }
             ]
         }
+
+    def test_stores_unindexed_then_indexes_explicitly(self):
+        stored = store_style_transcript(self.db, "AMA staged", SAMPLE_VTT)
+        self.assertEqual(stored.status, "uploaded")
+        self.assertEqual(self.db.query(StyleTranscriptPersona).count(), 0)
+        self.assertEqual(self.db.query(VoiceStyleGuide).count(), 0)
+        self.assertEqual(self.db.query(FounderQuote).count(), 0)
+
+        with mock.patch("backend.pipeline.style_guide.chat_json", side_effect=self._fake_chat_json), mock.patch(
+            "backend.transcripts.chat_json", side_effect=self._fake_chat_json
+        ):
+            result = index_style_transcript(
+                self.db,
+                stored.id,
+                ["International / NRI applicant"],
+            )
+
+        self.db.refresh(stored)
+        self.assertEqual(stored.status, "processed")
+        self.assertEqual(result["transcript_id"], stored.id)
+        self.assertEqual(result["persona_labels"], ["International / NRI applicant"])
+        self.assertEqual(self.db.query(StyleTranscriptPersona).count(), 1)
+        self.assertTrue(latest_style_guide(self.db, "International / NRI applicant"))
+        self.assertGreaterEqual(self.db.query(FounderQuote).count(), 1)
 
     def test_creates_persona_scoped_guides_and_rejects_duplicate(self):
         with mock.patch("backend.pipeline.style_guide.chat_json", side_effect=self._fake_chat_json), mock.patch(

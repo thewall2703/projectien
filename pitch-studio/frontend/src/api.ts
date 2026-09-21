@@ -11,7 +11,7 @@ import type {
   ScriptTestRun,
   ScriptTestRunListItem,
   StyleGuide,
-  StyleTranscriptCreateResult,
+  StyleTranscriptIndexResult,
   StyleTranscriptRow,
 } from "./types";
 
@@ -246,11 +246,17 @@ export const api = {
   unfreezeDeckTopic: (id: number) =>
     request<DeckTopicRow>(`/api/admin/deck-topics/${id}/unfreeze`, { method: "POST" }),
   styleTranscriptList: () => request<StyleTranscriptRow[]>("/api/admin/style-transcripts"),
-  styleTranscriptCreate: (name: string, text: string, personaLabels: string[]) =>
-    request<StyleTranscriptCreateResult>("/api/admin/style-transcripts", {
+  styleTranscriptCreate: (name: string, text: string) =>
+    request<StyleTranscriptRow>("/api/admin/style-transcripts", {
       method: "POST",
       headers: jsonHeaders,
-      body: JSON.stringify({ name, text, persona_labels: personaLabels }),
+      body: JSON.stringify({ name, text }),
+    }),
+  styleTranscriptIndex: (transcriptIds: number[], personaLabels: string[]) =>
+    request<StyleTranscriptIndexResult>("/api/admin/style-transcripts/index", {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ transcript_ids: transcriptIds, persona_labels: personaLabels }),
     }),
   styleTranscriptSetPersonas: (transcriptId: number, personaLabels: string[]) =>
     request<StyleTranscriptRow>(`/api/admin/style-transcripts/${transcriptId}/personas`, {

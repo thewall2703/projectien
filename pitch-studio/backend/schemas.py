@@ -549,10 +549,22 @@ class TranscriptIngestCounts(BaseModel):
     dropped: int = 0
 
 
-class StyleTranscriptIn(BaseModel):
+class StyleTranscriptUploadIn(BaseModel):
     name: str
     text: str
+
+
+class StyleTranscriptIndexIn(BaseModel):
+    transcript_ids: list[int] = Field(min_length=1)
     persona_labels: list[str] = Field(min_length=1)
+
+
+class StyleTranscriptIndexOut(BaseModel):
+    transcript_ids: list[int] = Field(default_factory=list)
+    persona_labels: list[str] = Field(default_factory=list)
+    guides_updated: list[str] = Field(default_factory=list)
+    quotes_kept: int = 0
+    quotes_skipped: int = 0
 
 
 class StyleTranscriptPersonasIn(BaseModel):
