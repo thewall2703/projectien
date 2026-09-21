@@ -154,6 +154,9 @@ function PersonaMultiselect({
 export default function VoiceTranscripts() {
   const [name, setName] = useState("");
   const [text, setText] = useState("");
+  const [selectedFileName, setSelectedFileName] = useState("");
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
   const [personaOptions, setPersonaOptions] = useState<PersonaOption[]>([]);
   const [selectedTranscriptIds, setSelectedTranscriptIds] = useState<number[]>([]);
   const [indexPersonas, setIndexPersonas] = useState<string[]>([]);
@@ -209,6 +212,7 @@ export default function VoiceTranscripts() {
 
   const onFile = (file: File | null) => {
     if (!file) return;
+    setSelectedFileName(file.name);
     const reader = new FileReader();
     reader.onload = () => {
       const value = typeof reader.result === "string" ? reader.result : "";
@@ -229,6 +233,8 @@ export default function VoiceTranscripts() {
       setSuccess(`“${result.name}” was added to the transcript library. Select it below when you are ready to index it.`);
       setName("");
       setText("");
+      setSelectedFileName("");
+      setPasteOpen(false);
       if (fileRef.current) fileRef.current.value = "";
       await reload();
     } catch (err) {
@@ -351,64 +357,162 @@ export default function VoiceTranscripts() {
   const canSubmit = Boolean(name.trim() && text.trim()) && !busy;
   const unindexedRows = rows.filter((row) => row.status !== "processed");
   const canIndex = selectedTranscriptIds.length > 0 && indexPersonas.length > 0 && !busy;
+  const selectableUnindexedIds = unindexedRows
+    .filter((row) => row.status !== "indexing")
+    .map((row) => row.id);
+  const allUnindexedSelected =
+    selectableUnindexedIds.length > 0 &&
+    selectableUnindexedIds.every((id) => selectedTranscriptIds.includes(id));
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-10 md:px-10">
-      <h1 className="font-display text-3xl tracking-tight text-black">Style guide</h1>
-      <p className="mt-2 max-w-2xl text-sm text-grey-dark">
-        Add AMA or webinar transcripts to the library first. When you are ready, select unindexed
-        transcripts, choose the personas they apply to, and index them.
-      </p>
-      <div className="mt-3 flex flex-wrap items-center gap-4">
-        <ErrorBanner message={error} />
-        {success && <p className="text-sm text-black">{success}</p>}
-        <Link className="text-sm font-medium text-black underline-offset-4 hover:underline" to="/admin/qa-review">
-          Open AMA Q&A review
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="kicker">Founder voice</p>
+          <h1 className="mt-2 font-display text-4xl tracking-tight text-black">Transcript library</h1>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-grey-dark">
+            Upload meeting transcripts now and decide when—and for which personas—they should
+            influence script style.
+          </p>
+        </div>
+        <Link className="btn min-h-11" to="/admin/qa-review">
+          Open AMA Q&amp;A review
         </Link>
       </div>
 
-      <div className="glass-panel mt-6 space-y-4 p-6">
+      {(error || success) && (
+        <div className="mt-5">
+          <ErrorBanner message={error} />
+          {success && (
+            <div className="rounded-xl border border-black/10 bg-white/60 px-4 py-3 text-sm text-black" role="status">
+              {success}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="mt-8 grid gap-3 sm:grid-cols-2">
+        <div className="rounded-2xl border border-black/10 bg-white/50 px-4 py-3">
+          <div className="flex items-center gap-3">
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-black text-sm font-semibold text-white">1</span>
+            <div>
+              <p className="text-sm font-medium text-black">Add to library</p>
+              <p className="text-xs text-grey">Store the meeting name and VTT safely.</p>
+            </div>
+          </div>
+        </div>
+        <div className="rounded-2xl border border-black/10 bg-white/50 px-4 py-3">
+          <div className="flex items-center gap-3">
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-black text-sm font-semibold text-white">2</span>
+            <div>
+              <p className="text-sm font-medium text-black">Assign and index</p>
+              <p className="text-xs text-grey">Choose meetings and applicable personas.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="glass-panel mt-5 space-y-5 p-5 md:p-6">
         <div>
           <p className="kicker">Step 1</p>
-          <h2 className="mt-2 font-display text-xl text-black">Add a meeting transcript</h2>
+          <h2 className="mt-2 font-display text-2xl text-black">Add a meeting transcript</h2>
           <p className="mt-1 text-sm text-grey">
-            The VTT is stored in the library without changing any style guide.
+            Nothing is indexed until you complete Step 2.
           </p>
         </div>
-        <label className="block text-sm text-grey-dark">
-          Meeting name
-          <input
-            className="field mt-1"
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="AMA 12 March"
-          />
-        </label>
-        <label className="block text-sm text-grey-dark">
-          Transcript
-          <textarea
-            className="field mt-1 min-h-[180px]"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder="Paste WEBVTT or plain text"
-          />
-        </label>
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.8fr)]">
+          <label className="block text-sm font-medium text-grey-dark">
+            Meeting name
+            <input
+              className="field mt-2"
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Raising capital AMA · 13 September"
+            />
+          </label>
+          <div>
+            <p className="text-sm font-medium text-grey-dark">Transcript file</p>
+            <button
+              type="button"
+              className={`mt-2 flex min-h-28 w-full flex-col items-center justify-center rounded-2xl border border-dashed px-5 py-4 text-center transition ${
+                dragActive
+                  ? "border-black bg-brand-yellow/15"
+                  : selectedFileName
+                    ? "border-black/25 bg-white/75"
+                    : "border-black/15 bg-white/40 hover:border-black/35 hover:bg-white/70"
+              }`}
+              disabled={Boolean(busy)}
+              onClick={() => fileRef.current?.click()}
+              onDragEnter={(event) => {
+                event.preventDefault();
+                setDragActive(true);
+              }}
+              onDragOver={(event) => event.preventDefault()}
+              onDragLeave={() => setDragActive(false)}
+              onDrop={(event) => {
+                event.preventDefault();
+                setDragActive(false);
+                onFile(event.dataTransfer.files?.[0] || null);
+              }}
+            >
+              <span className="text-sm font-medium text-black">
+                {selectedFileName || "Drop a .vtt file here"}
+              </span>
+              <span className="mt-1 text-xs text-grey">
+                {selectedFileName ? `${text.length.toLocaleString()} characters loaded` : "or click to choose a file"}
+              </span>
+            </button>
+          </div>
           <input
             ref={fileRef}
             type="file"
             accept=".vtt,.txt,text/vtt,text/plain"
-            className="text-sm text-grey-dark"
+            className="hidden"
             onChange={(e) => onFile(e.target.files?.[0] || null)}
           />
-          <Button variant="accent" loading={busy === "upload"} disabled={!canSubmit} onClick={submit}>
-            {busy === "upload" ? "Adding to library…" : "Add to library"}
+        </div>
+        <div>
+          <button
+            type="button"
+            className="text-sm font-medium text-black underline-offset-4 hover:underline"
+            onClick={() => setPasteOpen((open) => !open)}
+          >
+            {pasteOpen ? "Hide pasted transcript" : "No file? Paste transcript text instead"}
+          </button>
+          {pasteOpen && (
+            <label className="mt-3 block text-sm text-grey-dark">
+              Transcript text
+              <textarea
+                className="field mt-2 min-h-[160px]"
+                value={text}
+                onChange={(e) => {
+                  setText(e.target.value);
+                  setSelectedFileName("");
+                  if (fileRef.current) fileRef.current.value = "";
+                }}
+                placeholder="Paste WEBVTT or plain text"
+              />
+            </label>
+          )}
+        </div>
+        <div className="flex flex-col gap-2 border-t border-black/8 pt-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs text-grey">
+            {canSubmit ? "Ready to add. You will choose personas in the next step." : "Add a meeting name and transcript file to continue."}
+          </p>
+          <Button
+            variant="accent"
+            className="min-h-11 w-full sm:w-auto"
+            loading={busy === "upload"}
+            disabled={!canSubmit}
+            onClick={submit}
+          >
+            {busy === "upload" ? "Adding to library…" : "Add transcript"}
           </Button>
         </div>
       </div>
 
-      <div className="glass-panel mt-8 space-y-5 p-6">
+      <div id="transcript-indexing" className="glass-panel mt-8 scroll-mt-24 space-y-5 p-5 md:p-6">
         <div>
           <p className="kicker">Step 2</p>
           <h2 className="mt-2 font-display text-xl text-black">Index stored transcripts</h2>
@@ -418,45 +522,71 @@ export default function VoiceTranscripts() {
         </div>
         {unindexedRows.length ? (
           <>
-            <div className="rounded-xl border border-black/10">
-              <ul className="divide-y divide-black/5">
-                {unindexedRows.map((row) => {
-                  const checked = selectedTranscriptIds.includes(row.id);
-                  return (
-                    <li key={row.id}>
-                      <label className="flex min-h-11 cursor-pointer items-center gap-3 px-4 py-3 hover:bg-black/[0.02]">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          disabled={Boolean(busy) || row.status === "indexing"}
-                          onChange={() =>
-                            setSelectedTranscriptIds((current) =>
-                              checked
-                                ? current.filter((id) => id !== row.id)
-                                : [...current, row.id],
-                            )
-                          }
-                        />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-medium text-black">{row.name}</span>
-                          <span className="mt-0.5 block text-xs text-grey">
-                            {row.text_length.toLocaleString()} chars · {row.status === "failed" ? "Indexing failed — retry available" : row.status}
-                          </span>
-                        </span>
-                        <StatusBadge status={row.status} />
-                      </label>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-            <div>
-              <p className="text-sm text-grey-dark">Applicable personas</p>
-              <p className="mt-1 text-xs text-grey">
-                The selected meetings will enrich each selected persona. Duration and channel variants
-                under the same persona share one guide.
-              </p>
-              <div className="mt-3">
+            <div className="grid gap-6 lg:grid-cols-2">
+              <div>
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium text-black">1. Choose meetings</p>
+                    <p className="mt-0.5 text-xs text-grey">{selectedTranscriptIds.length} selected</p>
+                  </div>
+                  {selectableUnindexedIds.length > 1 && (
+                    <button
+                      type="button"
+                      className="text-xs font-medium text-black underline-offset-4 hover:underline"
+                      disabled={Boolean(busy)}
+                      onClick={() =>
+                        setSelectedTranscriptIds(allUnindexedSelected ? [] : selectableUnindexedIds)
+                      }
+                    >
+                      {allUnindexedSelected ? "Clear all" : "Select all"}
+                    </button>
+                  )}
+                </div>
+                <div className="max-h-[26rem] overflow-y-auto rounded-xl border border-black/10 bg-white/40">
+                  <ul className="divide-y divide-black/5">
+                    {unindexedRows.map((row) => {
+                      const checked = selectedTranscriptIds.includes(row.id);
+                      return (
+                        <li key={row.id}>
+                          <label
+                            className={`flex min-h-14 cursor-pointer items-center gap-3 px-4 py-3 transition hover:bg-white/70 ${
+                              checked ? "bg-brand-yellow/10" : ""
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={Boolean(busy) || row.status === "indexing"}
+                              onChange={() =>
+                                setSelectedTranscriptIds((current) =>
+                                  checked
+                                    ? current.filter((id) => id !== row.id)
+                                    : [...current, row.id],
+                                )
+                              }
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-sm font-medium text-black">{row.name}</span>
+                              <span className="mt-0.5 block text-xs text-grey">
+                                {row.text_length.toLocaleString()} characters
+                                {row.status === "failed" ? " · Previous attempt failed" : ""}
+                              </span>
+                            </span>
+                            <StatusBadge status={row.status} />
+                          </label>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              </div>
+              <div>
+                <div className="mb-3">
+                  <p className="text-sm font-medium text-black">2. Choose applicable personas</p>
+                  <p className="mt-0.5 text-xs text-grey">
+                    All selected meetings will enrich these persona guides.
+                  </p>
+                </div>
                 <PersonaMultiselect
                   options={personaOptions}
                   selected={indexPersonas}
@@ -467,9 +597,15 @@ export default function VoiceTranscripts() {
                 />
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-col gap-3 border-t border-black/8 pt-5 sm:flex-row sm:items-center sm:justify-between">
+              <span className="text-xs text-grey">
+                {selectedTranscriptIds.length && indexPersonas.length
+                  ? `${selectedTranscriptIds.length} meeting${selectedTranscriptIds.length === 1 ? "" : "s"} will be indexed for ${indexPersonas.length} persona${indexPersonas.length === 1 ? "" : "s"}.`
+                  : "Select at least one meeting and one persona to continue."}
+              </span>
               <Button
                 variant="accent"
+                className="min-h-11 w-full sm:w-auto"
                 loading={busy === "index"}
                 disabled={!canIndex}
                 onClick={indexSelected}
@@ -478,9 +614,6 @@ export default function VoiceTranscripts() {
                   ? "Indexing transcripts…"
                   : `Index selected${selectedTranscriptIds.length ? ` (${selectedTranscriptIds.length})` : ""}`}
               </Button>
-              <span className="text-xs text-grey">
-                Indexing can take several minutes and updates the selected persona guides.
-              </span>
             </div>
           </>
         ) : (
@@ -491,140 +624,142 @@ export default function VoiceTranscripts() {
         )}
       </div>
 
-      <div className="glass-panel mt-8 overflow-x-auto">
-        <div className="flex items-center justify-between px-4 py-3">
-          <h2 className="font-display text-xl text-black">Transcript library</h2>
+      <section className="mt-10">
+        <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p className="kicker">All meetings</p>
+            <h2 className="mt-2 font-display text-2xl text-black">Transcript library</h2>
+          </div>
+          {!loading && <span className="text-sm text-grey">{rows.length} total</span>}
         </div>
-        <table className="min-w-full text-left text-sm">
-          <thead className="border-b border-black/10 text-grey">
-            <tr>
-              <th className="px-4 py-3 font-medium">Name</th>
-              <th className="px-4 py-3 font-medium">Personas</th>
-              <th className="px-4 py-3 font-medium">Status</th>
-              <th className="px-4 py-3 font-medium">Length</th>
-              <th className="px-4 py-3 font-medium">Q&A extraction</th>
-              <th className="px-4 py-3 font-medium">Uploaded</th>
-              <th className="px-4 py-3 font-medium">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading &&
-              Array.from({ length: 3 }).map((_, index) => (
-                <tr key={`sk-${index}`} className="border-t border-black/5">
-                  {Array.from({ length: 7 }).map((__, cell) => (
-                    <td key={cell} className="px-4 py-3">
-                      <Skeleton className="h-4 w-28" />
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            {!loading &&
-              rows.map((row) => {
-                const run = latestRunFor(row.id);
-                const editingThis = editingRowId === row.id;
-                return (
-                  <tr key={row.id} className="border-t border-black/5 align-top">
-                    <td className="max-w-xs truncate px-4 py-3 text-black">{row.name}</td>
-                    <td className="px-4 py-3">
-                      {editingThis ? (
-                        <div className="min-w-[280px] space-y-3">
-                          <PersonaMultiselect
-                            options={personaOptions}
-                            selected={editPersonas}
-                            onChange={setEditPersonas}
-                            disabled={Boolean(busy)}
-                            filter={editFilter}
-                            onFilterChange={setEditFilter}
-                          />
-                          <div className="flex flex-wrap gap-2">
-                            <Button
-                              variant="accent"
-                              loading={busy === `personas-${row.id}`}
-                              disabled={editPersonas.length === 0 || Boolean(busy)}
-                              onClick={saveEditPersonas}
-                            >
-                              Save personas
-                            </Button>
-                            <Button
-                              disabled={Boolean(busy)}
-                              onClick={() => {
-                                setEditingRowId(null);
-                                setEditPersonas([]);
-                              }}
-                            >
-                              Cancel
-                            </Button>
-                          </div>
-                        </div>
-                      ) : row.persona_labels?.length ? (
-                        <div className="flex max-w-sm flex-wrap gap-1.5">
-                          {row.persona_labels.map((label) => (
-                            <span
-                              key={label}
-                              className="rounded-full border border-black/10 bg-black/[0.03] px-2.5 py-0.5 text-xs text-black"
-                            >
-                              {label}
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <span className="text-xs text-grey">None assigned</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <StatusBadge status={row.status} />
-                    </td>
-                    <td className="px-4 py-3 text-black">{row.text_length.toLocaleString()} chars</td>
-                    <td className="px-4 py-3 text-grey">
-                      {run ? (
-                        <span>
-                          <StatusBadge status={run.status} />{" "}
-                          <span className="text-xs">
-                            {run.candidate_count ? `${run.candidate_count} candidates` : run.stage || ""}
-                          </span>
-                        </span>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-grey">
-                      {row.created_at ? new Date(row.created_at).toLocaleString() : "—"}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-col gap-2">
-                        {!editingThis && row.status === "processed" && (
-                          <Button disabled={Boolean(busy)} onClick={() => startEditPersonas(row)}>
-                            Edit personas
-                          </Button>
-                        )}
-                        {row.status === "processed" && (
-                          <Button
-                            loading={busy === `extract-${row.id}`}
-                            disabled={Boolean(busy)}
-                            onClick={() => extractQa(row.id)}
-                          >
-                            Extract Q&As
-                          </Button>
-                        )}
-                        {row.status !== "processed" && (
-                          <span className="text-xs text-grey">Select in Step 2 to index</span>
-                        )}
+        <div className="space-y-3">
+          {loading &&
+            Array.from({ length: 3 }).map((_, index) => (
+              <div key={`sk-${index}`} className="glass-panel space-y-3 p-5">
+                <div className="flex items-center justify-between gap-4">
+                  <Skeleton className="h-5 w-56" />
+                  <Skeleton className="h-6 w-20 rounded-full" />
+                </div>
+                <Skeleton className="h-4 w-80 max-w-full" />
+              </div>
+            ))}
+          {!loading &&
+            rows.map((row) => {
+              const run = latestRunFor(row.id);
+              const editingThis = editingRowId === row.id;
+              return (
+                <article key={row.id} className="glass-panel p-5">
+                  <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="truncate font-medium text-black">{row.name}</h3>
+                        <StatusBadge status={row.status} />
                       </div>
-                    </td>
-                  </tr>
-                );
-              })}
-          </tbody>
-        </table>
-        {!loading && rows.length === 0 && (
-          <div className="p-6">
+                      <p className="mt-1 text-xs text-grey">
+                        {row.text_length.toLocaleString()} characters
+                        {row.created_at ? ` · Added ${new Date(row.created_at).toLocaleString()}` : ""}
+                      </p>
+                      {!editingThis && (
+                        <div className="mt-3 flex flex-wrap gap-1.5">
+                          {row.persona_labels?.length ? (
+                            row.persona_labels.map((label) => (
+                              <span
+                                key={label}
+                                className="rounded-full border border-black/10 bg-black/[0.03] px-2.5 py-1 text-xs text-black"
+                              >
+                                {label}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-xs text-grey">
+                              {row.status === "processed" ? "No personas assigned" : "Waiting to be indexed"}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      {run && (
+                        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-grey">
+                          <span>Q&amp;A extraction:</span>
+                          <StatusBadge status={run.status} />
+                          <span>{run.candidate_count ? `${run.candidate_count} candidates` : run.stage || ""}</span>
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex shrink-0 flex-wrap gap-2">
+                      {!editingThis && row.status === "processed" && (
+                        <Button disabled={Boolean(busy)} onClick={() => startEditPersonas(row)}>
+                          Edit personas
+                        </Button>
+                      )}
+                      {row.status === "processed" && (
+                        <Button
+                          loading={busy === `extract-${row.id}`}
+                          disabled={Boolean(busy)}
+                          onClick={() => extractQa(row.id)}
+                        >
+                          Extract Q&amp;As
+                        </Button>
+                      )}
+                      {row.status !== "processed" && (
+                        <button
+                          type="button"
+                          className="text-sm font-medium text-black underline-offset-4 hover:underline"
+                          onClick={() => {
+                            setSelectedTranscriptIds([row.id]);
+                            document.getElementById("transcript-indexing")?.scrollIntoView({
+                              behavior: "smooth",
+                              block: "start",
+                            });
+                          }}
+                        >
+                          Select to index
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {editingThis && (
+                    <div className="mt-5 space-y-3 border-t border-black/8 pt-5">
+                      <p className="text-sm font-medium text-black">Edit applicable personas</p>
+                      <PersonaMultiselect
+                        options={personaOptions}
+                        selected={editPersonas}
+                        onChange={setEditPersonas}
+                        disabled={Boolean(busy)}
+                        filter={editFilter}
+                        onFilterChange={setEditFilter}
+                      />
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          variant="accent"
+                          loading={busy === `personas-${row.id}`}
+                          disabled={editPersonas.length === 0 || Boolean(busy)}
+                          onClick={saveEditPersonas}
+                        >
+                          Save personas
+                        </Button>
+                        <Button
+                          disabled={Boolean(busy)}
+                          onClick={() => {
+                            setEditingRowId(null);
+                            setEditPersonas([]);
+                          }}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </article>
+              );
+            })}
+          {!loading && rows.length === 0 && (
             <EmptyState
               title="No transcripts yet"
               description="Add a meeting name and WEBVTT file above to start the transcript library."
             />
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      </section>
 
       <div className="glass-panel mt-8 space-y-4 p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
