@@ -315,6 +315,7 @@ export default function ScriptReviewReader({
             <label className="block">
               <span className="kicker">{editingFeedback ? "Edit your feedback" : "Your feedback"}</span>
               <textarea
+                data-modal-autofocus
                 className="field mt-3 min-h-[120px]"
                 value={comment}
                 onChange={(event) => setComment(event.target.value)}

@@ -17,6 +17,11 @@ export default function Modal({
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     if (!open) return;
@@ -25,26 +30,28 @@ export default function Modal({
     document.body.style.overflow = "hidden";
 
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") onCloseRef.current();
     };
     window.addEventListener("keydown", onKey);
 
-    // Focus the first focusable control (usually the textarea).
-    requestAnimationFrame(() => {
+    const focusFrame = requestAnimationFrame(() => {
       const root = panelRef.current;
       if (!root) return;
-      const focusable = root.querySelector<HTMLElement>(
-        "textarea, input, button, [tabindex]:not([tabindex='-1'])",
-      );
+      const focusable =
+        root.querySelector<HTMLElement>("[data-modal-autofocus]") ??
+        root.querySelector<HTMLElement>(
+          "textarea, input, button, [tabindex]:not([tabindex='-1'])",
+        );
       focusable?.focus();
     });
 
     return () => {
+      cancelAnimationFrame(focusFrame);
       window.removeEventListener("keydown", onKey);
       document.body.style.overflow = previousOverflow;
       previouslyFocused.current?.focus?.();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open || typeof document === "undefined") return null;
 
