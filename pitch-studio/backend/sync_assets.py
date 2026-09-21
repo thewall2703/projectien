@@ -5,7 +5,7 @@ import re
 import sys
 import tempfile
 import time
-from collections import Counter
+from collections import Counter, deque
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -34,6 +34,8 @@ DOCUMENT_TYPES = {
     "application/msword",
 }
 FOLDER_CHILD_CAP = 80
+CAPPED_SET_MARKERS = ("convocation",)
+SETTLED_FILE_STATUSES = frozenset({"preview", "processed"})
 FOLDER_MIME = "application/vnd.google-apps.folder"
 SKIP_FOLDER_MARKERS = ("font",)
 FOLDER_FILE_MAX_BYTES = 80 * 1024 * 1024
@@ -81,6 +83,28 @@ def is_downloadable_file(name: str, mime: str) -> bool:
 def should_descend_folder(name: str) -> bool:
     lowered = (name or "").lower()
     return not any(marker in lowered for marker in SKIP_FOLDER_MARKERS)
+
+
+def has_local_copy(asset: Asset) -> bool:
+    """True when nothing further needs downloading.
+
+    prepare_media drops the original once it has what it needs, leaving photos
+    at `preview` and videos at `processed`. Re-fetching those would undo that
+    cleanup, so they count as finished even under --force; reset the status by
+    hand if you genuinely need the original back.
+    """
+    if asset.file_status in SETTLED_FILE_STATUSES:
+        return True
+    return asset.file_status == "stored" and bool(asset.file_key)
+
+
+def child_cap_for(title: str) -> int | None:
+    """Convocation shoots are raw multi-camera dumps in the tens of thousands.
+    Every other set is small enough to ingest whole."""
+    lowered = (title or "").lower()
+    if any(marker in lowered for marker in CAPPED_SET_MARKERS):
+        return FOLDER_CHILD_CAP
+    return None
 
 
 def find_local_override(asset: Asset) -> Path | None:
@@ -376,16 +400,33 @@ def _list_folder_page(service, folder_id: str) -> list[dict]:
     return files
 
 
-def list_drive_documents(service, folder_id: str, cap: int = FOLDER_CHILD_CAP) -> list[dict]:
-    documents: list[dict] = []
+def take_fair_share(by_folder: dict[str, list[dict]], cap: int | None) -> list[dict]:
+    """Round-robin across folders so one huge directory cannot crowd out the rest."""
+    documents = [doc for group in by_folder.values() for doc in group]
+    if cap is None or len(documents) <= cap:
+        return documents
+    queues = [deque(group) for group in by_folder.values() if group]
+    picked: list[dict] = []
+    while queues and len(picked) < cap:
+        for group in queues:
+            picked.append(group.popleft())
+            if len(picked) >= cap:
+                break
+        queues = [group for group in queues if group]
+    return picked
+
+
+def list_drive_documents(service, folder_id: str, cap: int | None = None) -> list[dict]:
+    """Walk the entire folder tree. `cap` trims the result, never the traversal."""
+    by_folder: dict[str, list[dict]] = {}
     queue: list[tuple[str, str]] = [(folder_id, "")]
     seen: set[str] = set()
-    while queue and len(documents) < cap:
+    while queue:
         current_id, prefix = queue.pop(0)
         if current_id in seen:
             continue
         seen.add(current_id)
-        for child in _list_folder_page(service, current_id):
+        for child in sorted(_list_folder_page(service, current_id), key=lambda item: item.get("name") or ""):
             name = child.get("name") or ""
             mime = child.get("mimeType") or ""
             rel = f"{prefix}/{name}" if prefix else name
@@ -395,10 +436,8 @@ def list_drive_documents(service, folder_id: str, cap: int = FOLDER_CHILD_CAP) -
                 continue
             if not is_downloadable_file(name, mime):
                 continue
-            documents.append({**child, "relpath": rel})
-            if len(documents) >= cap:
-                break
-    return documents
+            by_folder.setdefault(prefix, []).append({**child, "relpath": rel})
+    return take_fair_share(by_folder, cap)
 
 
 def sync_drive_folder(db: Session, asset: Asset) -> int:
@@ -409,7 +448,7 @@ def sync_drive_folder(db: Session, asset: Asset) -> int:
         raise RuntimeError(f"Could not parse Drive folder id from {asset.source_url}")
     creds = _drive_creds()
     service = build_drive_service(creds)
-    children = list_drive_documents(service, folder_id)
+    children = list_drive_documents(service, folder_id, child_cap_for(asset.title))
     created = 0
     stored_children = 0
     for child in children:
@@ -432,7 +471,7 @@ def sync_drive_folder(db: Session, asset: Asset) -> int:
             db.add(existing)
             db.flush()
             created += 1
-        if existing.file_status == "stored" and existing.file_key:
+        if has_local_copy(existing):
             stored_children += 1
             continue
         size = int(child.get("size") or 0)
@@ -456,6 +495,8 @@ def sync_drive_folder(db: Session, asset: Asset) -> int:
 
 def sync_one(db: Session, asset: Asset, force: bool = False) -> str:
     kind = classify_link(asset.source_url)
+    if asset.file_status in SETTLED_FILE_STATUSES:
+        return "skipped"
     if (
         asset.file_status == "stored"
         and (asset.file_key or kind == "drive_folder")
@@ -497,6 +538,7 @@ def run_sync(
     force: bool = False,
     db: Session | None = None,
     titles: list[str] | None = None,
+    skip_titles: list[str] | None = None,
 ) -> dict[str, int]:
     close = False
     if db is None:
@@ -514,6 +556,13 @@ def run_sync(
             asset
             for asset in assets
             if any(needle in asset.title.lower() for needle in needles)
+        ]
+    if skip_titles:
+        blocked = [title.lower() for title in skip_titles]
+        assets = [
+            asset
+            for asset in assets
+            if not any(needle in asset.title.lower() for needle in blocked)
         ]
     counts: Counter[str] = Counter()
     try:
@@ -550,11 +599,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Download and store Pitch Studio library files")
     parser.add_argument("--types", default="report", help="Comma-separated asset types")
     parser.add_argument("--titles", default="", help="Comma-separated title substrings")
+    parser.add_argument("--skip-titles", default="", help="Comma-separated title substrings to exclude")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
     types = [part.strip() for part in args.types.split(",") if part.strip()]
     titles = [part.strip() for part in args.titles.split(",") if part.strip()]
-    counts = run_sync(types=types, force=args.force, titles=titles or None)
+    skip_titles = [part.strip() for part in args.skip_titles.split(",") if part.strip()]
+    counts = run_sync(
+        types=types,
+        force=args.force,
+        titles=titles or None,
+        skip_titles=skip_titles or None,
+    )
     print("Sync complete:", ", ".join(f"{key}={value}" for key, value in sorted(counts.items())) or "nothing")
 
 
