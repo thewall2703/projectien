@@ -39,6 +39,11 @@ export default function SlideView({
         loading={compact ? "lazy" : "eager"}
         draggable={false}
       />
+      {slide.source === "generated" && (
+        <span className="absolute right-[1.4%] top-[2.2%] rounded-full bg-black/75 px-[1.1%] py-[0.45%] text-[1.15cqw] font-semibold tracking-wide text-white shadow-sm backdrop-blur-sm">
+          Auto generated
+        </span>
+      )}
       {!compact && (
         <span className="sr-only">
           Slide {index} of {total}: {label}

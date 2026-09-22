@@ -14,7 +14,13 @@ from backend.pipeline.prompts import (
 )
 from backend.pipeline.resolver import _compose_fallback, parse_sequence
 from backend.pipeline.runner import _validate_and_repair_budget, pick_assets, run
-from backend.pipeline.script_flow import ScriptFlowError, ScriptTopic, build_script_topics, notes_by_page
+from backend.pipeline.script_flow import (
+    ScriptFlowError,
+    ScriptTopic,
+    build_script_topics,
+    notes_by_page,
+    notes_by_slide_key,
+)
 from backend.pipeline.validator import (
     align_script_to_recipe,
     align_script_to_topics,
@@ -242,9 +248,14 @@ class ScriptFlowTests(unittest.TestCase):
         flow = build_script_topics(plan, topics, ["M01", "M04", "M14"])
         self.assertEqual([topic.topic_id for topic in flow], [1, 2, 3, 4])
         self.assertEqual(flow[1].pages, [6, 7])
+        self.assertEqual(flow[1].slide_keys, ["brand:p6", "brand:p7"])
         self.assertEqual(flow[1].labels, ["Origin", "Story"])
         self.assertEqual(flow[1].recipe_modules, ["M01"])
         self.assertEqual(flow[2].recipe_modules, ["M04"])
+        # Every beat carries one stable slide key per selected page.
+        for topic in flow:
+            self.assertEqual(len(topic.slide_keys), len(topic.pages))
+            self.assertEqual(topic.slide_keys, [f"brand:p{page}" for page in topic.pages])
 
     def test_broad_topic_splits_when_slide_module_changes(self):
         plan = [
@@ -360,6 +371,52 @@ class ScriptFlowTests(unittest.TestCase):
             notes_by_page(script),
             {6: "Origin spoken note.", 7: "Origin spoken note.", 92: "Close spoken note."},
         )
+
+    def test_notes_by_slide_key_matches_page_notes_without_repeats(self):
+        plan = [
+            BrandSlide(1, "", "Cover"),
+            BrandSlide(6, "M01", "Origin"),
+            BrandSlide(7, "M01", "Story"),
+            BrandSlide(92, "M14", "Close"),
+        ]
+        script = {
+            "sections": [
+                {"pages": [6, 7], "text": "Origin spoken note."},
+                {"pages": [92], "text": "Close spoken note."},
+            ]
+        }
+        self.assertEqual(
+            notes_by_slide_key(script, plan),
+            {
+                "brand:p6": "Origin spoken note.",
+                "brand:p7": "Origin spoken note.",
+                "brand:p92": "Close spoken note.",
+            },
+        )
+
+    def test_notes_by_slide_key_fixes_repeated_page_collision(self):
+        from backend.pipeline.brand_deck import _assign_occurrences
+
+        plan = _assign_occurrences(
+            [
+                BrandSlide(1, "", "Cover"),
+                BrandSlide(8, "M09", "Gurugram"),
+                BrandSlide(8, "M09", "Gurugram, revisited"),
+                BrandSlide(92, "M14", "Close"),
+            ]
+        )
+        script = {
+            "sections": [
+                {"pages": [8], "text": "First pass on Gurugram."},
+                {"pages": [8], "text": "Second pass on Gurugram."},
+                {"pages": [92], "text": "Close spoken note."},
+            ]
+        }
+        notes = notes_by_slide_key(script, plan)
+        # notes_by_page would collapse both beats onto page 8; slide keys keep both.
+        self.assertEqual(notes["brand:p8"], "First pass on Gurugram.")
+        self.assertEqual(notes["brand:p8#2"], "Second pass on Gurugram.")
+        self.assertEqual(notes["brand:p92"], "Close spoken note.")
 
 
 class PromptTests(unittest.TestCase):

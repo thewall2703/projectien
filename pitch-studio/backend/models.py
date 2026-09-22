@@ -139,6 +139,28 @@ class Generation(Base):
     user: Mapped[User] = relationship(back_populates="generations")
 
 
+class GeneratedSlide(Base):
+    """A shared, content-addressed slide rendered from a brand template."""
+
+    __tablename__ = "generated_slides"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    slide_key: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    claim_hash: Mapped[str] = mapped_column(String(64), index=True)
+    render_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    template_id: Mapped[str] = mapped_column(String(64), index=True)
+    template_version: Mapped[str] = mapped_column(String(32), default="1")
+    tone: Mapped[str] = mapped_column(String(16), default="light")
+    slot_values_json: Mapped[str] = mapped_column(Text, default="{}")
+    file_key: Mapped[str] = mapped_column(String(500), default="")
+    status: Mapped[str] = mapped_column(String(24), default="ready", index=True)
+    edited_by_human: Mapped[bool] = mapped_column(Boolean, default=False)
+    source_fact_ids: Mapped[str] = mapped_column(String(1000), default="")
+    source_asset_ids: Mapped[str] = mapped_column(String(1000), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class ScriptTestRun(Base):
     __tablename__ = "script_test_runs"
 

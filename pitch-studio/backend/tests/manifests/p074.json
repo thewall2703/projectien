@@ -1,0 +1,37 @@
+{
+  "source_page": 74,
+  "reference_image": "brand-deck/pages/p074.jpg",
+  "template": "campus-photo",
+  "variant": "dark",
+  "manifest": "campus-photo.dark.json",
+  "photos": {
+    "hero_photo": "reference"
+  },
+  "values": {
+    "branding_left": "Learn by Doing",
+    "branding_right": "mastersunion.org",
+    "headline": "Classrooms",
+    "caption": "High-energy learning spaces with digital boards & AV integration"
+  },
+  "comparison": {
+    "note": "The campus template's hero photo is fed the cached page itself, so the harness measures the template's own furniture/scrim/text fidelity against a photo already trusted. STRUCTURAL regions sit in the lower photo where neither the top scrim (y<470) nor the brand wave furniture applies: the reconstructed pixels there should equal the source within JPEG re-encode noise. The TEXT masks (italic-serif headline, top-right caption) are informational while the display serif is a fallback.",
+    "structural_regions": [
+      [140, 830, 300, 200],
+      [720, 830, 380, 210],
+      [1500, 830, 360, 200]
+    ],
+    "text_region": [60, 84, 780, 128],
+    "masks": {
+      "headline_serif": [60, 84, 780, 128],
+      "caption_sans": [1140, 92, 716, 128]
+    },
+    "structural_mad_max": 4.0,
+    "text_region_mad_max": 200.0,
+    "baseline": {
+      "full_mad": 6.35,
+      "structural_mad": 0.34,
+      "text_region_mad": 23.55,
+      "measured": "2026-09-22, Chromium 153 (Playwright 1.63), serif token = fallback; hero photo fed from cached page"
+    }
+  }
+}

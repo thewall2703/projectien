@@ -83,6 +83,12 @@ export type InterpretResult = {
 
 export type DeckSlide = {
   layout: string;
+  /** Where the slide comes from: a brand-deck page or a generated slide. */
+  source?: "brand" | "generated" | string;
+  /** Content kind, e.g. "image" for a brand-deck page. */
+  kind?: string;
+  /** Stable, unique-within-a-deck identity for the slide. */
+  slide_key?: string;
   /** 1-based page in the Masters' Union brand deck. */
   page?: number | null;
   title: string;
@@ -92,6 +98,25 @@ export type DeckSlide = {
 
 export type DeckSpec = {
   slides: DeckSlide[];
+};
+
+export type GeneratedSlideRow = {
+  id: number;
+  slide_key: string;
+  claim_hash: string;
+  render_hash: string;
+  template_id: string;
+  template_version: string;
+  tone: string;
+  // Text slots are strings; a bounded list slot (programme list) is an array.
+  slot_values: Record<string, string | string[]>;
+  image_url: string;
+  status: string;
+  edited_by_human: boolean;
+  source_fact_ids: string;
+  source_asset_ids: string;
+  created_at: string;
+  updated_at: string;
 };
 
 export type AssetRow = {

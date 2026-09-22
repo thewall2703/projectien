@@ -10,8 +10,9 @@ from sqlalchemy.orm import Session, load_only
 from backend.auth import get_current_user
 from backend.config import settings
 from backend.database import get_db
+from backend.generated_slides import read_generated_slide_image
 from backend.media_index import pick_recommended_media, record_video_click
-from backend.models import Asset, FounderQuote, Generation, Objection, Recipe, User
+from backend.models import Asset, FounderQuote, GeneratedSlide, Generation, Objection, Recipe, User
 from backend.pipeline.brand_deck import (
     SOURCE_PAGE_COUNT,
     BrandDeckUnavailable,
@@ -377,6 +378,37 @@ def brand_deck_page(
         content=data,
         media_type="image/jpeg",
         headers={"Cache-Control": "private, max-age=86400"},
+    )
+
+
+@router.get("/generated-slides/{slide_key}.jpg")
+def generated_slide_image(
+    slide_key: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Serve a private generated slide image to authenticated previews."""
+    _ = user
+    slide = (
+        db.query(GeneratedSlide)
+        .filter(
+            GeneratedSlide.slide_key == slide_key,
+            GeneratedSlide.status.in_(("ready", "review")),
+        )
+        .first()
+    )
+    if slide is None:
+        raise HTTPException(status_code=404, detail="Generated slide not found")
+    try:
+        data = read_generated_slide_image(slide)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Generated slide image not found") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Could not read generated slide image") from exc
+    return Response(
+        content=data,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, max-age=3600"},
     )
 
 

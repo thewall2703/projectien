@@ -16,11 +16,13 @@ from backend.pipeline.brand_deck import (
     render_pptx,
 )
 from backend.pipeline.deck import slide_count_for
+from backend.pipeline.gaps import plan_with_generated_slides
+from backend.pipeline.slide_fill import realize_generated_slides
 from backend.pipeline.llm import chat_json
 from backend.pipeline.prompts import review_pratham_voice, script_messages
 from backend.pipeline.resolver import ResolvedRecipe, resolve_recipe
 from backend.pipeline.style_guide import latest_style_guide
-from backend.pipeline.script_flow import ScriptFlowError, load_script_topics, notes_by_page
+from backend.pipeline.script_flow import ScriptFlowError, load_script_topics, notes_by_slide_key
 from backend.pipeline.validator import align_script_to_topics, trim_script_to_budget, validate_script
 from backend.schemas import ScriptPayload
 from backend.transcripts import pick_founder_quotes
@@ -206,6 +208,21 @@ def generate_script_phase(
     style_guide = latest_style_guide(db, persona_label=persona_label)
     report_passages = pick_report_passages(db.query(Asset).all(), resolved.module_sequence)
     plan = plan_pages(resolved.module_sequence, slide_count_for(target.duration))
+    # Stage 3: fill true gaps the brand deck cannot answer. Prefers swapping in a
+    # real unused brand page (RULE ZERO); only otherwise plants a generated
+    # placeholder for Stage 4 to fill/render. Returns the plan unchanged when
+    # there is no true gap (or at T0). Rendering is not touched here.
+    plan = plan_with_generated_slides(
+        db,
+        plan,
+        resolved,
+        duration=target.duration,
+        context_note=target.context_note,
+        intent=target.intent,
+        audience_cluster=target.audience_cluster,
+        recipe_ref=target.recipe_ref,
+        modules=modules,
+    )
     try:
         topic_flow = load_script_topics(db, plan, resolved.module_sequence)
     except ScriptFlowError as exc:
@@ -375,14 +392,39 @@ def run(generation_id: int) -> None:
             return
 
         set_status("generating_deck")
-        generation.deck_spec_json = deck_spec_from_plan(phase.plan).model_dump_json()
+        # Stage 4: realise the generated placeholders Stage 3 planted, now that
+        # the approved script exists. Each becomes a rendered, cached, persisted
+        # generated slide, or degrades to the brand page it displaced. A plan
+        # with no placeholders passes through untouched.
+        deck_file_key = brand_deck_file_key(db)
+        sections_by_topic = {
+            int(section.get("topic_id") or 0): str(section.get("text") or "").strip()
+            for section in phase.script.get("sections") or []
+            if int(section.get("topic_id") or 0)
+        }
+        script_text_by_slide_key = {
+            slide_key: sections_by_topic.get(topic.topic_id, "")
+            for topic in phase.topic_flow
+            for slide_key in topic.slide_keys
+        }
+        plan = realize_generated_slides(
+            db,
+            phase.plan,
+            passages=phase.report_passages,
+            script_text_by_slide_key=script_text_by_slide_key,
+            brand_deck_file_key=deck_file_key,
+            recipe_ref=generation.recipe_ref,
+            temperature=generation.temperature,
+            duration=generation.duration,
+        )
+        generation.deck_spec_json = deck_spec_from_plan(plan).model_dump_json()
 
         set_status("rendering")
         generation.pptx_path = render_pptx(
-            phase.plan,
+            plan,
             generation.id,
-            notes_by_page=notes_by_page(phase.script),
-            file_key=brand_deck_file_key(db),
+            notes_by_slide_key=notes_by_slide_key(phase.script, plan),
+            file_key=deck_file_key,
         )
 
         assets = _select_assets(db, phase.resolved.module_sequence)

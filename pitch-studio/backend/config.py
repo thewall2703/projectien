@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     openrouter_api_key: str = ""
     openrouter_model: str = "anthropic/claude-opus-4.6"
     openrouter_interpret_model: str = "google/gemini-2.5-flash"
+    openrouter_slide_model: str = "anthropic/claude-haiku-4.5"
     openrouter_stt_model: str = "openai/whisper-large-v3"
     openrouter_verbosity: str = "medium"
     admin_email: str = "admin@example.com"

@@ -804,3 +804,27 @@ class DeckTopicListOut(BaseModel):
     job_stage: str = ""
     job_error: str = ""
     job_type: str = ""
+
+
+class GeneratedSlideUpdate(BaseModel):
+    # Text slots are strings; a bounded list slot (programme list) is an array of
+    # short strings, so a value may be either.
+    slot_values: dict[str, str | list[str]]
+
+
+class GeneratedSlideOut(BaseModel):
+    id: int
+    slide_key: str
+    claim_hash: str
+    render_hash: str
+    template_id: str
+    template_version: str
+    tone: str
+    slot_values: dict[str, str | list[str]] = {}
+    image_url: str
+    status: str
+    edited_by_human: bool
+    source_fact_ids: str = ""
+    source_asset_ids: str = ""
+    created_at: datetime
+    updated_at: datetime

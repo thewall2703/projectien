@@ -13,12 +13,15 @@ from backend.pipeline.brand_deck import (
     MODULE_PAGES,
     SOURCE_PAGE_COUNT,
     BrandDeckUnavailable,
+    BrandSlide,
+    _assign_occurrences,
+    brand_slide_key,
     deck_spec_from_plan,
     plan_pages,
     render_pptx,
     resolve_source,
 )
-from backend.pipeline.deck import SLIDE_COUNTS, slide_count_for
+from backend.pipeline.deck import BRAND_SOURCE, SLIDE_COUNTS, PlannedSlide, slide_count_for
 from backend.pipeline.resolver import FALLBACK_BY_INTENT
 
 
@@ -102,6 +105,77 @@ class BrandDeckPlanTests(unittest.TestCase):
             self.assertEqual(slide.image_url, f"/api/brand-deck/pages/{slide.page}.jpg")
 
 
+class SlideIdentityTests(unittest.TestCase):
+    def test_brand_slide_satisfies_planned_slide_interface(self):
+        slide = BrandSlide(6, "M01", "Origin")
+        self.assertIsInstance(slide, PlannedSlide)
+        self.assertEqual(slide.source, BRAND_SOURCE)
+        self.assertEqual(slide.title, "Origin")
+        self.assertEqual(slide.page, 6)
+        self.assertEqual(slide.slide_key, "brand:p6")
+
+    def test_brand_slide_key_disambiguates_repeated_pages(self):
+        self.assertEqual(brand_slide_key(8), "brand:p8")
+        self.assertEqual(brand_slide_key(8, 1), "brand:p8")
+        self.assertEqual(brand_slide_key(8, 2), "brand:p8#2")
+        self.assertEqual(brand_slide_key(8, 3), "brand:p8#3")
+
+    def test_assign_occurrences_gives_repeated_pages_unique_keys(self):
+        numbered = _assign_occurrences(
+            [
+                BrandSlide(1, "", "Cover"),
+                BrandSlide(8, "M09", "Gurugram"),
+                BrandSlide(20, "M03", "Model"),
+                BrandSlide(8, "M09", "Gurugram again"),
+            ]
+        )
+        keys = [slide.slide_key for slide in numbered]
+        self.assertEqual(keys, ["brand:p1", "brand:p8", "brand:p20", "brand:p8#2"])
+        self.assertEqual(len(keys), len(set(keys)))
+
+    def test_plan_slide_keys_are_unique_and_page_aligned(self):
+        plan = plan_pages(["M01", "M04", "M07", "M14"], 22)
+        keys = [slide.slide_key for slide in plan]
+        self.assertEqual(len(keys), len(set(keys)))
+        # No repeats today, so every key is the plain page key.
+        self.assertEqual(keys, [f"brand:p{slide.page}" for slide in plan])
+
+    def test_every_recipe_fallback_produces_stable_unique_slide_keys(self):
+        # Golden regression: identity is deterministic and collision-free for
+        # every recipe fallback across every duration.
+        for intent, sequence in FALLBACK_BY_INTENT.items():
+            for duration in ("T0", "T1", "T2", "T3", "T4", "T5"):
+                plan = plan_pages(list(sequence), slide_count_for(duration))
+                keys = [slide.slide_key for slide in plan]
+                self.assertEqual(
+                    len(keys), len(set(keys)), f"{intent}/{duration} has duplicate slide keys"
+                )
+                self.assertEqual(
+                    keys,
+                    [brand_slide_key(slide.page, slide.occurrence) for slide in plan],
+                    f"{intent}/{duration} key drifted from its page/occurrence",
+                )
+
+    def test_spec_carries_identity_fields(self):
+        spec = deck_spec_from_plan(plan_pages(["M01", "M14"], 6))
+        for deck_slide, planned in zip(spec.slides, plan_pages(["M01", "M14"], 6)):
+            self.assertEqual(deck_slide.source, BRAND_SOURCE)
+            self.assertEqual(deck_slide.kind, "image")
+            self.assertEqual(deck_slide.slide_key, planned.slide_key)
+            self.assertEqual(deck_slide.title, planned.label)
+
+    def test_deck_slide_defaults_keep_old_specs_loadable(self):
+        from backend.pipeline.deck import spec_from_dict
+
+        # A deck stored before Stage 0 had no source/kind/slide_key.
+        spec = spec_from_dict(
+            {"slides": [{"layout": "image", "page": 6, "title": "Origin", "module_id": "M01"}]}
+        )
+        self.assertEqual(spec.slides[0].source, BRAND_SOURCE)
+        self.assertEqual(spec.slides[0].kind, "image")
+        self.assertEqual(spec.slides[0].slide_key, "")
+
+
 class BrandDeckSourceTests(unittest.TestCase):
     def test_cached_source_is_used_without_a_database_file_key(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -152,3 +226,43 @@ class BrandDeckRenderTests(unittest.TestCase):
         presentation = Presentation(path)
         for slide, item in zip(presentation.slides, plan):
             self.assertEqual(slide.notes_slide.notes_text_frame.text, f"Spoken note for p{item.page}.")
+
+    def test_speaker_notes_follow_slide_keys_over_pages(self):
+        from pptx import Presentation
+
+        plan = plan_pages(["M01", "M07", "M14"], 8)
+        key_notes = {slide.slide_key: f"Keyed note for {slide.slide_key}." for slide in plan}
+        with mock.patch.object(type(settings), "uses_spaces", property(lambda self: False)):
+            path = render_pptx(
+                plan,
+                999202,
+                notes_by_page={slide.page: "Page note that should lose." for slide in plan},
+                notes_by_slide_key=key_notes,
+            )
+        presentation = Presentation(path)
+        for slide, item in zip(presentation.slides, plan):
+            self.assertEqual(
+                slide.notes_slide.notes_text_frame.text, f"Keyed note for {item.slide_key}."
+            )
+
+    def test_repeated_page_keeps_a_distinct_note_per_occurrence(self):
+        from pptx import Presentation
+
+        plan = _assign_occurrences(
+            [
+                BrandSlide(COVER_PAGE, "", "Learn by Doing"),
+                BrandSlide(8, "M09", "Gurugram"),
+                BrandSlide(8, "M09", "Gurugram, revisited"),
+                BrandSlide(CLOSING_PAGE, "M14", "Close"),
+            ]
+        )
+        key_notes = {
+            "brand:p8": "First time we see Gurugram.",
+            "brand:p8#2": "We circle back to Gurugram.",
+        }
+        with mock.patch.object(type(settings), "uses_spaces", property(lambda self: False)):
+            path = render_pptx(plan, 999203, notes_by_slide_key=key_notes)
+        presentation = Presentation(path)
+        notes = [slide.notes_slide.notes_text_frame.text for slide in presentation.slides]
+        self.assertIn("First time we see Gurugram.", notes)
+        self.assertIn("We circle back to Gurugram.", notes)

@@ -15,7 +15,7 @@ short deck shows, so it is worth keeping deliberate.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from io import BytesIO
 from pathlib import Path
 from threading import Lock
@@ -27,7 +27,14 @@ from sqlalchemy.orm import Session
 
 from backend.config import FILES_DIR, settings
 from backend.models import Asset
-from backend.pipeline.deck import SLIDE_H, SLIDE_W, DeckSlide, DeckSpec
+from backend.pipeline.deck import (
+    BRAND_SOURCE,
+    SLIDE_H,
+    SLIDE_W,
+    DeckSlide,
+    DeckSpec,
+    deck_slide_from_planned,
+)
 from backend.storage import read_file, save_file
 
 SOURCE_PAGE_COUNT = 92
@@ -47,17 +54,48 @@ class BrandDeckUnavailable(RuntimeError):
     """Raised when the brand deck PDF cannot be located."""
 
 
+def brand_slide_key(page: int, occurrence: int = 1) -> str:
+    """Stable identity for a brand-deck slide.
+
+    The key is the page for the common case where a page appears once in a
+    plan. When the same page is placed more than once (a deliberate repeat),
+    later occurrences are suffixed so the two slides never collide on identity
+    — notes, previews and edits address the occurrence, not just the page.
+    """
+    key = f"{BRAND_SOURCE}:p{page}"
+    return key if occurrence <= 1 else f"{key}#{occurrence}"
+
+
 @dataclass(frozen=True)
 class BrandSlide:
-    """One page of the brand deck, placed in a generated deck."""
+    """One page of the brand deck, placed in a generated deck.
+
+    Satisfies the :class:`~backend.pipeline.deck.PlannedSlide` interface, so it
+    can be rendered or serialised without the caller knowing it is a brand
+    page. ``occurrence`` is 1-based and only ever exceeds 1 when the same page
+    is intentionally placed twice in one plan.
+    """
 
     page: int
     module_id: str
     label: str
+    occurrence: int = 1
 
     @property
     def image_url(self) -> str:
         return f"/api/brand-deck/pages/{self.page}.jpg"
+
+    @property
+    def source(self) -> str:
+        return BRAND_SOURCE
+
+    @property
+    def title(self) -> str:
+        return self.label
+
+    @property
+    def slide_key(self) -> str:
+        return brand_slide_key(self.page, self.occurrence)
 
 
 COVER = BrandSlide(COVER_PAGE, "", "Learn by Doing")
@@ -241,22 +279,26 @@ def plan_pages(sequence: list[str], slide_count: int) -> list[BrandSlide]:
             slides.append(BrandSlide(page, PAGE_MODULES[page], PAGE_LABELS[page]))
 
     slides.append(CLOSING)
-    return slides
+    return _assign_occurrences(slides)
+
+
+def _assign_occurrences(slides: list[BrandSlide]) -> list[BrandSlide]:
+    """Number repeated pages so every slide gets a unique ``slide_key``.
+
+    Today a plan never repeats a page, so every occurrence is 1 and keys stay
+    ``brand:p<page>``. The pass is here so that when a plan *does* place a page
+    twice, the two slides carry distinct keys instead of silently colliding.
+    """
+    counts: dict[int, int] = {}
+    numbered: list[BrandSlide] = []
+    for slide in slides:
+        counts[slide.page] = counts.get(slide.page, 0) + 1
+        numbered.append(replace(slide, occurrence=counts[slide.page]))
+    return numbered
 
 
 def deck_spec_from_plan(plan: list[BrandSlide]) -> DeckSpec:
-    return DeckSpec(
-        slides=[
-            DeckSlide(
-                layout="image",
-                page=slide.page,
-                title=slide.label,
-                module_id=slide.module_id,
-                image_url=slide.image_url,
-            )
-            for slide in plan
-        ]
-    )
+    return DeckSpec(slides=[deck_slide_from_planned(slide) for slide in plan])
 
 
 def brand_deck_file_key(db: Session) -> str | None:
@@ -348,23 +390,52 @@ def render_pptx(
     generation_id: int,
     notes_by_module: dict[str, str] | None = None,
     notes_by_page: dict[int, str] | None = None,
+    notes_by_slide_key: dict[str, str] | None = None,
     file_key: str | None = None,
 ) -> str:
-    """Write the planned pages into a 16:9 PPTX, one full-bleed page per slide."""
+    """Write the planned pages into a 16:9 PPTX, one full-bleed image per slide.
+
+    Both brand-deck pages and concrete Stage 4 *generated* slides are embedded:
+    a brand slide is rasterised from the source PDF, while a generated slide's
+    JPEG is read from object storage by its ``file_key``. A generated slide that
+    was never filled (an unrealised placeholder, ``file_key`` empty) has no image
+    and is skipped, exactly as before.
+
+    Speaker notes are looked up by ``slide_key`` first so a repeated brand page
+    keeps a distinct note per occurrence; ``notes_by_page`` and
+    ``notes_by_module`` remain as fallbacks for older callers.
+    """
     presentation = Presentation()
     presentation.slide_width = Inches(SLIDE_W)
     presentation.slide_height = Inches(SLIDE_H)
     blank = presentation.slide_layouts[6]
     for item in plan:
+        source = getattr(item, "source", BRAND_SOURCE)
+        if source != BRAND_SOURCE:
+            # A generated slide carries its rendered JPEG in storage; embed it
+            # from the content-addressed file_key. An unrealised placeholder has
+            # no image yet, so skip it (the deck stays the same length).
+            generated_file_key = getattr(item, "file_key", "") or ""
+            if not generated_file_key:
+                continue
+            image = read_file(generated_file_key)
+        elif getattr(item, "page", None) is None:
+            continue
+        else:
+            image = page_image(item.page, file_key)
         slide = presentation.slides.add_slide(blank)
         slide.shapes.add_picture(
-            BytesIO(page_image(item.page, file_key)),
+            BytesIO(image),
             0,
             0,
             width=presentation.slide_width,
             height=presentation.slide_height,
         )
-        note = ((notes_by_page or {}).get(item.page) or (notes_by_module or {}).get(item.module_id, "")).strip()
+        note = (
+            (notes_by_slide_key or {}).get(item.slide_key)
+            or (notes_by_page or {}).get(item.page)
+            or (notes_by_module or {}).get(item.module_id, "")
+        ).strip()
         if note:
             slide.notes_slide.notes_text_frame.text = note
     buffer = BytesIO()

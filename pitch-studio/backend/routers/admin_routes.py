@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from backend.auth import hash_password, require_admin
 from backend.config import DEFAULT_XLSX
 from backend.database import get_db
+from backend.generated_slides import compute_render_hash, save_generated_slide_image
 from backend.deck_topic_index import (
     DeckTopicError,
     apply_recommendations as apply_deck_recommendations,
@@ -47,6 +48,7 @@ from backend.models import (
     Asset,
     DeckTopic,
     FounderQuote,
+    GeneratedSlide,
     LockedFact,
     MediaIndex,
     Module,
@@ -59,6 +61,15 @@ from backend.models import (
     utc_now,
 )
 from backend.pipeline.llm import LLMError
+from backend.pipeline.slide_fill import (
+    _prepare_photos,
+    apply_deck_conventions,
+    gate_budgets,
+    gate_schema,
+    make_asset_photo_fn,
+)
+from backend.pipeline.slide_render import FONT_BUNDLE_VERSION, SlideRenderError, render_slide
+from backend.pipeline.slide_templates import template_spec
 from backend.pipeline.style_guide import (
     DuplicateStyleTranscriptError,
     StyleTranscriptPersonaError,
@@ -88,6 +99,8 @@ from backend.schemas import (
     FeedbackIn,
     FounderQuoteIn,
     FounderQuoteOut,
+    GeneratedSlideOut,
+    GeneratedSlideUpdate,
     MediaIndexCreate,
     MediaIndexListOut,
     MediaIndexOut,
@@ -118,6 +131,7 @@ from backend.schemas import (
     VisionIn,
 )
 from backend.seed import run_seed
+from backend.storage import delete_file
 from backend.sync_assets import run_sync, sync_one
 from backend.transcripts import ingest_transcripts, quote_hash
 
@@ -130,6 +144,56 @@ def _apply(instance: Any, payload: dict[str, Any], mark_edited: bool = True) -> 
             setattr(instance, key, value)
     if mark_edited and hasattr(instance, "edited"):
         instance.edited = True
+
+
+def _generated_slide_out(item: GeneratedSlide) -> GeneratedSlideOut:
+    try:
+        slots = json.loads(item.slot_values_json or "{}")
+    except json.JSONDecodeError:
+        slots = {}
+    if not isinstance(slots, dict):
+        slots = {}
+
+    def _coerce(value: Any) -> str | list[str]:
+        # Preserve list slots (programme list) as arrays; everything else is a
+        # display string.
+        if isinstance(value, (list, tuple)):
+            return [str(entry) for entry in value]
+        return str(value)
+
+    return GeneratedSlideOut(
+        id=item.id,
+        slide_key=item.slide_key,
+        claim_hash=item.claim_hash,
+        render_hash=item.render_hash,
+        template_id=item.template_id,
+        template_version=item.template_version,
+        tone=item.tone,
+        slot_values={str(key): _coerce(value) for key, value in slots.items()},
+        image_url=f"/api/generated-slides/{item.slide_key}.jpg",
+        status=item.status,
+        edited_by_human=item.edited_by_human,
+        source_fact_ids=item.source_fact_ids,
+        source_asset_ids=item.source_asset_ids,
+        created_at=item.created_at,
+        updated_at=item.updated_at,
+    )
+
+
+def _invalidate_fact_slides(db: Session, fact_id: int) -> None:
+    """Invalidate cached slides that cite a changed locked fact.
+
+    Machine output is removed from the cache immediately. Human-edited output
+    remains previewable but is marked for review so their work is never silently
+    overwritten.
+    """
+    token = str(fact_id)
+    for slide in db.query(GeneratedSlide).all():
+        cited = {part.strip() for part in (slide.source_fact_ids or "").split(",")}
+        if token not in cited:
+            continue
+        slide.status = "review" if slide.edited_by_human else "invalidated"
+        slide.updated_at = utc_now()
 
 
 @router.get("/modules", response_model=list[ModuleOut])
@@ -192,6 +256,7 @@ def update_fact(fact_id: int, payload: FactIn, db: Session = Depends(get_db)) ->
     if item is None:
         raise HTTPException(status_code=404, detail="Fact not found")
     _apply(item, payload.model_dump())
+    _invalidate_fact_slides(db, fact_id)
     db.commit()
     db.refresh(item)
     return item
@@ -202,8 +267,138 @@ def delete_fact(fact_id: int, db: Session = Depends(get_db)) -> dict[str, bool]:
     item = db.get(LockedFact, fact_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Fact not found")
+    _invalidate_fact_slides(db, fact_id)
     db.delete(item)
     db.commit()
+    return {"ok": True}
+
+
+@router.get("/generated-slides", response_model=list[GeneratedSlideOut])
+def list_generated_slides(db: Session = Depends(get_db)) -> list[GeneratedSlideOut]:
+    rows = db.query(GeneratedSlide).order_by(GeneratedSlide.updated_at.desc()).all()
+    return [_generated_slide_out(item) for item in rows]
+
+
+@router.put("/generated-slides/{slide_id}", response_model=GeneratedSlideOut)
+def update_generated_slide(
+    slide_id: int,
+    payload: GeneratedSlideUpdate,
+    db: Session = Depends(get_db),
+) -> GeneratedSlideOut:
+    item = db.get(GeneratedSlide, slide_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Generated slide not found")
+    try:
+        spec = template_spec(item.template_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        stored = json.loads(item.slot_values_json or "{}")
+    except json.JSONDecodeError:
+        stored = {}
+
+    # Text slots come from the payload (falling back to the stored copy);
+    # bounded list slots (programme list) are preserved from what was stored, or
+    # updated when the editor sends an array / newline-delimited block.
+    slots = {
+        name: str(payload.slot_values.get(name, stored.get(name)) or "").strip()
+        for name in spec.fillable_slots
+    }
+    list_values: dict[str, Any] = {}
+    for name in spec.fillable_lists:
+        provided = payload.slot_values.get(name, stored.get(name))
+        if isinstance(provided, str):
+            provided = [line for line in provided.splitlines() if line.strip()]
+        list_values[name] = [
+            apply_deck_conventions(str(entry))
+            for entry in (provided or [])
+            if str(entry).strip()
+        ]
+    persisted_values = {**slots, **list_values}
+
+    violations = gate_schema(spec, persisted_values) + gate_budgets(spec, persisted_values)
+    if violations:
+        raise HTTPException(status_code=400, detail=violations)
+
+    # Re-embed the slide's original approved photo(s) from the assets it was
+    # built from, so a copy edit keeps the same picture. A photo-required
+    # template whose asset is gone must be regenerated from the pipeline.
+    asset_ids = [int(x) for x in (item.source_asset_ids or "").split(",") if x.strip().isdigit()]
+    photos_by_slot, photo_descriptors, _asset_ids = _prepare_photos(
+        spec, None, make_asset_photo_fn(db, asset_ids)
+    )
+    missing_photos = [n for n in spec.required_photo_slots if n not in photos_by_slot]
+    if missing_photos:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "This slide's approved photo is no longer available; "
+                "regenerate it from the pipeline rather than editing copy."
+            ),
+        )
+
+    values = {**spec.fixed_values(), **persisted_values}
+    try:
+        rendered = render_slide(spec.manifest, values, photos=photos_by_slot or None)
+    except SlideRenderError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    render_hash = compute_render_hash(
+        template_id=spec.template_id,
+        template_version=spec.version,
+        slot_values=persisted_values,
+        font_bundle_version=FONT_BUNDLE_VERSION,
+        photo={"photos": photo_descriptors} if photo_descriptors else None,
+    )
+    collision = (
+        db.query(GeneratedSlide)
+        .filter(
+            GeneratedSlide.render_hash == render_hash,
+            GeneratedSlide.id != item.id,
+        )
+        .first()
+    )
+    if collision is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="An identical generated slide already exists",
+        )
+
+    old_file_key = item.file_key
+    item.file_key = save_generated_slide_image(render_hash, rendered.jpeg)
+    item.render_hash = render_hash
+    item.template_version = spec.version
+    item.slot_values_json = json.dumps(persisted_values, ensure_ascii=False)
+    item.edited_by_human = True
+    item.status = "ready"
+    item.updated_at = utc_now()
+    db.commit()
+    db.refresh(item)
+    if old_file_key and old_file_key != item.file_key:
+        try:
+            delete_file(old_file_key)
+        except Exception:
+            pass
+    return _generated_slide_out(item)
+
+
+@router.delete("/generated-slides/{slide_id}")
+def delete_generated_slide(
+    slide_id: int,
+    db: Session = Depends(get_db),
+) -> dict[str, bool]:
+    item = db.get(GeneratedSlide, slide_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Generated slide not found")
+    file_key = item.file_key
+    db.delete(item)
+    db.commit()
+    if file_key:
+        try:
+            delete_file(file_key)
+        except Exception:
+            pass
     return {"ok": True}
 
 

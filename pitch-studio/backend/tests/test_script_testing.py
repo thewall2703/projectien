@@ -97,7 +97,9 @@ class ScriptPhaseShareTests(unittest.TestCase):
         phase = SimpleNamespace(
             resolved=SimpleNamespace(module_sequence=["M01"]),
             plan=["slide"],
+            topic_flow=[],
             script={"sections": [], "cta": ""},
+            report_passages=[],
         )
         db = mock.MagicMock()
         db.get.return_value = generation
@@ -115,7 +117,7 @@ class ScriptPhaseShareTests(unittest.TestCase):
         ), mock.patch(
             "backend.pipeline.runner.brand_deck_file_key", return_value=""
         ), mock.patch(
-            "backend.pipeline.runner.notes_by_page", return_value={}
+            "backend.pipeline.runner.notes_by_slide_key", return_value={}
         ):
             run(1)
         script_phase.assert_called_once()

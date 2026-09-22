@@ -1,0 +1,152 @@
+{
+  "template_id": "campus-photo-dark",
+  "width": 1920,
+  "height": 1080,
+  "background": "#0B0B0C",
+  "layers": [
+    {
+      "name": "furniture",
+      "asset": "campus-photo-dark.svg",
+      "rect": [
+        0,
+        0,
+        1920,
+        1080
+      ],
+      "opacity": 1.0,
+      "z": 25
+    }
+  ],
+  "gradient_layers": [
+    {
+      "name": "top_scrim",
+      "rect": [
+        0,
+        0,
+        1920,
+        470
+      ],
+      "css": "linear-gradient(180deg, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.34) 40%, rgba(0,0,0,0) 100%)",
+      "opacity": 1.0,
+      "z": 20
+    }
+  ],
+  "photo_slots": [
+    {
+      "name": "hero_photo",
+      "rect": [
+        0,
+        0,
+        1920,
+        1080
+      ],
+      "fit": "cover",
+      "focus_x": 0.5,
+      "focus_y": 0.5,
+      "rotation_deg": 0.0,
+      "radius": 0.0,
+      "frame": false,
+      "frame_color": "#FFFFFF",
+      "frame_width": 0.0,
+      "shadow": false,
+      "background": "#0B0B0C",
+      "required": true,
+      "z": 5
+    }
+  ],
+  "list_slots": [],
+  "text_slots": [
+    {
+      "name": "branding_left",
+      "rect": [
+        64,
+        44,
+        520,
+        40
+      ],
+      "font": "sans",
+      "font_size": 18,
+      "min_font_size": 18,
+      "weight": 500,
+      "italic": false,
+      "tracking_em": 0.01,
+      "line_height": 1.0,
+      "color": "#F2F2F2",
+      "align": "left",
+      "valign": "middle",
+      "char_budget": 48,
+      "uppercase": false,
+      "autofit": false,
+      "required": false
+    },
+    {
+      "name": "branding_right",
+      "rect": [
+        1336,
+        44,
+        520,
+        40
+      ],
+      "font": "sans",
+      "font_size": 18,
+      "min_font_size": 18,
+      "weight": 500,
+      "italic": false,
+      "tracking_em": 0.01,
+      "line_height": 1.0,
+      "color": "#F2F2F2",
+      "align": "right",
+      "valign": "middle",
+      "char_budget": 48,
+      "uppercase": false,
+      "autofit": false,
+      "required": false
+    },
+    {
+      "name": "headline",
+      "rect": [
+        60,
+        84,
+        780,
+        128
+      ],
+      "font": "serif",
+      "font_size": 98,
+      "min_font_size": 48,
+      "weight": 400,
+      "italic": true,
+      "tracking_em": -0.005,
+      "line_height": 1.0,
+      "color": "#EDC65C",
+      "align": "left",
+      "valign": "middle",
+      "char_budget": 32,
+      "uppercase": false,
+      "autofit": true,
+      "required": true
+    },
+    {
+      "name": "caption",
+      "rect": [
+        1140,
+        92,
+        716,
+        128
+      ],
+      "font": "sans",
+      "font_size": 30,
+      "min_font_size": 18,
+      "weight": 500,
+      "italic": false,
+      "tracking_em": 0.0,
+      "line_height": 1.22,
+      "color": "#F4F4F4",
+      "align": "left",
+      "valign": "top",
+      "char_budget": 80,
+      "uppercase": false,
+      "autofit": true,
+      "required": false
+    }
+  ]
+}

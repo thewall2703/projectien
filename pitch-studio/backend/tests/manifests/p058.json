@@ -1,0 +1,46 @@
+{
+  "source_page": 58,
+  "reference_image": "brand-deck/pages/p058.jpg",
+  "template": "stat",
+  "variant": "dark",
+  "manifest": "stat.dark.json",
+  "values": {
+    "branding_left": "Learn by Doing",
+    "branding_right": "mastersunion.org",
+    "title": "Placements at the *union*",
+    "subtitle": "Our graduates step into high-impact roles often well before the program concludes",
+    "hero_value": "3.03x",
+    "hero_label": "Average salary increase from *pre-MBA* levels",
+    "stat1_value": "1.28 cr",
+    "stat1_label": "Highest **CTC Secured**",
+    "stat2_value": "33.39L",
+    "stat2_label": "Average **CTC Secured**",
+    "stat3_value": "27.78L",
+    "stat3_label": "Median **CTC Secured**",
+    "stat4_value": "64 LPA",
+    "stat4_label": "Average **International CTC**",
+    "stat5_value": "Over 30+",
+    "stat5_label": "International & **Remote Placements**",
+    "footnote": "This data is as per 2025 Placement Report"
+  },
+  "comparison": {
+    "note": "Split structural vs text comparison. Unlike the dividers, p58's ground is a full building photograph, so the only region flat and dark in BOTH the source and the clean template is the upper-right corner right of the building and below the top-right accent curve; that block is the structural gate (frame + dark ground + registration line up). The TEXT masks are informational only: the source overlays a licensed display serif (the italic stat figures and the 'union' accent word) not bundled yet, plus the building photo the template does not reproduce, so those regions differ by design.",
+    "structural_regions": [
+      [1640, 90, 200, 200]
+    ],
+    "text_region": [96, 74, 620, 300],
+    "masks": {
+      "title_accent_serif": [96, 74, 620, 176],
+      "stat_value_serif": [548, 84, 228, 470],
+      "building_photo": [300, 120, 720, 900]
+    },
+    "structural_mad_max": 6.0,
+    "text_region_mad_max": 170.0,
+    "baseline": {
+      "full_mad": 36.21,
+      "structural_mad": 3.39,
+      "text_region_mad": 84.13,
+      "measured": "2026-09-22, Chromium 153 (Playwright 1.63), serif token = fallback; source building photo not reproduced by template"
+    }
+  }
+}

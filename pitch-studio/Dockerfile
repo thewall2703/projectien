@@ -11,6 +11,7 @@ ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
+RUN playwright install --with-deps chromium
 COPY backend ./backend
 COPY --from=frontend /frontend/dist ./frontend/dist
 EXPOSE 8080

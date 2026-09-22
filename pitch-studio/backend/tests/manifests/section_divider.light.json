@@ -1,0 +1,117 @@
+{
+  "template_id": "section-divider-light",
+  "width": 1920,
+  "height": 1080,
+  "background": "#FFFFFF",
+  "layers": [
+    {
+      "name": "furniture",
+      "asset": "section-divider-light.svg",
+      "rect": [
+        0,
+        0,
+        1920,
+        1080
+      ],
+      "opacity": 1.0,
+      "z": 0
+    }
+  ],
+  "gradient_layers": [],
+  "photo_slots": [],
+  "list_slots": [],
+  "text_slots": [
+    {
+      "name": "branding_left",
+      "rect": [
+        64,
+        44,
+        520,
+        40
+      ],
+      "font": "sans",
+      "font_size": 18,
+      "min_font_size": 18,
+      "weight": 500,
+      "italic": false,
+      "tracking_em": 0.01,
+      "line_height": 1.0,
+      "color": "#1A1A1A",
+      "align": "left",
+      "valign": "middle",
+      "char_budget": 48,
+      "uppercase": false,
+      "autofit": false,
+      "required": false
+    },
+    {
+      "name": "branding_right",
+      "rect": [
+        1336,
+        44,
+        520,
+        40
+      ],
+      "font": "sans",
+      "font_size": 18,
+      "min_font_size": 18,
+      "weight": 500,
+      "italic": false,
+      "tracking_em": 0.01,
+      "line_height": 1.0,
+      "color": "#1A1A1A",
+      "align": "right",
+      "valign": "middle",
+      "char_budget": 48,
+      "uppercase": false,
+      "autofit": false,
+      "required": false
+    },
+    {
+      "name": "title",
+      "rect": [
+        96,
+        300,
+        1216,
+        232
+      ],
+      "font": "sans",
+      "font_size": 104,
+      "min_font_size": 44,
+      "weight": 700,
+      "italic": false,
+      "tracking_em": -0.01,
+      "line_height": 1.02,
+      "color": "#111111",
+      "align": "left",
+      "valign": "bottom",
+      "char_budget": 120,
+      "uppercase": false,
+      "autofit": true,
+      "required": true
+    },
+    {
+      "name": "subtitle",
+      "rect": [
+        100,
+        548,
+        900,
+        60
+      ],
+      "font": "sans",
+      "font_size": 34,
+      "min_font_size": 20,
+      "weight": 500,
+      "italic": false,
+      "tracking_em": 0.0,
+      "line_height": 1.12,
+      "color": "#3A3A3A",
+      "align": "left",
+      "valign": "top",
+      "char_budget": 90,
+      "uppercase": false,
+      "autofit": true,
+      "required": false
+    }
+  ]
+}

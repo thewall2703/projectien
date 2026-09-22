@@ -20,6 +20,7 @@ import Objections from "./pages/admin/Objections";
 import Users from "./pages/admin/Users";
 import MediaTesting from "./pages/admin/MediaTesting";
 import BrandDeckTesting from "./pages/admin/BrandDeckTesting";
+import GeneratedSlides from "./pages/admin/GeneratedSlides";
 import { GoogleG, Spinner, Wordmark } from "./components/ui";
 
 const ADMIN_LINKS = [
@@ -29,6 +30,7 @@ const ADMIN_LINKS = [
   { to: "/admin/assets", label: "Assets" },
   { to: "/admin/media-testing", label: "Media testing" },
   { to: "/admin/brand-deck-testing", label: "Brand deck testing" },
+  { to: "/admin/generated-slides", label: "Generated slides" },
   { to: "/admin/founder-quotes", label: "Founder voice" },
   { to: "/admin/voice-transcripts", label: "Style guide" },
   { to: "/admin/qa-review", label: "AMA Q&A" },
@@ -372,6 +374,7 @@ export default function App() {
                     <Route path="/admin/assets" element={<Assets />} />
                     <Route path="/admin/media-testing" element={<MediaTesting />} />
                     <Route path="/admin/brand-deck-testing" element={<BrandDeckTesting />} />
+                    <Route path="/admin/generated-slides" element={<GeneratedSlides />} />
                     <Route path="/admin/founder-quotes" element={<FounderQuotes />} />
                     <Route path="/admin/voice-transcripts" element={<VoiceTranscripts />} />
                     <Route path="/admin/qa-review" element={<QaReview />} />

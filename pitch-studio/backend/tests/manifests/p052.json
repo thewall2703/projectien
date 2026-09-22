@@ -1,0 +1,34 @@
+{
+  "source_page": 52,
+  "reference_image": "brand-deck/pages/p052.jpg",
+  "template": "section-divider",
+  "variant": "light",
+  "manifest": "section_divider.light.json",
+  "values": {
+    "branding_left": "Learn by Doing",
+    "branding_right": "mastersunion.org",
+    "title": "*Immersions*",
+    "subtitle": "How students *learn by traveling*"
+  },
+  "comparison": {
+    "note": "Split structural vs text comparison. STRUCTURAL regions are areas empty of brush/text/logo in both images (background + grid + rails); they are the hard gate. The TEXT region is informational only: the licensed display serif is not bundled yet and the source page overlays a thick raster brush and the wordmark logo on the title, so a high value there is expected, not a failure.",
+    "structural_regions": [
+      [0, 965, 1920, 110],
+      [1344, 240, 500, 360]
+    ],
+    "text_region": [96, 410, 900, 210],
+    "masks": {
+      "brush_stroke": [80, 0, 1500, 470],
+      "title_text": [96, 410, 900, 210],
+      "logo": [1460, 380, 460, 160]
+    },
+    "structural_mad_max": 6.0,
+    "text_region_mad_max": 130.0,
+    "baseline": {
+      "full_mad": 16.83,
+      "structural_mad": 0.95,
+      "text_region_mad": 38.08,
+      "measured": "2026-09-22, Chromium 153 (Playwright 1.63), serif token = fallback"
+    }
+  }
+}
