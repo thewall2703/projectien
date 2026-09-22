@@ -2,7 +2,7 @@
   <!-- Stat-template furniture, variant: dark. Reconstructed from p58
        (Placements). Grid + warm accent curves only; hero/supporting stat copy
        and any optional photo are supplied by the renderer. No text, no photo. -->
-  <rect width="1920" height="1080" fill="#0E0E10"/>
+  <rect width="1920" height="1080" fill="#0E0E10" fill-opacity="0.5"/>
   <g id="grid" opacity="0.12" stroke="#A3A3A3" stroke-width="1">
     <line x1="60.00" y1="0" x2="60.00" y2="1080"/>
     <line x1="120.00" y1="0" x2="120.00" y2="1080"/>
@@ -53,7 +53,6 @@
     <line x1="0" y1="960.00" x2="1920" y2="960.00"/>
     <line x1="0" y1="1020.00" x2="1920" y2="1020.00"/>
   </g>
-  <path d="M-40 470 C 220 470, 300 720, 470 900 S 760 1120, 1000 1140" stroke="url(#warm)" stroke-width="7" fill="none" stroke-linecap="round" opacity="0.95"/>
-  <path d="M1980 120 C 1740 150, 1620 300, 1560 470" stroke="url(#warm)" stroke-width="6" fill="none" stroke-linecap="round" opacity="0.6"/>
-  <defs><linearGradient id="warm" x1="0" y1="1080" x2="1720" y2="120" gradientUnits="userSpaceOnUse"><stop stop-color="#E38330"/><stop offset="0.55" stop-color="#F7D344"/><stop offset="1" stop-color="#F7D344" stop-opacity="0"/></linearGradient></defs>
+  <path d="M-70 640 C 280 500, 530 650, 800 760 C 1050 860, 1250 820, 1450 800 C 1650 780, 1810 700, 1990 610" stroke="url(#warm)" stroke-width="20" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"/>
+  <defs><linearGradient id="warm" x1="0" y1="640" x2="1920" y2="610" gradientUnits="userSpaceOnUse"><stop stop-color="#FFF4BF"/><stop offset="0.48" stop-color="#F7D344"/><stop offset="1" stop-color="#E38330"/></linearGradient></defs>
 </svg>

@@ -39,8 +39,10 @@ from backend.pipeline.slide_fill import (
     GeneratedSlideInstance,
     _fill_payload,
     _prepare_photos,
+    _run_vision,
     apply_deck_conventions,
     gate_budgets,
+    gate_copy_register,
     gate_number_provenance,
     gate_schema,
     make_recommended_photo_fn,
@@ -290,6 +292,79 @@ class ConventionAndGateTests(unittest.TestCase):
             )
         )
 
+    def test_register_gate_rejects_conservative_officialese(self):
+        phrases = [
+            "following Government of Haryana approval",
+            "As per the approved policy",
+            "Pursuant to the new framework",
+            "In order to build practical judgment",
+            "With respect to student outcomes",
+            "For the purpose of industry readiness",
+            "In this regard, learning stays practical",
+            "It should be noted that founders teach here",
+            "Admissions are hereby opened",
+        ]
+        for phrase in phrases:
+            with self.subTest(phrase=phrase):
+                self.assertTrue(
+                    gate_copy_register(self.spec, {"title": phrase, "subtitle": ""})
+                )
+
+    def test_register_gate_accepts_all_real_brand_exemplars(self):
+        for template_id in (
+            "section-divider-light",
+            "stat-light",
+            "campus-photo-dark",
+            "programme-list-light",
+        ):
+            spec = template_spec(template_id)
+            for exemplar in spec.exemplars:
+                with self.subTest(template_id=template_id, exemplar=exemplar):
+                    values = {name: "" for name in spec.fillable_slots}
+                    values.update({name: [] for name in spec.fillable_lists})
+                    if spec.fillable_slots:
+                        values[spec.fillable_slots[0]] = exemplar
+                    else:
+                        values[spec.fillable_lists[0]] = [exemplar]
+                    self.assertFalse(gate_copy_register(spec, values))
+
+
+class VisionContractTests(unittest.TestCase):
+    def test_structured_copy_and_furniture_violations_are_preserved(self):
+        review = _run_vision(
+            lambda *_: {
+                "passed": False,
+                "violations": [
+                    {"category": "furniture", "detail": "Missing lockup"},
+                    {"category": "copy", "detail": "Awkward caption"},
+                ],
+            },
+            b"jpeg",
+            [],
+            template_spec("section-divider-light"),
+            placeholder(),
+        )
+        self.assertEqual(
+            review["violations"],
+            [
+                {"category": "furniture", "detail": "Missing lockup"},
+                {"category": "copy", "detail": "Awkward caption"},
+            ],
+        )
+
+    def test_legacy_string_violations_default_to_copy(self):
+        review = _run_vision(
+            lambda *_: {"passed": False, "violations": ["Awkward caption"]},
+            b"jpeg",
+            [],
+            template_spec("section-divider-light"),
+            placeholder(),
+        )
+        self.assertEqual(
+            review["violations"],
+            [{"category": "copy", "detail": "Awkward caption"}],
+        )
+
 
 # ---------------------------------------------------------------------------
 # End-to-end realise (cache / miss / gates / degrade / persist)
@@ -412,7 +487,7 @@ class RealizeTests(MemoryDbTestCase):
         restored = result[1]
         self.assertIsInstance(restored, BrandSlide)
         self.assertEqual(restored.page, 51)  # the displaced brand page, restored
-        self.assertEqual(fill.call_count, 2)  # two attempts
+        self.assertEqual(fill.call_count, 3)  # three retryable copy attempts
         renderer_calls = renderer.calls
         self.assertEqual(renderer_calls, [])  # number gate precedes the render
         vision.assert_not_called()
@@ -431,7 +506,7 @@ class RealizeTests(MemoryDbTestCase):
 
         self.assertIsInstance(result[1], BrandSlide)
         self.assertEqual(result[1].page, 51)
-        self.assertEqual(fill.call_count, 2)
+        self.assertEqual(fill.call_count, 3)
         vision.assert_not_called()  # overflow precedes vision
         save.assert_not_called()
 
@@ -451,17 +526,45 @@ class RealizeTests(MemoryDbTestCase):
         self.assertEqual(vision.call_count, 2)
         save.assert_called_once()
 
-    def test_vision_failure_both_attempts_degrades(self):
+    def test_pure_copy_vision_failure_uses_all_three_attempts(self):
         plan = [BrandSlide(COVER_PAGE, "", "Cover"), placeholder(), BrandSlide(CLOSING_PAGE, "M14", "Close")]
         renderer = FakeRenderer()
         fill = mock.Mock(return_value={"title": "Not a *bootcamp*", "subtitle": ""})
-        vision = mock.Mock(return_value={"passed": False, "violations": ["Off brand"]})
+        vision = mock.Mock(return_value={
+            "passed": False,
+            "violations": [{"category": "copy", "detail": "Caption is bureaucratic"}],
+        })
 
         result, save = self._realize(plan, fill_fn=fill, vision_fn=vision, renderer=renderer)
 
         self.assertIsInstance(result[1], BrandSlide)
         self.assertEqual(result[1].page, 51)
-        self.assertEqual(vision.call_count, 2)
+        self.assertEqual(fill.call_count, 3)
+        self.assertEqual(vision.call_count, 3)
+        self.assertEqual(
+            fill.call_args_list[1].args[0]["corrections"],
+            ["Caption is bureaucratic"],
+        )
+        save.assert_not_called()
+
+    def test_furniture_vision_failure_degrades_immediately(self):
+        plan = [BrandSlide(COVER_PAGE, "", "Cover"), placeholder(), BrandSlide(CLOSING_PAGE, "M14", "Close")]
+        renderer = FakeRenderer()
+        fill = mock.Mock(return_value={"title": "Not a *bootcamp*", "subtitle": ""})
+        vision = mock.Mock(return_value={
+            "passed": False,
+            "violations": [
+                {"category": "furniture", "detail": "Masters' Union lockup is missing"},
+                {"category": "copy", "detail": "Caption is bureaucratic"},
+            ],
+        })
+
+        result, save = self._realize(plan, fill_fn=fill, vision_fn=vision, renderer=renderer)
+
+        self.assertIsInstance(result[1], BrandSlide)
+        self.assertEqual(fill.call_count, 1)
+        self.assertEqual(vision.call_count, 1)
+        self.assertEqual(len(renderer.calls), 1)
         save.assert_not_called()
 
     def test_vision_exception_is_treated_as_a_failed_gate(self):
@@ -473,7 +576,7 @@ class RealizeTests(MemoryDbTestCase):
         result, _ = self._realize(plan, fill_fn=fill, vision_fn=vision, renderer=renderer)
 
         self.assertIsInstance(result[1], BrandSlide)
-        self.assertEqual(vision.call_count, 2)
+        self.assertEqual(vision.call_count, 3)
 
 
 def campus_placeholder(**overrides) -> GeneratedSlidePlaceholder:
@@ -755,11 +858,66 @@ class AttemptAuditTests(MemoryDbTestCase):
         self.assertEqual([row.outcome for row in rows], [
             "provenance",
             "provenance",
+            "provenance",
             "final_degradation",
         ])
-        self.assertEqual([row.attempt_number for row in rows], [1, 2, 3])
+        self.assertEqual([row.attempt_number for row in rows], [1, 2, 3, 4])
         self.assertTrue(json.loads(rows[0].violations_json))
         save_attempt.assert_not_called()
+
+    def test_furniture_rejection_is_archived_and_suppresses_same_template(self):
+        first = placeholder(slide_key="generated:first", claim="First unsupported beat")
+        second = placeholder(slide_key="generated:second", claim="Second unsupported beat")
+        plan = [
+            BrandSlide(COVER_PAGE, "", "Cover"),
+            first,
+            second,
+            BrandSlide(CLOSING_PAGE, "M14", "Close"),
+        ]
+        fill = mock.Mock(return_value={"title": "Not a *bootcamp*", "subtitle": ""})
+        vision = mock.Mock(return_value={
+            "passed": False,
+            "violations": [{"category": "furniture", "detail": "Brand lockup is missing"}],
+        })
+        renderer = FakeRenderer()
+
+        with mock.patch(
+            f"{SLIDE_MODULE}.save_generated_slide_attempt_image",
+            return_value=f"generated-slide-attempts/{self.generation_id}/attempt.jpg",
+        ), mock.patch(f"{SLIDE_MODULE}.file_exists", return_value=False):
+            result = realize_generated_slides(
+                self.db,
+                plan,
+                generation_id=self.generation_id,
+                facts=[],
+                passages=[],
+                fill_fn=fill,
+                vision_fn=vision,
+                renderer=renderer,
+                brand_page_fn=lambda page: make_jpeg((10, 10, 10)),
+            )
+
+        self.assertIsInstance(result[1], BrandSlide)
+        self.assertIsInstance(result[2], BrandSlide)
+        fill.assert_called_once()
+        vision.assert_called_once()
+        self.assertEqual(len(renderer.calls), 1)
+        rows = (
+            self.db.query(GeneratedSlideAttempt)
+            .order_by(GeneratedSlideAttempt.id)
+            .all()
+        )
+        self.assertEqual(
+            [(row.placeholder_key, row.outcome, row.gate) for row in rows],
+            [
+                ("generated:first", "vision_furniture", "vision"),
+                ("generated:first", "final_degradation", "furniture"),
+                ("generated:second", "template_suppressed", "furniture"),
+                ("generated:second", "final_degradation", "furniture"),
+            ],
+        )
+        self.assertIn("Brand lockup is missing", rows[0].violations_json)
+        self.assertIn("suppressed", rows[2].violations_json.lower())
 
     def test_only_approved_template_scoped_notes_are_injected_and_deduped(self):
         notes = [

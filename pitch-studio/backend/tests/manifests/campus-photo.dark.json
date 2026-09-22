@@ -24,9 +24,9 @@
         0,
         0,
         1920,
-        470
+        540
       ],
-      "css": "linear-gradient(180deg, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.34) 40%, rgba(0,0,0,0) 100%)",
+      "css": "linear-gradient(180deg, rgba(0,0,0,0.98) 0%, rgba(0,0,0,0.84) 52%, rgba(0,0,0,0) 100%)",
       "opacity": 1.0,
       "z": 20
     }
@@ -50,6 +50,12 @@
       "frame_width": 0.0,
       "shadow": false,
       "background": "#0B0B0C",
+      "label_from": "",
+      "label_height": 0.0,
+      "label_background": "#FFFFFF",
+      "label_color": "#111111",
+      "label_font_size": 20.0,
+      "label_tracking_em": 0.12,
       "required": true,
       "z": 5
     }
@@ -72,6 +78,8 @@
       "tracking_em": 0.01,
       "line_height": 1.0,
       "color": "#F2F2F2",
+      "emphasis_color": "",
+      "strong_color": "",
       "align": "left",
       "valign": "middle",
       "char_budget": 48,
@@ -95,6 +103,8 @@
       "tracking_em": 0.01,
       "line_height": 1.0,
       "color": "#F2F2F2",
+      "emphasis_color": "",
+      "strong_color": "",
       "align": "right",
       "valign": "middle",
       "char_budget": 48,
@@ -105,19 +115,21 @@
     {
       "name": "headline",
       "rect": [
-        60,
-        84,
-        780,
-        128
+        88,
+        138,
+        860,
+        174
       ],
       "font": "serif",
-      "font_size": 98,
-      "min_font_size": 48,
+      "font_size": 128,
+      "min_font_size": 64,
       "weight": 400,
       "italic": true,
-      "tracking_em": -0.005,
+      "tracking_em": -0.01,
       "line_height": 1.0,
       "color": "#EDC65C",
+      "emphasis_color": "",
+      "strong_color": "",
       "align": "left",
       "valign": "middle",
       "char_budget": 32,
@@ -128,19 +140,21 @@
     {
       "name": "caption",
       "rect": [
-        1140,
-        92,
-        716,
-        128
+        1320,
+        202,
+        500,
+        150
       ],
       "font": "sans",
       "font_size": 30,
       "min_font_size": 18,
-      "weight": 500,
+      "weight": 400,
       "italic": false,
       "tracking_em": 0.0,
       "line_height": 1.22,
       "color": "#F4F4F4",
+      "emphasis_color": "",
+      "strong_color": "",
       "align": "left",
       "valign": "top",
       "char_budget": 80,

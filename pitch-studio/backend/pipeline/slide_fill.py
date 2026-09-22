@@ -10,7 +10,7 @@ no image yet. This stage realises each placeholder into either
 * a concrete :class:`GeneratedSlideInstance` backed by a rendered, cached JPEG
   and a persisted :class:`~backend.models.GeneratedSlide` row, or
 * the original :class:`~backend.pipeline.brand_deck.BrandSlide` it displaced,
-  when the slide cannot be produced on brand within two attempts.
+  when the slide cannot be produced on brand.
 
 The pipeline, in order, is:
 
@@ -21,20 +21,29 @@ The pipeline, in order, is:
    typed slot copy for the fixed template. The model never designs; the layout,
    furniture and colours are the template's. Its output is post-processed for
    deck conventions (ampersands, no terminal full stop).
-3. **Gates, in order, strict pass/fail:**
+3. **Gates, cheapest first, strict pass/fail:**
    a. schema + the template's *exact* per-slot word/character budgets;
    b. number/factual provenance — every numeral must trace to a locked fact or
       report passage, or the slide is rejected;
-   c. DOM overflow, via the real slide renderer;
-   d. an Opus multimodal vision review against three actual brand pages.
+   c. copy register — unmistakable officialese is caught here rather than
+      paying for a render and a vision call to discover it;
+   d. DOM overflow, via the real slide renderer;
+   e. an Opus multimodal vision review against three actual brand pages.
 4. **Persist.** On pass, a deterministic render hash content-addresses the JPEG
    in Spaces (Stage 2 helper) and a shared :class:`~backend.models.GeneratedSlide`
    row is upserted race-safely.
 
-Two fill attempts total; after the second failure the displaced brand page is
-restored (never a shortened deck, never a skipped page). Everything external
-(LLM, renderer, storage, brand-page fetch) is injectable so the whole flow is
-unit-testable without a browser or network.
+A rejection is only worth retrying when rewriting the slot copy could fix it.
+The vision review therefore classifies each violation as ``copy`` or
+``furniture``: copy failures retry (three attempts total), while a furniture
+failure — wrong typography, a missing lockup, off-brand accent art — degrades
+immediately, because the copy model is explicitly forbidden from designing and
+so can never repair it. A template that fails that way is also skipped for the
+rest of the run instead of being rediscovered on every later placeholder.
+Degrading always restores the displaced brand page: never a shortened deck,
+never a skipped page. Everything external (LLM, renderer, storage, brand-page
+fetch) is injectable so the whole flow is unit-testable without a browser or
+network.
 """
 
 from __future__ import annotations
@@ -99,8 +108,9 @@ PhotoSourceFn = Callable[[GeneratedSlidePlaceholder, TemplateSpec], Sequence[App
 _MISSING = object()
 
 # One placeholder gets at most this many fill attempts before it degrades to the
-# brand page it displaced.
-DEFAULT_MAX_ATTEMPTS = 2
+# brand page it displaced. Furniture failures exit immediately because copy
+# cannot repair them.
+DEFAULT_MAX_ATTEMPTS = 3
 
 # Reference brand pages a vision review holds a render up against.
 _VISION_REFERENCE_COUNT = 3
@@ -160,6 +170,21 @@ _NUMERAL_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
 _AND_RE = re.compile(r"\s+and\s+", re.IGNORECASE)
 _STRONG_RE = re.compile(r"\*\*(.+?)\*\*", re.S)
 _EMPHASIS_RE = re.compile(r"\*(.+?)\*", re.S)
+
+# Conservative officialese that does not occur in the terse, direct brand
+# exemplars. These are deliberately phrase-level patterns rather than broad
+# vocabulary bans: ordinary words such as "approval" remain valid on their own.
+_REGISTER_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\bas per\b", re.I), "'as per'"),
+    (re.compile(r"\bpursuant to\b", re.I), "'pursuant to'"),
+    (re.compile(r"\bin order to\b", re.I), "'in order to'"),
+    (re.compile(r"\bwith respect to\b", re.I), "'with respect to'"),
+    (re.compile(r"\bfollowing\b[^.!?]{0,80}\bapproval\b", re.I), "'following … approval'"),
+    (re.compile(r"\bfor the purpose of\b", re.I), "'for the purpose of'"),
+    (re.compile(r"\bin this regard\b", re.I), "'in this regard'"),
+    (re.compile(r"\bit (?:is|should be) (?:important to )?noted that\b", re.I), "'it is/should be noted that'"),
+    (re.compile(r"\b(?:is|are|was|were) hereby\b", re.I), "passive 'hereby' construction"),
+)
 
 
 def _numerals(text: str) -> set[str]:
@@ -309,6 +334,33 @@ def gate_number_provenance(
     return violations
 
 
+def gate_copy_register(spec: TemplateSpec, values: Mapping[str, Any]) -> list[str]:
+    """Reject unmistakable officialese before render and vision.
+
+    The real brand exemplars are fragments, direct questions, compact labels
+    and active descriptions. Phrase-level bureaucratic scaffolding is therefore
+    both off-register and wasted copy inside these tightly bounded slots.
+    """
+    violations: list[str] = []
+    entries = [
+        (f"slot '{name}'", str(values.get(name) or ""))
+        for name in spec.fillable_slots
+    ]
+    entries.extend(
+        (f"list '{name}' item {index + 1}", item)
+        for name in spec.fillable_lists
+        for index, item in enumerate(_list_items(values, name))
+    )
+    for location, text in entries:
+        plain = _plain(text)
+        for pattern, label in _REGISTER_PATTERNS:
+            if pattern.search(plain):
+                violations.append(
+                    f"{location} uses bureaucratic phrasing {label}; rewrite as short, direct brand copy"
+                )
+    return violations
+
+
 # ---------------------------------------------------------------------------
 # Default model / vision hooks (network) — injectable for tests
 # ---------------------------------------------------------------------------
@@ -323,6 +375,11 @@ _FILL_SYSTEM = (
     "verbatim in locked_facts or report_passages; never invent a number. "
     "Treat approved_review_guidance as binding lessons from human reviewers "
     "for this template; apply the lessons without copying unrelated subject matter. "
+    "Write short, direct, confident fragments or sentences like the exemplars. "
+    "Avoid officialese, passive-bureaucratic scaffolding and hedging filler: "
+    "never use 'as per', 'pursuant to', 'in order to', 'with respect to', "
+    "'following ... approval', 'for the purpose of', 'in this regard', "
+    "'it is/should be noted that', or passive 'hereby' constructions. "
     "Follow the conventions: write '&' not 'and', and no trailing full stop. "
     "You may wrap a short italic-serif accent in *single asterisks* and bold a "
     "subject in **double asterisks**, sparingly, like the exemplars. Respect "
@@ -355,10 +412,35 @@ _VISION_PROMPT = (
     "and its copy reads like real brand copy of this kind (a short, pointed "
     "line, a clean stat, a tight caption or a bounded list — not a paragraph). "
     "It fails if it looks generated, cramped, off-brand, mis-scaled, a photo is "
-    "distorted or mis-cropped, or the copy is awkward or off-register. Return "
-    'STRICT JSON only: {"passed": true|false, "violations": ["...", "..."]}. '
+    "distorted or mis-cropped, or the copy is awkward or off-register. Classify "
+    "every violation as 'copy' when rewriting only the supplied slot text could "
+    "fix it (wording, tone, register, length or cramped copy), or 'furniture' "
+    "when it requires changing the fixed template (typography, type scale/weight, "
+    "logo or lockup, ribbon/accent art, palette, layout geometry or other brand "
+    "furniture). Return STRICT JSON only: "
+    '{"passed": true|false, "violations": [{"category":"copy|furniture","detail":"..."}]}. '
     "Context: "
 )
+
+
+def _normalise_vision_violations(raw: Any) -> list[dict[str, str]]:
+    """Accept the typed contract and legacy string violations defensively."""
+    if raw is None:
+        return []
+    items = raw if isinstance(raw, (list, tuple)) else [raw]
+    violations: list[dict[str, str]] = []
+    for item in items:
+        if isinstance(item, Mapping):
+            category = str(item.get("category") or "copy").strip().lower()
+            if category not in {"copy", "furniture"}:
+                category = "copy"
+            detail = str(item.get("detail") or item.get("message") or "").strip()
+        else:
+            category = "copy"
+            detail = str(item).strip()
+        if detail:
+            violations.append({"category": category, "detail": detail})
+    return violations
 
 
 def _default_vision_fn(
@@ -376,7 +458,7 @@ def _default_vision_fn(
     data = _extract_json(text)
     return {
         "passed": bool(data.get("passed")),
-        "violations": list(data.get("violations") or []),
+        "violations": _normalise_vision_violations(data.get("violations")),
     }
 
 
@@ -653,6 +735,9 @@ def _fill_payload(
             "Use style_exemplars only for tone, length and structure; never copy their subject matter.",
             "Write '&' not 'and'.",
             "No trailing full stop.",
+            "Use short, direct, confident brand language; prefer fragments, compact labels and active descriptions.",
+            "Avoid officialese, passive-bureaucratic scaffolding and hedging filler.",
+            "Never use 'as per', 'pursuant to', 'in order to', 'with respect to', 'following ... approval', 'for the purpose of', 'in this regard', 'it is/should be noted that', or passive 'hereby' constructions.",
             "Only use numbers that appear in locked_facts or report_passages.",
             "Do not design; only write the slot copy.",
         ],
@@ -702,10 +787,19 @@ def _run_vision(
     try:
         review = vision_fn(jpeg, brand_pages, context)
     except Exception as exc:  # noqa: BLE001 - a failed review is a failed gate, retryable
-        return {"passed": False, "violations": [f"Vision review failed: {exc}"]}
+        return {
+            "passed": False,
+            "violations": [{"category": "copy", "detail": f"Vision review failed: {exc}"}],
+        }
     if not isinstance(review, Mapping):
-        return {"passed": False, "violations": ["Vision review returned no verdict"]}
-    return {"passed": bool(review.get("passed")), "violations": list(review.get("violations") or [])}
+        return {
+            "passed": False,
+            "violations": [{"category": "copy", "detail": "Vision review returned no verdict"}],
+        }
+    return {
+        "passed": bool(review.get("passed")),
+        "violations": _normalise_vision_violations(review.get("violations")),
+    }
 
 
 def _instance_from_row(
@@ -941,6 +1035,7 @@ def _realize_one(
     photo_fn: PhotoSourceFn,
     max_attempts: int,
     generation_id: int | None,
+    furniture_rejected_templates: set[str],
 ) -> PlannedSlide:
     spec = _spec_or_none(placeholder.template_id)
     if spec is None:
@@ -955,6 +1050,23 @@ def _realize_one(
             db, generation_id, placeholder,
             attempt_number=1, outcome="final_degradation", gate="final",
             violations=["Unknown template; restored displaced brand page"],
+        )
+        return _restore_brand_slide(placeholder)
+
+    if spec.template_id in furniture_rejected_templates:
+        reason = (
+            f"Template '{spec.template_id}' was suppressed for this run after an earlier "
+            "furniture rejection"
+        )
+        _archive_attempt(
+            db, generation_id, placeholder,
+            attempt_number=0, outcome="template_suppressed", gate="furniture",
+            violations=[reason],
+        )
+        _archive_attempt(
+            db, generation_id, placeholder,
+            attempt_number=1, outcome="final_degradation", gate="furniture",
+            violations=["Suppressed template; restored displaced brand page"],
         )
         return _restore_brand_slide(placeholder)
 
@@ -1007,7 +1119,7 @@ def _realize_one(
         )
         return _instance_from_row(cached, placeholder)
 
-    # 2) Miss: fill + gate, up to two attempts, then degrade.
+    # 2) Miss: fill + gate, up to the configured attempts, then degrade.
     allowed = allowed_numerals(source_facts, source_passages)
     brand_pages = _reference_pages(spec, placeholder, brand_page_fn)
     corrections: list[str] = []
@@ -1058,7 +1170,18 @@ def _realize_one(
             )
             continue
 
-        # Gate c: DOM overflow, via the real renderer (with approved photos).
+        # Gate c: deterministic copy register (still cheap, before rendering).
+        violations = gate_copy_register(spec, values)
+        if violations:
+            corrections = violations
+            _archive_attempt(
+                db, generation_id, placeholder,
+                attempt_number=attempt_number, outcome="copy_register",
+                gate="copy_register", violations=violations, slot_values=values,
+            )
+            continue
+
+        # Gate d: DOM overflow, via the real renderer (with approved photos).
         render_values = {**spec.fixed_values(), **values}
         try:
             render_result = renderer.render(
@@ -1121,10 +1244,41 @@ def _realize_one(
                 )
                 return _restore_brand_slide(placeholder)
 
-        # Gate d: Opus multimodal vision review vs three brand pages.
+        # Gate e: Opus multimodal vision review vs three brand pages.
         review = _run_vision(vision_fn, render_result.jpeg, brand_pages, spec, placeholder)
         if not review["passed"]:
-            corrections = review["violations"] or ["The slide is not visually on brand."]
+            typed_violations = review["violations"]
+            furniture = [
+                violation["detail"]
+                for violation in typed_violations
+                if violation["category"] == "furniture"
+            ]
+            copy_violations = [
+                violation["detail"]
+                for violation in typed_violations
+                if violation["category"] == "copy"
+            ]
+            if furniture:
+                furniture_rejected_templates.add(spec.template_id)
+                all_details = [violation["detail"] for violation in typed_violations]
+                _archive_attempt(
+                    db, generation_id, placeholder,
+                    attempt_number=attempt_number, outcome="vision_furniture", gate="vision",
+                    violations=all_details, slot_values=values,
+                    render_hash=render_hash, file_key=attempt_file_key,
+                )
+                _archive_attempt(
+                    db, generation_id, placeholder,
+                    attempt_number=attempt_number + 1,
+                    outcome="final_degradation", gate="furniture",
+                    violations=[
+                        "Template furniture cannot be repaired by rewriting copy; "
+                        "restored displaced brand page"
+                    ],
+                )
+                return _restore_brand_slide(placeholder)
+
+            corrections = copy_violations or ["The slide is not visually on brand."]
             _archive_attempt(
                 db, generation_id, placeholder,
                 attempt_number=attempt_number, outcome="vision", gate="vision",
@@ -1242,6 +1396,7 @@ def realize_generated_slides(
     }
     all_passages = list(passages) if passages is not None else []
     script_texts = script_text_by_slide_key or {}
+    furniture_rejected_templates: set[str] = set()
 
     for index in placeholder_indexes:
         result[index] = _realize_one(
@@ -1257,5 +1412,6 @@ def realize_generated_slides(
             photo_fn=resolved_photo_fn,
             max_attempts=max_attempts,
             generation_id=generation_id,
+            furniture_rejected_templates=furniture_rejected_templates,
         )
     return result

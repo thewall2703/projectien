@@ -21,21 +21,46 @@
   "comparison": {
     "note": "The programme-list template renders text-only here (approved photo cards omitted), so STRUCTURAL regions are flat light-ground bands in the top margin, clear of the card, the source's two tilted photo cards and the soft cream wash on the right; they gate that the frame and white ground line up. The right-hand photo region and the card copy are masked: the source overlays the licensed serif programme-type word and two photos the text-only reconstruction intentionally does not draw.",
     "structural_regions": [
-      [820, 10, 300, 160],
-      [480, 10, 120, 150]
+      [
+        820,
+        10,
+        300,
+        160
+      ],
+      [
+        480,
+        10,
+        120,
+        150
+      ]
     ],
-    "text_region": [96, 78, 360, 128],
+    "text_region": [
+      96,
+      78,
+      360,
+      128
+    ],
     "masks": {
-      "programme_type_serif": [110, 150, 330, 52],
-      "photo_cards": [540, 60, 500, 480]
+      "programme_type_serif": [
+        110,
+        150,
+        330,
+        52
+      ],
+      "photo_cards": [
+        540,
+        60,
+        500,
+        480
+      ]
     },
     "structural_mad_max": 8.0,
     "text_region_mad_max": 200.0,
     "baseline": {
-      "full_mad": 43.66,
-      "structural_mad": 4.3,
-      "text_region_mad": 68.01,
-      "measured": "2026-09-22, Chromium 153 (Playwright 1.63), serif token = fallback; approved photo cards omitted (text-only degrade path)"
+      "full_mad": 43.68,
+      "structural_mad": 4.25,
+      "text_region_mad": 67.15,
+      "measured": "2026-09-22, Chromium 153 (Playwright 1.63), furniture v2, editorial serif fallback v2"
     }
   }
 }

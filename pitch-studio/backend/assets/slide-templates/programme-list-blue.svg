@@ -55,11 +55,12 @@
     <line x1="0" y1="1020.00" x2="1920" y2="1020.00"/>
   </g>
   <g opacity="0.55" fill="none" stroke="#DCEEF5" stroke-width="46" stroke-linecap="round">
-    <path d="M300 -60 C 360 260, 250 460, 470 760 S 720 1140, 560 1300"/>
-    <path d="M1120 -40 C 1180 260, 1420 380, 1360 640 S 1180 980, 1420 1200"/>
+    <path d="M675 -80 C 650 205, 730 330, 850 520 S 1040 805, 1015 1160"/>
+    <path d="M1260 -80 C 1440 120, 1510 260, 1650 220 S 1830 90, 1970 210"/>
+    <path d="M-90 1050 C 95 870, 180 690, 310 520"/>
   </g>
   <g>
-    <rect x="68" y="70" width="402" height="446" rx="18" fill="#C3E4EF"/>
-    <rect x="86" y="165" width="366" height="330" rx="10" fill="#F7F6F2"/>
+    <path d="M130 135 H695 L748 263 H880 V960 H130 Z" fill="#C3E4EF"/>
+    <rect x="162" y="300" width="696" height="635" fill="#F7F6F2"/>
   </g>
 </svg>

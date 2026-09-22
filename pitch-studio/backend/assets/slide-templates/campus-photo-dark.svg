@@ -3,7 +3,7 @@
        approved full-bleed photo. Registration marks + brand wave only; the
        headline/caption text, the photo and the top scrim are set by the
        renderer/manifest. No text, no photo baked in. -->
-  <g stroke="#FFFFFF" stroke-width="1.4" opacity="0.7"><line x1="0" y1="190" x2="360" y2="190"/><line x1="352" y1="176" x2="352" y2="204"/><line x1="655" y1="70" x2="655" y2="210"/><line x1="641" y1="196" x2="669" y2="196"/></g>
-  <path d="M0 360 C 240 300, 360 300, 560 360 S 900 470, 1120 400 S 1520 300, 1920 360" stroke="url(#wave)" stroke-width="12" fill="none" stroke-linecap="round"/>
-  <defs><linearGradient id="wave" x1="0" y1="360" x2="1920" y2="360" gradientUnits="userSpaceOnUse"><stop stop-color="#FFFFFF"/><stop offset="0.5" stop-color="#F7D344"/><stop offset="1" stop-color="#E38330"/></linearGradient></defs>
+  <g stroke="#FFFFFF" stroke-width="1.4" opacity="0.7"><line x1="0" y1="364" x2="860" y2="364"/><line x1="34" y1="338" x2="34" y2="390"/><line x1="1254" y1="122" x2="1254" y2="400"/><line x1="1228" y1="158" x2="1280" y2="158"/></g>
+  <path d="M-20 900 C 160 840, 280 600, 470 570 C 650 545, 780 675, 980 755 C 1160 825, 1260 775, 1400 735 C 1600 675, 1760 645, 1940 615" stroke="url(#wave)" stroke-width="24" fill="none" stroke-linecap="round"/>
+  <defs><linearGradient id="wave" x1="0" y1="710" x2="1920" y2="710" gradientUnits="userSpaceOnUse"><stop stop-color="#FFFFFF"/><stop offset="0.5" stop-color="#F7D344"/><stop offset="1" stop-color="#E38330"/></linearGradient></defs>
 </svg>

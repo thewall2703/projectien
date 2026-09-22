@@ -209,10 +209,19 @@ class GeneratedSlideAdminTests(unittest.TestCase):
     @patch("backend.routers.admin_routes.delete_file")
     @patch("backend.routers.admin_routes.save_generated_slide_image")
     @patch("backend.routers.admin_routes.render_slide")
+    @patch("backend.routers.admin_routes._prepare_photos")
     def test_programme_list_edit_preserves_and_updates_the_bounded_list(
-        self, render_slide, save_image, delete_file
+        self, prepare_photos, render_slide, save_image, delete_file
     ):
         row = self.add_programme_slide()
+        prepare_photos.return_value = (
+            {"photo_1": b"img-1", "photo_2": b"img-2"},
+            [
+                {"slot": "photo_1", "asset_id": 101, "key": "a", "crop": {"fit": "cover"}},
+                {"slot": "photo_2", "asset_id": 102, "key": "b", "crop": {"fit": "cover"}},
+            ],
+            [101, 102],
+        )
         render_slide.return_value = SimpleNamespace(jpeg=b"jpeg")
         save_image.return_value = "generated-slides/prog2.jpg"
 
@@ -237,6 +246,8 @@ class GeneratedSlideAdminTests(unittest.TestCase):
         stored = json.loads(self.db.get(GeneratedSlide, row.id).slot_values_json)
         self.assertIsInstance(stored["items"], list)
         self.assertEqual(len(stored["items"]), 3)
+        _, kwargs = render_slide.call_args
+        self.assertEqual(set(kwargs["photos"]), {"photo_1", "photo_2"})
 
     @patch("backend.routers.admin_routes.delete_file")
     @patch("backend.routers.admin_routes.save_generated_slide_image")

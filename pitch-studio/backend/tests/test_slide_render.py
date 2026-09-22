@@ -169,7 +169,10 @@ class InlineMarkupTests(unittest.TestCase):
             _simple_manifest(), {"title": "UG in **Data Science**"}, embed_fonts=False
         )
         self.assertIn('<span class="strong">Data Science</span>', html)
-        self.assertIn(".content .strong{font-weight:700;}", html)
+        self.assertIn(
+            ".content .strong{font-weight:700;color:var(--strong-color, inherit);}",
+            html,
+        )
 
     def test_strong_and_emphasis_coexist(self):
         html = build_slide_html(

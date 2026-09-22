@@ -26,21 +26,46 @@
   "comparison": {
     "note": "Split structural vs text comparison. Unlike the dividers, p58's ground is a full building photograph, so the only region flat and dark in BOTH the source and the clean template is the upper-right corner right of the building and below the top-right accent curve; that block is the structural gate (frame + dark ground + registration line up). The TEXT masks are informational only: the source overlays a licensed display serif (the italic stat figures and the 'union' accent word) not bundled yet, plus the building photo the template does not reproduce, so those regions differ by design.",
     "structural_regions": [
-      [1640, 90, 200, 200]
+      [
+        1640,
+        90,
+        200,
+        200
+      ]
     ],
-    "text_region": [96, 74, 620, 300],
+    "text_region": [
+      96,
+      74,
+      620,
+      300
+    ],
     "masks": {
-      "title_accent_serif": [96, 74, 620, 176],
-      "stat_value_serif": [548, 84, 228, 470],
-      "building_photo": [300, 120, 720, 900]
+      "title_accent_serif": [
+        96,
+        74,
+        620,
+        176
+      ],
+      "stat_value_serif": [
+        548,
+        84,
+        228,
+        470
+      ],
+      "building_photo": [
+        300,
+        120,
+        720,
+        900
+      ]
     },
     "structural_mad_max": 6.0,
     "text_region_mad_max": 170.0,
     "baseline": {
-      "full_mad": 36.21,
-      "structural_mad": 3.39,
-      "text_region_mad": 84.13,
-      "measured": "2026-09-22, Chromium 153 (Playwright 1.63), serif token = fallback; source building photo not reproduced by template"
+      "full_mad": 36.26,
+      "structural_mad": 3.24,
+      "text_region_mad": 87.73,
+      "measured": "2026-09-22, Chromium 153 (Playwright 1.63), furniture v2, editorial serif fallback v2"
     }
   }
 }

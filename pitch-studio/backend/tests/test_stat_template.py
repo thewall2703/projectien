@@ -113,7 +113,7 @@ _STAT_FILL = {
     "stat4_label": "",
     "stat5_value": "",
     "stat5_label": "",
-    "footnote": "As per the 2025 Placement Report",
+    "footnote": "Source: 2025 Placement Report",
 }
 
 # Locked facts that support every numeral used in ``_STAT_FILL``.
@@ -137,8 +137,12 @@ class StatRegistryTests(unittest.TestCase):
                 self.assertLessEqual(set(spec.required_slots), set(spec.fillable_slots))
                 for name in spec.fillable_slots:
                     self.assertIn(name, spec.budgets, f"{name} has no budget")
-                # The stat template carries no photo/list slots.
-                self.assertFalse(spec.photo_slots)
+                # The dark treatment may carry the approved full-bleed
+                # placement image; light remains furniture-only.
+                self.assertEqual(
+                    spec.photo_slots,
+                    ("background_photo",) if template_id == "stat-dark" else (),
+                )
                 self.assertFalse(spec.fillable_lists)
                 self.assertFalse(spec.requires_photo)
 
@@ -316,7 +320,7 @@ class StatRoutingTests(unittest.TestCase):
         restored = result[1]
         self.assertIsInstance(restored, BrandSlide)
         self.assertEqual(restored.page, 51)  # the displaced brand page
-        self.assertEqual(fill.call_count, 2)  # two attempts, both rejected
+        self.assertEqual(fill.call_count, 3)  # three attempts, all rejected
         self.assertEqual(renderer.calls, [])  # provenance gate precedes the render
         save.assert_not_called()
         self.assertEqual(self.db.query(GeneratedSlide).count(), 0)

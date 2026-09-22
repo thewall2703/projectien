@@ -61,20 +61,19 @@ SLIDE_HEIGHT = 1080
 # licensed display serif — or otherwise changing the embedded faces — naturally
 # invalidates every cached render without any manual cache bust. Bump this
 # whenever ``_GALANO_FACES`` or :data:`SERIF_FALLBACK_STACK` changes.
-FONT_BUNDLE_VERSION = "galano-alt-1+serif-fallback-1"
+FONT_BUNDLE_VERSION = "galano-alt-1+serif-editorial-fallback-2"
 
 # The brand sans, bundled into the image (backend/assets/fonts). Filenames look
 # like ``GalanoGrotesqueAltSemiBold.otf`` / ``...SemiBoldItalic.otf``.
 SANS_FAMILY = "Galano Grotesque Alt"
 
-# TEMPORARY serif fallback. The brand's real display serif is not available yet
-# (see plan: "We do not have the real serif yet"). Everything that wants the
-# serif references the ``"serif"`` font token, which resolves here, so when the
-# licensed face is bundled this single constant is the only thing to change.
-# Keep it isolated and obviously provisional.
-SERIF_FALLBACK_FAMILY = "PT Serif"  # nominal @font-face family name
+# The licensed display serif is not bundled. Prefer high-contrast editorial
+# faces available on common Chromium hosts, with Times before the wider,
+# lower-contrast Georgia fallback. Keep this isolated for a future licensed face.
+SERIF_FALLBACK_FAMILY = "Bodoni 72"
 SERIF_FALLBACK_STACK = (
-    f"'{SERIF_FALLBACK_FAMILY}', 'Georgia', 'Times New Roman', 'Noto Serif', serif"
+    f"'{SERIF_FALLBACK_FAMILY}', 'Bodoni MT', 'Didot', "
+    "'Times New Roman', 'Liberation Serif', 'Georgia', serif"
 )
 
 FontToken = Literal["sans", "serif"]
@@ -229,6 +228,12 @@ class PhotoSlot:
     frame_width: float = 0.0
     shadow: bool = False
     background: str = "#000000"
+    label_from: str = ""
+    label_height: float = 0.0
+    label_background: str = "#FFFFFF"
+    label_color: str = "#111111"
+    label_font_size: float = 20.0
+    label_tracking_em: float = 0.12
     required: bool = False
     z: int = 10
 
@@ -296,6 +301,8 @@ class TextSlot:
     tracking_em: float = 0.0
     line_height: float = 1.05
     color: str = "#111111"
+    emphasis_color: str = ""
+    strong_color: str = ""
     align: HAlign = "left"
     valign: VAlign = "bottom"
     char_budget: int | None = None
@@ -387,6 +394,12 @@ class SlideManifest:
                     "frame_width": p.frame_width,
                     "shadow": p.shadow,
                     "background": p.background,
+                    "label_from": p.label_from,
+                    "label_height": p.label_height,
+                    "label_background": p.label_background,
+                    "label_color": p.label_color,
+                    "label_font_size": p.label_font_size,
+                    "label_tracking_em": p.label_tracking_em,
                     "required": p.required,
                     "z": p.z,
                 }
@@ -428,6 +441,8 @@ class SlideManifest:
                     "tracking_em": s.tracking_em,
                     "line_height": s.line_height,
                     "color": s.color,
+                    "emphasis_color": s.emphasis_color,
+                    "strong_color": s.strong_color,
                     "align": s.align,
                     "valign": s.valign,
                     "char_budget": s.char_budget,
@@ -478,6 +493,12 @@ class SlideManifest:
                 frame_width=float(p.get("frame_width", 0.0)),
                 shadow=bool(p.get("shadow", False)),
                 background=p.get("background", "#000000"),
+                label_from=p.get("label_from", ""),
+                label_height=float(p.get("label_height", 0.0)),
+                label_background=p.get("label_background", "#FFFFFF"),
+                label_color=p.get("label_color", "#111111"),
+                label_font_size=float(p.get("label_font_size", 20.0)),
+                label_tracking_em=float(p.get("label_tracking_em", 0.12)),
                 required=bool(p.get("required", False)),
                 z=int(p.get("z", 10)),
             )
@@ -519,6 +540,8 @@ class SlideManifest:
                 tracking_em=float(s.get("tracking_em", 0.0)),
                 line_height=float(s.get("line_height", 1.05)),
                 color=s.get("color", "#111111"),
+                emphasis_color=s.get("emphasis_color", ""),
+                strong_color=s.get("strong_color", ""),
                 align=s.get("align", "left"),
                 valign=s.get("valign", "bottom"),
                 char_budget=s.get("char_budget"),
@@ -647,7 +670,7 @@ def _photo_data_uri(data: "bytes | bytearray | str") -> str:
     return f"data:{mime};base64,{encoded}"
 
 
-def _photo_layer_html(slot: PhotoSlot, uri: str) -> str:
+def _photo_layer_html(slot: PhotoSlot, uri: str, values: Mapping[str, Any]) -> str:
     transform = f"transform:rotate({slot.rotation_deg}deg);" if slot.rotation_deg else ""
     shadow = "box-shadow:0 18px 44px rgba(0,0,0,0.30);" if slot.shadow else ""
     frame = (
@@ -657,10 +680,24 @@ def _photo_layer_html(slot: PhotoSlot, uri: str) -> str:
     )
     radius = f"border-radius:{_px(slot.radius)};" if slot.radius else ""
     inner_radius = radius if not frame else ""
+    label = ""
+    clip_height = "100%"
+    if slot.label_from and slot.label_height:
+        label_text = html.escape(_strip_markup(str(values.get(slot.label_from) or "")).upper())
+        label = (
+            f'<div class="photo-label" style="height:{_px(slot.label_height)};'
+            f"display:flex;align-items:center;padding:0 12px;box-sizing:border-box;"
+            f"background:{slot.label_background};color:{slot.label_color};"
+            f"font-family:{FONT_STACKS['sans']};font-size:{_px(slot.label_font_size)};"
+            f"font-weight:500;letter-spacing:{slot.label_tracking_em}em;"
+            f'white-space:nowrap;overflow:hidden;">{label_text}</div>'
+        )
+        clip_height = f"calc(100% - {_px(slot.label_height)})"
     return (
         f'<div class="layer photo" style="{slot.rect.style()}z-index:{slot.z};'
         f'{transform}{shadow}{frame}{radius}">'
-        f'<div class="photo-clip" style="width:100%;height:100%;overflow:hidden;'
+        f"{label}"
+        f'<div class="photo-clip" style="width:100%;height:{clip_height};overflow:hidden;'
         f'background:{slot.background};{inner_radius}">'
         f'<img src="{uri}" style="width:100%;height:100%;display:block;'
         f'object-fit:{slot.fit};'
@@ -680,6 +717,8 @@ def _text_slot_html(
     tracking_em: float,
     line_height: float,
     color: str,
+    emphasis_color: str,
+    strong_color: str,
     align: HAlign,
     valign: VAlign,
     uppercase: bool,
@@ -701,6 +740,8 @@ def _text_slot_html(
         f"letter-spacing:{tracking_em}em;"
         f"line-height:{line_height};"
         f"color:{color};"
+        f"--emphasis-color:{emphasis_color or 'inherit'};"
+        f"--strong-color:{strong_color or 'inherit'};"
         f"text-align:{_TEXTALIGN_CSS[align]};"
         f"{'text-transform:uppercase;' if uppercase else ''}"
     )
@@ -727,7 +768,7 @@ def _list_slot_html(ls: ListSlot, items: Sequence[str]) -> list[str]:
             by = top + (ls.item_height - b) / 2
             if ls.bullet == "ring":
                 bullet_style = (
-                    f"border:{max(2.0, b * 0.16):.2f}px solid {ls.bullet_color};"
+                    f"border:{max(3.0, b * 0.28):.2f}px solid {ls.bullet_color};"
                     "background:transparent;"
                 )
             else:
@@ -754,6 +795,8 @@ def _list_slot_html(ls: ListSlot, items: Sequence[str]) -> list[str]:
                 tracking_em=ls.tracking_em,
                 line_height=ls.line_height,
                 color=ls.color,
+                emphasis_color="",
+                strong_color="",
                 align="left",
                 valign="middle",
                 uppercase=False,
@@ -849,7 +892,7 @@ def build_slide_html(
         data = photos.get(photo.name)
         if not data:
             continue  # optional photo, absent -> not drawn
-        ordered.append((photo.z, seq, _photo_layer_html(photo, _photo_data_uri(data))))
+        ordered.append((photo.z, seq, _photo_layer_html(photo, _photo_data_uri(data), values)))
         seq += 1
     for grad in manifest.gradient_layers:
         ordered.append(
@@ -880,6 +923,8 @@ def build_slide_html(
                 tracking_em=s.tracking_em,
                 line_height=s.line_height,
                 color=s.color,
+                emphasis_color=s.emphasis_color,
+                strong_color=s.strong_color,
                 align=s.align,
                 valign=s.valign,
                 uppercase=s.uppercase,
@@ -910,8 +955,8 @@ html,body{{width:{manifest.width}px;height:{manifest.height}px;background:{manif
 .divider{{position:absolute;}}
 .slot{{position:absolute;display:flex;overflow:hidden;}}
 .slot .content{{width:100%;overflow-wrap:break-word;}}
-.content .emph{{font-family:{emph_stack};font-style:italic;font-weight:inherit;}}
-.content .strong{{font-weight:700;}}
+.content .emph{{font-family:{emph_stack};font-style:italic;font-weight:400;color:var(--emphasis-color, inherit);}}
+.content .strong{{font-weight:700;color:var(--strong-color, inherit);}}
 </style></head>
 <body><div id="slide">
 {''.join(layer_html)}

@@ -8,10 +8,9 @@ Fidelity is measured two ways, because a faithful *structural* reconstruction
 cannot yet be a pixel-perfect one:
 
 * **Full-frame MAD** — mean absolute difference over the whole 1920x1080 frame,
-  0-255 per channel. Reported as an informational baseline. It is expected to
-  be sizeable: the source pages contain a thick raster brush stroke, a licensed
-  display serif we do not have yet, and the wordmark logo, none of which the
-  clean vector furniture reproduces.
+  0-255 per channel. Reported as an informational baseline. Some source pages
+  contain photography or optional cards the clean template intentionally does
+  not reproduce, and the licensed display serif is not bundled.
 * **Structural MAD** — the same metric restricted to a handful of background /
   grid *structural regions* that both images share (empty of brush, text and
   logo). This is the actionable gate: it verifies the frame, background,

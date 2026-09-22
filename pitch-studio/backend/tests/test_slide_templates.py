@@ -55,7 +55,8 @@ class SectionDividerTemplateTests(unittest.TestCase):
         manifest = section_divider_manifest("dark")
         assets = [l.asset for l in manifest.layers]
         self.assertIn("section-divider-dark.svg", assets)
-        # the flattened furniture must exist and carry no live text / photos
+        # The flattened furniture has no live text or photography. The one
+        # embedded raster is the static lockup lifted from the real divider.
         svg = (
             Path(__file__).resolve().parents[1]
             / "assets"
@@ -65,6 +66,8 @@ class SectionDividerTemplateTests(unittest.TestCase):
         self.assertNotIn("<text", svg)
         self.assertNotIn("data:image/png", svg)
         self.assertNotIn("data:image/jpeg", svg)
+        self.assertIn('id="masters-union-lockup"', svg)
+        self.assertEqual(svg.count("data:image/webp"), 1)
 
     def test_geometry_matches_known_rails_and_card(self):
         # Known geometry from the real divider pages, kept honest in the SVG.
@@ -76,10 +79,12 @@ class SectionDividerTemplateTests(unittest.TestCase):
         ).read_text()
         self.assertIn('y1="116.75"', svg)
         self.assertIn('y1="959.75"', svg)
-        # brand accent gradient stops
+        # Brand ribbon treatment: pale yellow through gold to warm orange.
+        self.assertIn('id="accent-ribbon"', svg)
+        self.assertIn('stroke-width="72"', svg)
+        self.assertIn("#FFF4BF", svg)
         self.assertIn("#E38330", svg)
         self.assertIn("#F7D344", svg)
-        self.assertIn("#39B6D8", svg)
 
     def test_values_helper_defaults_to_brand_furniture(self):
         values = section_divider_values("Immersions", "How students learn by traveling")
@@ -88,8 +93,8 @@ class SectionDividerTemplateTests(unittest.TestCase):
         self.assertEqual(values["title"], "Immersions")
 
     def test_serif_token_is_isolated_fallback(self):
-        # Until the licensed serif is bundled, emphasis must resolve to the
-        # clearly-provisional fallback family, swappable in one place.
+        # Until the licensed serif is bundled, emphasis resolves to the
+        # high-contrast editorial fallback family, swappable in one place.
         html = build_slide_html(
             section_divider_manifest("light"),
             section_divider_values("*Immersions*", ""),
@@ -183,7 +188,7 @@ class TemplateRegistryTests(unittest.TestCase):
         for template_id in set(SUPPORTED_TEMPLATE_IDS) - set(PHOTO_REQUIRED_TEMPLATE_IDS):
             self.assertFalse(template_spec(template_id).requires_photo)
 
-    def test_furniture_assets_exist_and_carry_no_text_or_raster(self):
+    def test_furniture_assets_exist_and_carry_no_live_text_or_photos(self):
         for template_id in SUPPORTED_TEMPLATE_IDS:
             manifest = template_spec(template_id).manifest
             for layer in manifest.layers:
@@ -193,6 +198,11 @@ class TemplateRegistryTests(unittest.TestCase):
                 self.assertNotIn("<text", text)
                 self.assertNotIn("data:image/png", text)
                 self.assertNotIn("data:image/jpeg", text)
+                # Divider SVGs may contain exactly one transparent WebP:
+                # the fixed Masters' Union lockup, never a content photo.
+                webp_count = text.count("data:image/webp")
+                expected = 1 if template_id.startswith("section-divider-") else 0
+                self.assertEqual(webp_count, expected)
 
 
 class StatTemplateTests(unittest.TestCase):
@@ -249,13 +259,14 @@ class CampusTemplateTests(unittest.TestCase):
 
 
 class ProgrammeListTemplateTests(unittest.TestCase):
-    def test_has_bounded_list_and_optional_photos(self):
+    def test_has_bounded_list_and_required_photos(self):
         spec = template_spec("programme-list-light")
         self.assertEqual(spec.fillable_lists, ("items",))
         self.assertEqual(spec.list_budgets["items"].max_items, 6)
-        # Photo slots exist but are optional: the card degrades to text-only.
-        self.assertTrue(spec.photo_slots)
-        self.assertFalse(spec.requires_photo)
+        self.assertEqual(spec.photo_slots, ("photo_1", "photo_2"))
+        self.assertEqual(spec.required_photo_slots, spec.photo_slots)
+        self.assertTrue(spec.requires_photo)
+        self.assertTrue(all(slot.required for slot in spec.manifest.photo_slots))
 
     def test_programme_type_is_italic_serif(self):
         prog = programme_list_manifest("light").slot("programme_type")

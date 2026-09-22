@@ -3,7 +3,7 @@
 Each template is a factory returning a :class:`SlideManifest`. The only template
 so far is the **section divider**, in light and dark variants, reconstructed
 from the brand deck's real divider pages (p19, p52). Its furniture — grid,
-header/footer rails, and the sweeping accent gradient — is the flattened,
+header/footer rails, the sweeping accent ribbon, and the university lockup — is the flattened,
 text-and-photo-free SVG under ``assets/slide-templates`` (see
 ``section-divider-{variant}.svg``). Only the title/subtitle/branding text is
 live and filled at generation time.
@@ -11,14 +11,15 @@ live and filled at generation time.
 Known geometry, measured from the source pages at 1920x1080:
 
 * header/footer rails at ``y=116.75`` and ``y=959.75`` (``#A3A3A3`` @ 0.5px),
-* the accent gradient ``#E38330 -> #F7D344 -> #39B6D8``,
+* the thick accent ribbon ``#FFF4BF -> #F7D344 -> #E38330``,
 * branding "Learn by Doing" (top-left) and "mastersunion.org" (top-right),
+* the Masters' Union University lockup at bottom-right,
 * the section title anchored bottom-left with an optional subtitle beneath it.
 
 The title renders in the brand **sans** (Galano Alt) with ``*emphasis*`` runs
-falling to the italic **serif** token. Because the licensed display serif is
-not available yet, that token resolves to a clearly-provisional fallback in one
-place (:data:`slide_render.SERIF_FALLBACK_STACK`); p52's all-serif title is
+falling to the regular-weight italic **serif** token. The licensed display serif
+is not bundled, so that token uses a high-contrast editorial system fallback in
+one place (:data:`slide_render.SERIF_FALLBACK_STACK`); p52's all-serif title is
 expressed simply as a fully-emphasised string.
 """
 
@@ -43,7 +44,7 @@ SECTION_DIVIDER_TEMPLATE_ID = "section-divider"
 
 # Bump when a template's furniture, geometry, slots or copy conventions change,
 # so every cached generated render built on the old template is invalidated.
-SECTION_DIVIDER_TEMPLATE_VERSION = "1"
+SECTION_DIVIDER_TEMPLATE_VERSION = "3"
 
 # Brand furniture strings shown on every divider unless overridden.
 DEFAULT_BRANDING_LEFT = "Learn by Doing"
@@ -116,27 +117,27 @@ def section_divider_manifest(variant: Variant = "light") -> SlideManifest:
         # renders italic-serif. Auto-fits down to a floor, then rejects.
         TextSlot(
             name="title",
-            rect=Rect(96, 300, 1216, 232),
+            rect=Rect(96, 724, 1320, 220),
             font="sans",
-            font_size=104,
-            min_font_size=44,
-            weight=700,
-            tracking_em=-0.01,
-            line_height=1.02,
+            font_size=132,
+            min_font_size=60,
+            weight=400,
+            tracking_em=-0.015,
+            line_height=1.0,
             color=colors["title"],
             align="left",
-            valign="bottom",
+            valign="top",
             char_budget=120,
             required=True,
         ),
         # Optional subtitle directly beneath the title.
         TextSlot(
             name="subtitle",
-            rect=Rect(100, 548, 900, 60),
+            rect=Rect(100, 895, 900, 66),
             font="sans",
-            font_size=34,
+            font_size=40,
             min_font_size=20,
-            weight=500,
+            weight=400,
             tracking_em=0.0,
             line_height=1.12,
             color=colors["subtitle"],
@@ -175,11 +176,11 @@ def section_divider_values(
 # ---------------------------------------------------------------------------
 
 STAT_TEMPLATE_ID = "stat"
-STAT_TEMPLATE_VERSION = "1"
+STAT_TEMPLATE_VERSION = "4"
 CAMPUS_TEMPLATE_ID = "campus-photo"
-CAMPUS_TEMPLATE_VERSION = "1"
+CAMPUS_TEMPLATE_VERSION = "3"
 PROGRAMME_LIST_TEMPLATE_ID = "programme-list"
-PROGRAMME_LIST_TEMPLATE_VERSION = "1"
+PROGRAMME_LIST_TEMPLATE_VERSION = "5"
 
 # How many supporting stat rows the stat template carries beside the hero stat.
 # p58 lists five figures in the right column (highest / average / median CTC,
@@ -226,6 +227,16 @@ def stat_manifest(variant: Variant = "dark") -> SlideManifest:
     layers = (
         SvgLayer(name="furniture", asset=f"stat-{variant}.svg", rect=Rect(0, 0, 1920, 1080), z=0),
     )
+    photos = (
+        (
+            PhotoSlot(
+                name="background_photo", rect=Rect(0, 0, 1920, 1080), fit="cover",
+                focus_x=0.5, focus_y=0.5, background="#0E0E10", z=-5,
+            ),
+        )
+        if variant == "dark"
+        else ()
+    )
     slots: list[TextSlot] = [
         TextSlot(
             name="branding_left", rect=Rect(64, 44, 520, 40), font="sans", font_size=18,
@@ -238,22 +249,25 @@ def stat_manifest(variant: Variant = "dark") -> SlideManifest:
             color=c["branding"], align="right", valign="middle", autofit=False, char_budget=48,
         ),
         TextSlot(
-            name="title", rect=Rect(96, 74, 620, 176), font="sans", font_size=84,
-            min_font_size=42, weight=700, tracking_em=-0.01, line_height=1.02,
-            color=c["title"], align="left", valign="top", char_budget=48, required=True,
+            name="title", rect=Rect(108, 142, 770, 250), font="sans", font_size=96,
+            min_font_size=48, weight=400, tracking_em=-0.015, line_height=0.96,
+            color=c["title"], emphasis_color="#F7D344" if variant == "dark" else "",
+            align="left", valign="top", char_budget=48, required=True,
         ),
         TextSlot(
-            name="subtitle", rect=Rect(96, 252, 470, 120), font="sans", font_size=30,
+            name="subtitle", rect=Rect(110, 408, 530, 116), font="sans", font_size=30,
             min_font_size=18, weight=500, tracking_em=0.0, line_height=1.2,
             color=c["subtitle"], align="left", valign="top", char_budget=110,
         ),
         TextSlot(
-            name="hero_value", rect=Rect(88, 700, 560, 240), font="sans", font_size=200,
-            min_font_size=90, weight=800, tracking_em=-0.02, line_height=0.95,
-            color=c["hero"], align="left", valign="bottom", char_budget=12, required=True,
+            name="hero_value", rect=Rect(104, 690, 760, 250), font="sans", font_size=200,
+            min_font_size=90, weight=700 if variant == "dark" else 800,
+            tracking_em=-0.02, line_height=0.95,
+            color=c["hero"], strong_color="#F7D344" if variant == "dark" else "",
+            align="left", valign="bottom", char_budget=12, required=True,
         ),
         TextSlot(
-            name="hero_label", rect=Rect(96, 946, 540, 96), font="sans", font_size=26,
+            name="hero_label", rect=Rect(110, 946, 620, 96), font="sans", font_size=26,
             min_font_size=16, weight=600, tracking_em=0.0, line_height=1.15,
             color=c["hero_label"], align="left", valign="top", char_budget=64, required=True,
         ),
@@ -264,27 +278,30 @@ def stat_manifest(variant: Variant = "dark") -> SlideManifest:
         ),
     ]
     # Supporting stat rows: serif-italic value (right column) + sans label.
-    row_top = 84
-    row_step = 92
+    row_top = 142
+    row_step = 174
     for i in range(1, STAT_ROW_COUNT + 1):
         top = row_top + (i - 1) * row_step
         slots.append(
             TextSlot(
-                name=f"stat{i}_value", rect=Rect(548, top, 228, 78), font="serif",
-                font_size=56, min_font_size=28, weight=500, italic=True, tracking_em=0.0,
+                name=f"stat{i}_value", rect=Rect(1148, top, 260, 112), font="serif",
+                font_size=74, min_font_size=38, weight=500, italic=True, tracking_em=0.0,
                 line_height=1.0, color=c["value"], align="right", valign="middle", char_budget=12,
             )
         )
         slots.append(
             TextSlot(
-                name=f"stat{i}_label", rect=Rect(792, top - 4, 270, 86), font="sans",
-                font_size=25, min_font_size=15, weight=600, tracking_em=0.0, line_height=1.12,
+                name=f"stat{i}_label",
+                rect=Rect(1452, top - 2, 300 if variant == "dark" else 360, 116),
+                font="sans",
+                font_size=29, min_font_size=18, weight=600, tracking_em=0.0, line_height=1.08,
                 color=c["label"], align="left", valign="middle", char_budget=54,
             )
         )
     return SlideManifest(
         template_id=f"{STAT_TEMPLATE_ID}-{variant}",
         layers=layers,
+        photo_slots=photos,
         text_slots=tuple(slots),
         background=c["background"],
     )
@@ -309,8 +326,8 @@ def campus_photo_manifest() -> SlideManifest:
     )
     gradients = (
         GradientLayer(
-            name="top_scrim", rect=Rect(0, 0, 1920, 470),
-            css="linear-gradient(180deg, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.34) 40%, rgba(0,0,0,0) 100%)",
+            name="top_scrim", rect=Rect(0, 0, 1920, 540),
+            css="linear-gradient(180deg, rgba(0,0,0,0.98) 0%, rgba(0,0,0,0.84) 52%, rgba(0,0,0,0) 100%)",
             z=20,
         ),
     )
@@ -326,13 +343,13 @@ def campus_photo_manifest() -> SlideManifest:
             color="#F2F2F2", align="right", valign="middle", autofit=False, char_budget=48,
         ),
         TextSlot(
-            name="headline", rect=Rect(60, 84, 780, 128), font="serif", font_size=98,
-            min_font_size=48, weight=400, italic=True, tracking_em=-0.005, line_height=1.0,
+            name="headline", rect=Rect(88, 138, 860, 174), font="serif", font_size=128,
+            min_font_size=64, weight=400, italic=True, tracking_em=-0.01, line_height=1.0,
             color="#EDC65C", align="left", valign="middle", char_budget=32, required=True,
         ),
         TextSlot(
-            name="caption", rect=Rect(1140, 92, 716, 128), font="sans", font_size=30,
-            min_font_size=18, weight=500, tracking_em=0.0, line_height=1.22,
+            name="caption", rect=Rect(1320, 202, 500, 150), font="sans", font_size=30,
+            min_font_size=18, weight=400, tracking_em=0.0, line_height=1.22,
             color="#F4F4F4", align="left", valign="top", char_budget=80,
         ),
     )
@@ -350,9 +367,9 @@ def programme_list_manifest(variant: Variant = "light") -> SlideManifest:
     """Build the programme-list manifest (modelled on p84-87).
 
     A light card holds a bold title, an italic-serif programme-type line and a
-    bounded ring-bulleted list; two optional tilted photo cards sit on the
-    right and are only drawn when approved media is supplied (otherwise the card
-    degrades cleanly to a text-only slide).
+    bounded ring-bulleted list; two required tilted photo cards complete the
+    right half. Stage 4 restores the displaced brand page when both approved
+    photos are not available, rather than emitting an empty half-slide.
     """
     tint: Variant = "blue" if variant == "blue" else "light"
     layers = (
@@ -360,14 +377,21 @@ def programme_list_manifest(variant: Variant = "light") -> SlideManifest:
     )
     photos = (
         PhotoSlot(
-            name="photo_1", rect=Rect(548, 72, 452, 258), fit="cover", focus_x=0.5, focus_y=0.5,
-            rotation_deg=-4.0, frame=True, frame_color="#FFFFFF", frame_width=12.0,
-            shadow=True, background="#DDDDDD", z=12,
+            name="photo_1",
+            rect=Rect(1030 if tint == "blue" else 1045, 142, 600 if tint == "blue" else 570, 350),
+            fit="cover", focus_x=0.5, focus_y=0.5,
+            rotation_deg=-2.5 if tint == "blue" else -4.0,
+            frame=True, frame_color="#FFFFFF", frame_width=12.0,
+            shadow=True, background="#DDDDDD", label_from="title", label_height=38,
+            label_background="#F4E4B2" if tint == "light" else "#C3E4EF",
+            required=True, z=12,
         ),
         PhotoSlot(
-            name="photo_2", rect=Rect(596, 300, 452, 258), fit="cover", focus_x=0.5, focus_y=0.5,
+            name="photo_2", rect=Rect(1110, 530, 700, 390), fit="cover", focus_x=0.5, focus_y=0.5,
             rotation_deg=3.5, frame=True, frame_color="#FFFFFF", frame_width=12.0,
-            shadow=True, background="#DDDDDD", z=13,
+            shadow=True, background="#DDDDDD", label_from="title", label_height=38,
+            label_background="#F4E4B2" if tint == "light" else "#C3E4EF", z=13,
+            required=True,
         ),
     )
     slots = (
@@ -382,22 +406,24 @@ def programme_list_manifest(variant: Variant = "light") -> SlideManifest:
             color="#1A1A1A", align="right", valign="middle", autofit=False, char_budget=48,
         ),
         TextSlot(
-            name="title", rect=Rect(110, 92, 330, 60), font="sans", font_size=44,
-            min_font_size=26, weight=700, tracking_em=-0.005, line_height=1.0,
+            name="title", rect=Rect(174, 166, 650, 80), font="sans", font_size=58,
+            min_font_size=36, weight=700, tracking_em=-0.01, line_height=1.0,
             color="#1A1A1A", align="left", valign="middle", char_budget=26, required=True,
         ),
         TextSlot(
-            name="programme_type", rect=Rect(110, 150, 330, 52), font="serif", font_size=38,
-            min_font_size=22, weight=400, italic=True, tracking_em=0.0, line_height=1.0,
+            name="programme_type", rect=Rect(174, 232, 650, 76), font="serif", font_size=56,
+            min_font_size=32, weight=400, italic=True, tracking_em=0.0, line_height=1.0,
             color="#333333", align="left", valign="middle", char_budget=24,
         ),
     )
     lists = (
         ListSlot(
-            name="items", rect=Rect(106, 246, 336, 252), max_items=6, item_height=42,
-            font="sans", font_size=24, min_font_size=15, weight=400, line_height=1.1,
-            color="#1F1F1F", bullet="ring", bullet_color="#141414", bullet_size=18,
-            text_indent=40, divider=True, divider_color="#DADAD6",
+            name="items", rect=Rect(154, 332, 700, 612), max_items=6, item_height=102,
+            font="sans", font_size=24 if tint == "blue" else 28,
+            min_font_size=18 if tint == "blue" else 20, weight=500, line_height=1.1,
+            color="#1F1F1F", bullet="ring", bullet_color="#141414",
+            bullet_size=30 if tint == "blue" else 34,
+            text_indent=58, divider=True, divider_color="#C8C8C4",
             char_budget_per_item=48, required=True,
         ),
     )
@@ -475,10 +501,9 @@ class TemplateSpec:
     # bounded list of strings, and their per-item budgets.
     fillable_lists: tuple[str, ...] = ()
     list_budgets: dict[str, ListBudget] = field(default_factory=dict)
-    # Photo slots (campus, programme list). ``requires_photo`` is True only when
-    # a photo slot is mandatory (campus): the planner may not choose this
-    # template unless an approved photo is available, and Stage 4 degrades if it
-    # ever renders without one.
+    # Photo slots (campus, programme list). When any photo slot is mandatory,
+    # the planner may not choose the template unless approved media is available,
+    # and Stage 4 degrades rather than rendering an incomplete composition.
     photo_slots: tuple[str, ...] = ()
     required_photo_slots: tuple[str, ...] = ()
 
@@ -582,6 +607,7 @@ def _stat_spec(variant: Variant) -> TemplateSpec:
         budgets=dict(_STAT_BUDGETS),
         exemplars=_STAT_EXEMPLARS,
         reference_pages=_STAT_REFERENCE_PAGES,
+        photo_slots=("background_photo",) if variant == "dark" else (),
     )
 
 
@@ -655,6 +681,7 @@ def _programme_list_spec(variant: Variant) -> TemplateSpec:
         fillable_lists=("items",),
         list_budgets=dict(_PROGRAMME_LIST_BUDGETS),
         photo_slots=("photo_1", "photo_2"),
+        required_photo_slots=("photo_1", "photo_2"),
     )
 
 
@@ -672,7 +699,11 @@ SUPPORTED_TEMPLATE_IDS: tuple[str, ...] = (
 
 # Templates that can only be planned/rendered when an approved photo exists.
 PHOTO_REQUIRED_TEMPLATE_IDS: frozenset[str] = frozenset(
-    {f"{CAMPUS_TEMPLATE_ID}-dark"}
+    {
+        f"{CAMPUS_TEMPLATE_ID}-dark",
+        f"{PROGRAMME_LIST_TEMPLATE_ID}-light",
+        f"{PROGRAMME_LIST_TEMPLATE_ID}-blue",
+    }
 )
 
 

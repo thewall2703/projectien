@@ -4,7 +4,7 @@ The reconstruction is compared to the cached brand-deck page two ways (see
 :mod:`backend.tests.slide_fidelity`): a hard *structural* gate over the shared
 background/grid frame, and an informational *text* metric over the title (loose,
 because the licensed serif is not bundled and the source overlays a raster brush
-and the wordmark logo). The render itself is skipped — and only the render — when
+behind the type). The render itself is skipped — and only the render — when
 Playwright/Chromium is unavailable; fixture wiring still gets checked.
 """
 
