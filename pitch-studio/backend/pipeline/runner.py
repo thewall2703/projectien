@@ -22,7 +22,12 @@ from backend.pipeline.llm import chat_json
 from backend.pipeline.prompts import review_pratham_voice, script_messages
 from backend.pipeline.resolver import ResolvedRecipe, resolve_recipe
 from backend.pipeline.style_guide import latest_style_guide
-from backend.pipeline.script_flow import ScriptFlowError, load_script_topics, notes_by_slide_key
+from backend.pipeline.script_flow import (
+    ScriptFlowError,
+    load_script_topics,
+    notes_by_slide_key,
+    reconcile_realized_slide_mapping,
+)
 from backend.pipeline.validator import align_script_to_topics, trim_script_to_budget, validate_script
 from backend.schemas import ScriptPayload
 from backend.transcripts import pick_founder_quotes
@@ -410,6 +415,7 @@ def run(generation_id: int) -> None:
         plan = realize_generated_slides(
             db,
             phase.plan,
+            generation_id=generation.id,
             passages=phase.report_passages,
             script_text_by_slide_key=script_text_by_slide_key,
             brand_deck_file_key=deck_file_key,
@@ -417,13 +423,20 @@ def run(generation_id: int) -> None:
             temperature=generation.temperature,
             duration=generation.duration,
         )
+        script, _topic_flow = reconcile_realized_slide_mapping(
+            phase.script,
+            phase.topic_flow,
+            phase.plan,
+            plan,
+        )
+        generation.script_json = json.dumps(script, ensure_ascii=False)
         generation.deck_spec_json = deck_spec_from_plan(plan).model_dump_json()
 
         set_status("rendering")
         generation.pptx_path = render_pptx(
             plan,
             generation.id,
-            notes_by_slide_key=notes_by_slide_key(phase.script, plan),
+            notes_by_slide_key=notes_by_slide_key(script, plan),
             file_key=deck_file_key,
         )
 

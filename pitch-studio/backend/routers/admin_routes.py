@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
 from backend.auth import hash_password, require_admin
@@ -49,6 +49,7 @@ from backend.models import (
     DeckTopic,
     FounderQuote,
     GeneratedSlide,
+    GeneratedSlideAttempt,
     LockedFact,
     MediaIndex,
     Module,
@@ -99,6 +100,8 @@ from backend.schemas import (
     FeedbackIn,
     FounderQuoteIn,
     FounderQuoteOut,
+    GeneratedSlideAttemptOut,
+    GeneratedSlideAttemptReview,
     GeneratedSlideOut,
     GeneratedSlideUpdate,
     MediaIndexCreate,
@@ -131,7 +134,7 @@ from backend.schemas import (
     VisionIn,
 )
 from backend.seed import run_seed
-from backend.storage import delete_file
+from backend.storage import delete_file, read_file
 from backend.sync_assets import run_sync, sync_one
 from backend.transcripts import ingest_transcripts, quote_hash
 
@@ -177,6 +180,53 @@ def _generated_slide_out(item: GeneratedSlide) -> GeneratedSlideOut:
         source_asset_ids=item.source_asset_ids,
         created_at=item.created_at,
         updated_at=item.updated_at,
+    )
+
+
+def _json_list(value: str) -> list[str]:
+    try:
+        parsed = json.loads(value or "[]")
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [str(entry) for entry in parsed]
+
+
+def _json_object(value: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(value or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _generated_slide_attempt_out(item: GeneratedSlideAttempt) -> GeneratedSlideAttemptOut:
+    return GeneratedSlideAttemptOut(
+        id=item.id,
+        generation_id=item.generation_id,
+        generated_slide_id=item.generated_slide_id,
+        placeholder_key=item.placeholder_key,
+        attempt_number=item.attempt_number,
+        claim=item.claim,
+        template_id=item.template_id,
+        tone=item.tone,
+        outcome=item.outcome,
+        gate=item.gate,
+        violations=_json_list(item.violations_json),
+        slot_values=_json_object(item.slot_values_json),
+        render_hash=item.render_hash,
+        image_url=(
+            f"/api/admin/generated-slide-attempts/{item.id}/image"
+            if item.file_key
+            else None
+        ),
+        review_status=item.review_status,
+        review_note=item.review_note,
+        use_as_guidance=item.use_as_guidance,
+        reviewer_user_id=item.reviewer_user_id,
+        reviewed_at=item.reviewed_at,
+        created_at=item.created_at,
     )
 
 
@@ -400,6 +450,103 @@ def delete_generated_slide(
         except Exception:
             pass
     return {"ok": True}
+
+
+@router.get(
+    "/generated-slide-attempts",
+    response_model=list[GeneratedSlideAttemptOut],
+)
+def list_generated_slide_attempts(
+    review_status: str | None = Query(None),
+    outcome: str | None = Query(None),
+    gate: str | None = Query(None),
+    template_id: str | None = Query(None),
+    generation_id: int | None = Query(None),
+    placeholder_key: str | None = Query(None),
+    use_as_guidance: bool | None = Query(None),
+    limit: int = Query(200, ge=1, le=500),
+    db: Session = Depends(get_db),
+) -> list[GeneratedSlideAttemptOut]:
+    query = db.query(GeneratedSlideAttempt)
+    if review_status:
+        query = query.filter(GeneratedSlideAttempt.review_status == review_status)
+    if outcome:
+        query = query.filter(GeneratedSlideAttempt.outcome == outcome)
+    if gate:
+        query = query.filter(GeneratedSlideAttempt.gate == gate)
+    if template_id:
+        query = query.filter(GeneratedSlideAttempt.template_id == template_id)
+    if generation_id is not None:
+        query = query.filter(GeneratedSlideAttempt.generation_id == generation_id)
+    if placeholder_key:
+        query = query.filter(GeneratedSlideAttempt.placeholder_key == placeholder_key)
+    if use_as_guidance is not None:
+        query = query.filter(
+            GeneratedSlideAttempt.use_as_guidance.is_(use_as_guidance)
+        )
+    rows = (
+        query.order_by(
+            GeneratedSlideAttempt.created_at.desc(),
+            GeneratedSlideAttempt.id.desc(),
+        )
+        .limit(limit)
+        .all()
+    )
+    return [_generated_slide_attempt_out(item) for item in rows]
+
+
+@router.get("/generated-slide-attempts/{attempt_id}/image")
+def generated_slide_attempt_image(
+    attempt_id: int,
+    db: Session = Depends(get_db),
+) -> Response:
+    item = db.get(GeneratedSlideAttempt, attempt_id)
+    if item is None or not item.file_key:
+        raise HTTPException(status_code=404, detail="Attempt image not found")
+    try:
+        data = read_file(item.file_key)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Attempt image not found") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Could not read attempt image") from exc
+    return Response(
+        content=data,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
+
+
+@router.put(
+    "/generated-slide-attempts/{attempt_id}/review",
+    response_model=GeneratedSlideAttemptOut,
+)
+def review_generated_slide_attempt(
+    attempt_id: int,
+    payload: GeneratedSlideAttemptReview,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+) -> GeneratedSlideAttemptOut:
+    item = db.get(GeneratedSlideAttempt, attempt_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Generated slide attempt not found")
+    if payload.use_as_guidance and not payload.review_note:
+        raise HTTPException(
+            status_code=400,
+            detail="A review note is required when approving guidance",
+        )
+    if payload.use_as_guidance and payload.review_status != "approved":
+        raise HTTPException(
+            status_code=400,
+            detail="Guidance must have approved review status",
+        )
+    item.review_status = payload.review_status
+    item.review_note = payload.review_note
+    item.use_as_guidance = payload.use_as_guidance
+    item.reviewer_user_id = user.id
+    item.reviewed_at = utc_now()
+    db.commit()
+    db.refresh(item)
+    return _generated_slide_attempt_out(item)
 
 
 @router.get("/recipes", response_model=list[RecipeOut])

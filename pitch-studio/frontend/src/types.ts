@@ -119,6 +119,29 @@ export type GeneratedSlideRow = {
   updated_at: string;
 };
 
+export type GeneratedSlideAttemptRow = {
+  id: number;
+  generation_id: number;
+  generated_slide_id: number | null;
+  placeholder_key: string;
+  attempt_number: number;
+  claim: string;
+  template_id: string;
+  tone: string;
+  outcome: string;
+  gate: string;
+  violations: string[];
+  slot_values: Record<string, unknown>;
+  render_hash: string;
+  image_url: string | null;
+  review_status: string;
+  review_note: string;
+  use_as_guidance: boolean;
+  reviewer_user_id: number | null;
+  reviewed_at: string | null;
+  created_at: string;
+};
+
 export type AssetRow = {
   id: number;
   type: string;
@@ -179,6 +202,7 @@ export type ScriptSection = {
   topic_id?: number;
   topic_title?: string;
   pages?: number[];
+  slide_keys?: string[];
   heading: string;
   text: string;
 };

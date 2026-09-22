@@ -193,6 +193,7 @@ def align_script_to_topics(
                 "topic_id": topic.topic_id,
                 "topic_title": topic.title,
                 "pages": list(topic.pages),
+                "slide_keys": list(topic.slide_keys),
                 "heading": heading,
                 "text": text,
             }

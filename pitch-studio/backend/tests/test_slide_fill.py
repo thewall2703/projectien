@@ -25,7 +25,7 @@ from backend.generated_slides import (
     compute_render_hash,
     generated_slide_key,
 )
-from backend.models import GeneratedSlide
+from backend.models import GeneratedSlide, GeneratedSlideAttempt, Generation, User
 from backend.pipeline.brand_deck import BrandSlide, render_pptx
 from backend.pipeline.deck import GENERATED_SOURCE, deck_slide_from_planned
 from backend.pipeline.gaps import (
@@ -673,6 +673,148 @@ class PersistenceRaceTests(MemoryDbTestCase):
         self.assertEqual(self.db.query(GeneratedSlide).count(), 1)
         self.assertEqual(result[1].slide_key, "generated-other")
         _ = plan_b
+
+
+class AttemptAuditTests(MemoryDbTestCase):
+    def setUp(self):
+        super().setUp()
+        user = User(email="attempts@example.com", password_hash="x")
+        self.db.add(user)
+        self.db.flush()
+        generation = Generation(
+            user_id=user.id,
+            audience_cluster="A1",
+            duration="T1",
+            channel="live",
+            intent="I1",
+            temperature="T1",
+        )
+        self.db.add(generation)
+        self.db.commit()
+        self.generation_id = generation.id
+
+    def _run(self, *, fill_fn, vision_fn, renderer=None):
+        plan = [
+            BrandSlide(COVER_PAGE, "", "Cover"),
+            placeholder(),
+            BrandSlide(CLOSING_PAGE, "M14", "Close"),
+        ]
+        with mock.patch(
+            f"{SLIDE_MODULE}.save_generated_slide_attempt_image",
+            return_value=f"generated-slide-attempts/{self.generation_id}/attempt.jpg",
+        ) as save_attempt, mock.patch(
+            f"{SLIDE_MODULE}.save_generated_slide_image",
+            return_value="generated-slides/canonical.jpg",
+        ), mock.patch(f"{SLIDE_MODULE}.file_exists", return_value=True):
+            result = realize_generated_slides(
+                self.db,
+                plan,
+                generation_id=self.generation_id,
+                facts=[],
+                passages=[],
+                fill_fn=fill_fn,
+                vision_fn=vision_fn,
+                renderer=renderer or FakeRenderer(),
+                brand_page_fn=lambda page: make_jpeg((10, 10, 10)),
+            )
+        return result, save_attempt
+
+    def test_success_archives_rendered_attempt_and_links_canonical_slide(self):
+        result, save_attempt = self._run(
+            fill_fn=mock.Mock(return_value={"title": "Not a *bootcamp*", "subtitle": ""}),
+            vision_fn=mock.Mock(return_value={"passed": True, "violations": []}),
+        )
+
+        self.assertIsInstance(result[1], GeneratedSlideInstance)
+        attempt = self.db.query(GeneratedSlideAttempt).one()
+        self.assertEqual(attempt.generation_id, self.generation_id)
+        self.assertEqual(attempt.placeholder_key, placeholder().slide_key)
+        self.assertEqual(attempt.attempt_number, 1)
+        self.assertEqual(attempt.outcome, "success")
+        self.assertEqual(attempt.gate, "accepted")
+        self.assertEqual(attempt.review_status, "pending")
+        self.assertFalse(attempt.use_as_guidance)
+        self.assertEqual(attempt.generated_slide_id, result[1].generated_slide_id)
+        self.assertEqual(json.loads(attempt.slot_values_json)["title"], "Not a *bootcamp*")
+        self.assertEqual(attempt.file_key, f"generated-slide-attempts/{self.generation_id}/attempt.jpg")
+        save_attempt.assert_called_once()
+        self.assertEqual(save_attempt.call_args.args[0], self.generation_id)
+
+    def test_failed_attempts_and_final_degradation_are_archived(self):
+        result, save_attempt = self._run(
+            fill_fn=mock.Mock(return_value={"title": "We place 999 students", "subtitle": ""}),
+            vision_fn=mock.Mock(return_value={"passed": True, "violations": []}),
+        )
+
+        self.assertIsInstance(result[1], BrandSlide)
+        rows = (
+            self.db.query(GeneratedSlideAttempt)
+            .order_by(GeneratedSlideAttempt.id)
+            .all()
+        )
+        self.assertEqual([row.outcome for row in rows], [
+            "provenance",
+            "provenance",
+            "final_degradation",
+        ])
+        self.assertEqual([row.attempt_number for row in rows], [1, 2, 3])
+        self.assertTrue(json.loads(rows[0].violations_json))
+        save_attempt.assert_not_called()
+
+    def test_only_approved_template_scoped_notes_are_injected_and_deduped(self):
+        notes = [
+            GeneratedSlideAttempt(
+                generation_id=self.generation_id,
+                placeholder_key=f"prior-{index}",
+                attempt_number=1,
+                claim="Prior",
+                template_id=template_id,
+                tone="light",
+                outcome="success",
+                gate="accepted",
+                review_status=status,
+                review_note=note,
+                use_as_guidance=use,
+            )
+            for index, (template_id, status, use, note) in enumerate([
+                ("section-divider-light", "approved", True, "Keep the title concrete"),
+                ("section-divider-light", "approved", True, "  keep   the title concrete  "),
+                ("section-divider-light", "pending", True, "Pending note"),
+                ("section-divider-light", "approved", False, "Not opted in"),
+                ("stat-light", "approved", True, "Wrong template"),
+            ])
+        ]
+        self.db.add_all(notes)
+        self.db.commit()
+        fill = mock.Mock(return_value={"title": "Not a *bootcamp*", "subtitle": ""})
+
+        self._run(
+            fill_fn=fill,
+            vision_fn=mock.Mock(return_value={"passed": True, "violations": []}),
+        )
+
+        self.assertEqual(
+            fill.call_args.args[0]["approved_review_guidance"],
+            ["keep the title concrete"],
+        )
+
+    def test_audit_content_is_immutable_but_review_fields_are_editable(self):
+        self._run(
+            fill_fn=mock.Mock(return_value={"title": "Not a *bootcamp*", "subtitle": ""}),
+            vision_fn=mock.Mock(return_value={"passed": True, "violations": []}),
+        )
+        attempt = self.db.query(GeneratedSlideAttempt).one()
+        attempt.claim = "Changed claim"
+        with self.assertRaisesRegex(ValueError, "immutable"):
+            self.db.commit()
+        self.db.rollback()
+
+        attempt = self.db.query(GeneratedSlideAttempt).one()
+        attempt.review_status = "approved"
+        attempt.review_note = "Use this pattern"
+        attempt.use_as_guidance = True
+        self.db.commit()
+        self.assertEqual(attempt.review_status, "approved")
 
 
 # ---------------------------------------------------------------------------

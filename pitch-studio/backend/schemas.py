@@ -334,6 +334,7 @@ class ScriptSection(BaseModel):
     topic_id: int = 0
     topic_title: str = ""
     pages: list[int] = []
+    slide_keys: list[str] = []
     heading: str = ""
     text: str = ""
 
@@ -828,3 +829,39 @@ class GeneratedSlideOut(BaseModel):
     source_asset_ids: str = ""
     created_at: datetime
     updated_at: datetime
+
+
+class GeneratedSlideAttemptOut(BaseModel):
+    id: int
+    generation_id: int
+    generated_slide_id: int | None = None
+    placeholder_key: str
+    attempt_number: int
+    claim: str
+    template_id: str
+    tone: str
+    outcome: str
+    gate: str
+    violations: list[str] = Field(default_factory=list)
+    slot_values: dict[str, Any] = Field(default_factory=dict)
+    render_hash: str
+    image_url: str | None = None
+    review_status: str
+    review_note: str
+    use_as_guidance: bool
+    reviewer_user_id: int | None = None
+    reviewed_at: datetime | None = None
+    created_at: datetime
+
+
+class GeneratedSlideAttemptReview(BaseModel):
+    review_status: Literal["reviewed", "approved", "rejected"]
+    review_note: str = ""
+    use_as_guidance: bool = False
+
+    model_config = {"extra": "forbid"}
+
+    @field_validator("review_note")
+    @classmethod
+    def trim_review_note(cls, value: str) -> str:
+        return (value or "").strip()

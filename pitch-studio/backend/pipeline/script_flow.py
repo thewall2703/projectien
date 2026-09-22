@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -188,6 +189,69 @@ def load_script_topics(db: Session, plan: list[BrandSlide], sequence: list[str])
     return build_script_topics(plan, rows, sequence)
 
 
+def reconcile_realized_slide_mapping(
+    script: dict[str, Any],
+    topics: list[ScriptTopic],
+    planned: list[Any],
+    realized: list[Any],
+) -> tuple[dict[str, Any], list[ScriptTopic]]:
+    """Replace Stage 3 slide references with their Stage 4 identities.
+
+    Topic beats are built before generated placeholders are realised. Stage 4
+    preserves plan order but replaces each placeholder with either a
+    content-addressed generated slide or its displaced brand page. Reconcile by
+    plan position, while verifying the original keys, so duplicate pages and
+    generated keys cannot accidentally attach a beat to another slide.
+    """
+    if len(planned) != len(realized):
+        raise ScriptFlowError(
+            "Cannot reconcile script topics: the realised deck changed slide count"
+        )
+
+    planned_keys = [str(getattr(slide, "slide_key", "") or "") for slide in planned]
+    realized_keys = [str(getattr(slide, "slide_key", "") or "") for slide in realized]
+    if not all(planned_keys) or not all(realized_keys):
+        raise ScriptFlowError(
+            "Cannot reconcile script topics: every planned slide needs a stable key"
+        )
+
+    references = [key for topic in topics for key in topic.slide_keys]
+    if references != planned_keys:
+        raise ScriptFlowError(
+            "Cannot reconcile script topics: topic slide order no longer matches the plan"
+        )
+
+    reconciled_topics = deepcopy(topics)
+    position = 0
+    for topic in reconciled_topics:
+        count = len(topic.slide_keys)
+        final_slides = realized[position : position + count]
+        topic.slide_keys = [
+            str(getattr(slide, "slide_key", "") or "") for slide in final_slides
+        ]
+        topic.pages = [
+            int(page)
+            for slide in final_slides
+            if (page := getattr(slide, "page", None)) is not None and int(page) > 0
+        ]
+        position += count
+
+    updated_script = deepcopy(script)
+    topics_by_id = {topic.topic_id: topic for topic in reconciled_topics}
+    for section in updated_script.get("sections") or []:
+        try:
+            topic_id = int(section.get("topic_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        topic = topics_by_id.get(topic_id)
+        if topic is None:
+            continue
+        section["slide_keys"] = list(topic.slide_keys)
+        section["pages"] = list(topic.pages)
+
+    return updated_script, reconciled_topics
+
+
 def notes_by_page(script: dict[str, Any]) -> dict[int, str]:
     notes: dict[int, str] = {}
     for section in script.get("sections") or []:
@@ -204,16 +268,19 @@ def notes_by_page(script: dict[str, Any]) -> dict[int, str]:
     return notes
 
 
-def notes_by_slide_key(script: dict[str, Any], plan: list[BrandSlide]) -> dict[str, str]:
+def notes_by_slide_key(script: dict[str, Any], plan: list[Any]) -> dict[str, str]:
     """Map each planned slide's stable key to its spoken note.
 
-    Script sections still reference pages, so this walks the plan and the
-    sections together: each page's occurrences are consumed in order, so when a
-    brand page appears twice in the plan the two beats that speak to it land on
-    two distinct slide keys instead of overwriting one shared page entry. With
-    no repeats (the norm today) this is exactly ``notes_by_page`` re-keyed to
-    ``slide_key``.
+    Reconciled sections carry final slide keys and therefore support generated
+    slides directly. Legacy sections that only reference pages still work:
+    each page occurrence is consumed in plan order so repeated brand pages land
+    on distinct keys instead of overwriting one shared page entry.
     """
+    plan_keys = {
+        str(getattr(slide, "slide_key", "") or "")
+        for slide in plan
+        if getattr(slide, "slide_key", "")
+    }
     occurrences: dict[int, list[str]] = {}
     for slide in plan:
         page = getattr(slide, "page", None)
@@ -225,6 +292,15 @@ def notes_by_slide_key(script: dict[str, Any], plan: list[BrandSlide]) -> dict[s
     for section in script.get("sections") or []:
         text = str(section.get("text") or "").strip()
         if not text:
+            continue
+        section_keys = [
+            str(key)
+            for key in section.get("slide_keys") or []
+            if str(key) in plan_keys
+        ]
+        if section_keys:
+            for key in section_keys:
+                notes[key] = text
             continue
         for raw in section.get("pages") or []:
             try:

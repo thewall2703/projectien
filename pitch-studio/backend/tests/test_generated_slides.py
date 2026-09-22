@@ -5,7 +5,9 @@ import unittest
 from unittest.mock import patch
 
 from backend.generated_slides import (
+    generated_slide_attempt_file_key,
     generated_slide_file_key,
+    save_generated_slide_attempt_image,
     save_generated_slide_image,
 )
 
@@ -41,6 +43,21 @@ class GeneratedSlideStorageTests(unittest.TestCase):
         digest = hashlib.sha256(b"render").hexdigest()
         with self.assertRaises(ValueError):
             save_generated_slide_image(digest, b"")
+
+    @patch("backend.generated_slides.save_file")
+    def test_attempt_image_is_generation_scoped(self, save_file):
+        digest = hashlib.sha256(b"attempt").hexdigest()
+        key = generated_slide_attempt_file_key(42, "generated:m13-gap", 2, digest)
+        save_file.return_value = key
+
+        result = save_generated_slide_attempt_image(
+            42, "generated:m13-gap", 2, digest, b"jpeg"
+        )
+
+        self.assertEqual(result, key)
+        self.assertTrue(key.startswith("generated-slide-attempts/42/"))
+        self.assertIn("/attempt-2-", key)
+        save_file.assert_called_once_with(key, b"jpeg", "image/jpeg")
 
 
 if __name__ == "__main__":

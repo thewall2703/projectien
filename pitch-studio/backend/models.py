@@ -2,7 +2,18 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    event,
+    inspect as sa_inspect,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.database import Base
@@ -159,6 +170,64 @@ class GeneratedSlide(Base):
     source_asset_ids: Mapped[str] = mapped_column(String(1000), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class GeneratedSlideAttempt(Base):
+    """Append-only generation audit; review fields may be annotated later."""
+
+    __tablename__ = "generated_slide_attempts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    generation_id: Mapped[int] = mapped_column(ForeignKey("generations.id"), index=True)
+    generated_slide_id: Mapped[int | None] = mapped_column(
+        ForeignKey("generated_slides.id"), nullable=True, index=True
+    )
+    placeholder_key: Mapped[str] = mapped_column(String(255), index=True)
+    attempt_number: Mapped[int] = mapped_column(Integer, default=0)
+    claim: Mapped[str] = mapped_column(Text, default="")
+    template_id: Mapped[str] = mapped_column(String(64), index=True)
+    tone: Mapped[str] = mapped_column(String(16), default="light")
+    outcome: Mapped[str] = mapped_column(String(32), index=True)
+    gate: Mapped[str] = mapped_column(String(32), default="")
+    violations_json: Mapped[str] = mapped_column(Text, default="[]")
+    slot_values_json: Mapped[str] = mapped_column(Text, default="{}")
+    render_hash: Mapped[str] = mapped_column(String(64), default="", index=True)
+    file_key: Mapped[str] = mapped_column(String(500), default="")
+    review_status: Mapped[str] = mapped_column(String(24), default="pending", index=True)
+    review_note: Mapped[str] = mapped_column(Text, default="")
+    use_as_guidance: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    reviewer_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+_ATTEMPT_REVIEW_FIELDS = {
+    "review_status",
+    "review_note",
+    "use_as_guidance",
+    "reviewer_user_id",
+    "reviewed_at",
+}
+
+
+@event.listens_for(GeneratedSlideAttempt, "before_update")
+def _protect_generated_slide_attempt_audit_fields(_mapper, _connection, target) -> None:
+    changed = {
+        attribute.key
+        for attribute in sa_inspect(target).attrs
+        if attribute.history.has_changes()
+    }
+    immutable_changes = changed - _ATTEMPT_REVIEW_FIELDS
+    if immutable_changes:
+        names = ", ".join(sorted(immutable_changes))
+        raise ValueError(f"Generated slide attempt audit fields are immutable: {names}")
+
+
+@event.listens_for(GeneratedSlideAttempt, "before_delete")
+def _prevent_generated_slide_attempt_delete(_mapper, _connection, _target) -> None:
+    raise ValueError("Generated slide attempt audit records cannot be deleted")
 
 
 class ScriptTestRun(Base):

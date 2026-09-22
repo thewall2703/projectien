@@ -51,9 +51,10 @@ from backend.generated_slides import (
     compute_claim_hash,
     compute_render_hash,
     generated_slide_key,
+    save_generated_slide_attempt_image,
     save_generated_slide_image,
 )
-from backend.models import GeneratedSlide
+from backend.models import GeneratedSlide, GeneratedSlideAttempt
 from backend.pipeline.brand_deck import (
     COVER_PAGE,
     MODULE_PAGES,
@@ -103,6 +104,9 @@ DEFAULT_MAX_ATTEMPTS = 2
 
 # Reference brand pages a vision review holds a render up against.
 _VISION_REFERENCE_COUNT = 3
+_GUIDANCE_NOTE_LIMIT = 5
+_GUIDANCE_CHAR_LIMIT = 1500
+_GUIDANCE_NOTE_CHAR_LIMIT = 500
 
 
 # ---------------------------------------------------------------------------
@@ -317,6 +321,8 @@ _FILL_SYSTEM = (
     "given claim in the brand's voice. Match the register and shape of the "
     "style_exemplars, never their subject. Use ONLY numbers that appear "
     "verbatim in locked_facts or report_passages; never invent a number. "
+    "Treat approved_review_guidance as binding lessons from human reviewers "
+    "for this template; apply the lessons without copying unrelated subject matter. "
     "Follow the conventions: write '&' not 'and', and no trailing full stop. "
     "You may wrap a short italic-serif accent in *single asterisks* and bold a "
     "subject in **double asterisks**, sparingly, like the exemplars. Respect "
@@ -603,6 +609,7 @@ def _fill_payload(
     source_facts: Sequence[Any],
     source_passages: Sequence[Mapping[str, Any]],
     corrections: Sequence[str],
+    review_guidance: Sequence[str] = (),
 ) -> dict[str, Any]:
     return {
         "template_id": spec.template_id,
@@ -650,6 +657,7 @@ def _fill_payload(
             "Do not design; only write the slot copy.",
         ],
         "corrections": list(corrections),
+        "approved_review_guidance": list(review_guidance),
     }
 
 
@@ -771,6 +779,82 @@ def _lookup_cache(db: Any, claim_hash: str) -> GeneratedSlide | None:
     return row
 
 
+def _approved_guidance(db: Any, template_id: str) -> list[str]:
+    """Return bounded, deduplicated, explicitly approved notes for a template."""
+    rows = (
+        db.query(GeneratedSlideAttempt)
+        .filter(
+            GeneratedSlideAttempt.template_id == template_id,
+            GeneratedSlideAttempt.review_status == "approved",
+            GeneratedSlideAttempt.use_as_guidance.is_(True),
+        )
+        .order_by(
+            GeneratedSlideAttempt.reviewed_at.desc(),
+            GeneratedSlideAttempt.id.desc(),
+        )
+        .limit(_GUIDANCE_NOTE_LIMIT * 4)
+        .all()
+    )
+    notes: list[str] = []
+    seen: set[str] = set()
+    used_chars = 0
+    for row in rows:
+        note = " ".join((row.review_note or "").split())[:_GUIDANCE_NOTE_CHAR_LIMIT].strip()
+        normalized = note.casefold()
+        if not note or normalized in seen:
+            continue
+        remaining = _GUIDANCE_CHAR_LIMIT - used_chars
+        if remaining <= 0:
+            break
+        note = note[:remaining].rstrip()
+        if not note:
+            break
+        notes.append(note)
+        seen.add(normalized)
+        used_chars += len(note)
+        if len(notes) >= _GUIDANCE_NOTE_LIMIT:
+            break
+    return notes
+
+
+def _archive_attempt(
+    db: Any,
+    generation_id: int | None,
+    placeholder: GeneratedSlidePlaceholder,
+    *,
+    attempt_number: int,
+    outcome: str,
+    gate: str,
+    violations: Sequence[str] = (),
+    slot_values: Mapping[str, Any] | None = None,
+    render_hash: str = "",
+    file_key: str = "",
+    generated_slide_id: int | None = None,
+) -> GeneratedSlideAttempt | None:
+    """Append one immutable pipeline event when this run has a generation."""
+    if not generation_id:
+        return None
+    row = GeneratedSlideAttempt(
+        generation_id=generation_id,
+        generated_slide_id=generated_slide_id,
+        placeholder_key=placeholder.slide_key,
+        attempt_number=attempt_number,
+        claim=placeholder.claim,
+        template_id=placeholder.template_id,
+        tone=placeholder.tone,
+        outcome=outcome,
+        gate=gate,
+        violations_json=json.dumps(list(violations), ensure_ascii=False),
+        slot_values_json=json.dumps(dict(slot_values or {}), ensure_ascii=False),
+        render_hash=render_hash,
+        file_key=file_key,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
 def _persist_generated_slide(
     db: Any,
     *,
@@ -856,11 +940,22 @@ def _realize_one(
     brand_page_fn: BrandPageFn,
     photo_fn: PhotoSourceFn,
     max_attempts: int,
+    generation_id: int | None,
 ) -> PlannedSlide:
     spec = _spec_or_none(placeholder.template_id)
     if spec is None:
         # The planner should only emit supported templates, but never render an
         # undefined one — fall back to the brand page it displaced.
+        _archive_attempt(
+            db, generation_id, placeholder,
+            attempt_number=0, outcome="unknown_template", gate="template",
+            violations=[f"Unknown generated slide template: {placeholder.template_id}"],
+        )
+        _archive_attempt(
+            db, generation_id, placeholder,
+            attempt_number=1, outcome="final_degradation", gate="final",
+            violations=["Unknown template; restored displaced brand page"],
+        )
         return _restore_brand_slide(placeholder)
 
     # Source approved photos (recommended pictures only). A template that
@@ -870,6 +965,17 @@ def _realize_one(
         spec, placeholder, photo_fn
     )
     if any(name not in photos_by_slot for name in spec.required_photo_slots):
+        missing = [name for name in spec.required_photo_slots if name not in photos_by_slot]
+        _archive_attempt(
+            db, generation_id, placeholder,
+            attempt_number=0, outcome="missing_photo", gate="photo",
+            violations=[f"Required approved photo is missing for slot '{name}'" for name in missing],
+        )
+        _archive_attempt(
+            db, generation_id, placeholder,
+            attempt_number=1, outcome="final_degradation", gate="final",
+            violations=["Required approved photo unavailable; restored displaced brand page"],
+        )
         return _restore_brand_slide(placeholder)
 
     source_facts = [
@@ -888,13 +994,26 @@ def _realize_one(
     # 1) Shared claim cache — no model/vision/render when valid pixels exist.
     cached = _lookup_cache(db, claim_hash)
     if cached is not None:
+        try:
+            cached_values = json.loads(cached.slot_values_json or "{}")
+        except (json.JSONDecodeError, TypeError):
+            cached_values = {}
+        _archive_attempt(
+            db, generation_id, placeholder,
+            attempt_number=0, outcome="cache_hit", gate="cache",
+            slot_values=cached_values,
+            render_hash=cached.render_hash, file_key=cached.file_key,
+            generated_slide_id=cached.id,
+        )
         return _instance_from_row(cached, placeholder)
 
     # 2) Miss: fill + gate, up to two attempts, then degrade.
     allowed = allowed_numerals(source_facts, source_passages)
     brand_pages = _reference_pages(spec, placeholder, brand_page_fn)
     corrections: list[str] = []
-    for _attempt in range(max(1, max_attempts)):
+    review_guidance = _approved_guidance(db, spec.template_id)
+    attempt_count = max(1, max_attempts)
+    for attempt_number in range(1, attempt_count + 1):
         try:
             raw = fill_fn(
                 _fill_payload(
@@ -904,10 +1023,16 @@ def _realize_one(
                     source_facts,
                     source_passages,
                     corrections,
+                    review_guidance,
                 )
             )
         except Exception as exc:  # noqa: BLE001 - a failed fill is a retryable attempt
             corrections = [f"The copy generator failed ({exc}); return valid slot JSON."]
+            _archive_attempt(
+                db, generation_id, placeholder,
+                attempt_number=attempt_number, outcome="fill_error", gate="fill",
+                violations=corrections,
+            )
             continue
         values = _resolve_values(spec, raw)
 
@@ -915,12 +1040,22 @@ def _realize_one(
         violations = gate_schema(spec, values) + gate_budgets(spec, values)
         if violations:
             corrections = violations
+            _archive_attempt(
+                db, generation_id, placeholder,
+                attempt_number=attempt_number, outcome="schema_budget",
+                gate="schema_budget", violations=violations, slot_values=values,
+            )
             continue
 
         # Gate b: number/factual provenance.
         violations = gate_number_provenance(spec, values, allowed)
         if violations:
             corrections = violations
+            _archive_attempt(
+                db, generation_id, placeholder,
+                attempt_number=attempt_number, outcome="provenance",
+                gate="provenance", violations=violations, slot_values=values,
+            )
             continue
 
         # Gate c: DOM overflow, via the real renderer (with approved photos).
@@ -934,19 +1069,27 @@ def _realize_one(
                 "The copy overflows its box even at the minimum size "
                 f"({', '.join(exc.slots)}); make it shorter."
             ]
+            _archive_attempt(
+                db, generation_id, placeholder,
+                attempt_number=attempt_number, outcome="overflow", gate="render",
+                violations=corrections, slot_values=values,
+            )
             continue
-        except (BrowserUnavailable, SlideRenderError):
+        except (BrowserUnavailable, SlideRenderError) as exc:
             # A renderer that cannot draw at all will not be fixed by rewriting
             # copy — degrade to the brand page rather than spin.
+            _archive_attempt(
+                db, generation_id, placeholder,
+                attempt_number=attempt_number, outcome="render_error", gate="render",
+                violations=[f"{type(exc).__name__}: {exc}"], slot_values=values,
+            )
+            _archive_attempt(
+                db, generation_id, placeholder,
+                attempt_number=attempt_count + 1, outcome="final_degradation", gate="final",
+                violations=["Slide rendering failed; restored displaced brand page"],
+            )
             return _restore_brand_slide(placeholder)
 
-        # Gate d: Opus multimodal vision review vs three brand pages.
-        review = _run_vision(vision_fn, render_result.jpeg, brand_pages, spec, placeholder)
-        if not review["passed"]:
-            corrections = review["violations"] or ["The slide is not visually on brand."]
-            continue
-
-        # Pass — content-address the pixels, store, and upsert the shared row.
         render_hash = compute_render_hash(
             template_id=spec.template_id,
             template_version=spec.version,
@@ -954,20 +1097,83 @@ def _realize_one(
             font_bundle_version=FONT_BUNDLE_VERSION,
             photo={"photos": photo_descriptors} if photo_descriptors else None,
         )
-        file_key = save_generated_slide_image(render_hash, render_result.jpeg)
-        row = _persist_generated_slide(
-            db,
-            spec=spec,
-            claim_hash=claim_hash,
-            render_hash=render_hash,
-            slot_values=values,
-            file_key=file_key,
-            source_facts=source_facts,
-            source_passages=source_passages,
-            photo_asset_ids=photo_asset_ids,
+        attempt_file_key = ""
+        if generation_id:
+            try:
+                attempt_file_key = save_generated_slide_attempt_image(
+                    generation_id,
+                    placeholder.slide_key,
+                    attempt_number,
+                    render_hash,
+                    render_result.jpeg,
+                )
+            except Exception as exc:  # noqa: BLE001 - preserve an auditable degradation
+                _archive_attempt(
+                    db, generation_id, placeholder,
+                    attempt_number=attempt_number, outcome="render_error", gate="storage",
+                    violations=[f"{type(exc).__name__}: {exc}"], slot_values=values,
+                    render_hash=render_hash,
+                )
+                _archive_attempt(
+                    db, generation_id, placeholder,
+                    attempt_number=attempt_count + 1, outcome="final_degradation", gate="final",
+                    violations=["Rendered attempt could not be archived; restored displaced brand page"],
+                )
+                return _restore_brand_slide(placeholder)
+
+        # Gate d: Opus multimodal vision review vs three brand pages.
+        review = _run_vision(vision_fn, render_result.jpeg, brand_pages, spec, placeholder)
+        if not review["passed"]:
+            corrections = review["violations"] or ["The slide is not visually on brand."]
+            _archive_attempt(
+                db, generation_id, placeholder,
+                attempt_number=attempt_number, outcome="vision", gate="vision",
+                violations=corrections, slot_values=values,
+                render_hash=render_hash, file_key=attempt_file_key,
+            )
+            continue
+
+        # Pass — content-address the pixels, store, and upsert the shared row.
+        try:
+            file_key = save_generated_slide_image(render_hash, render_result.jpeg)
+            row = _persist_generated_slide(
+                db,
+                spec=spec,
+                claim_hash=claim_hash,
+                render_hash=render_hash,
+                slot_values=values,
+                file_key=file_key,
+                source_facts=source_facts,
+                source_passages=source_passages,
+                photo_asset_ids=photo_asset_ids,
+            )
+        except Exception as exc:  # noqa: BLE001 - retain attempt and degrade cleanly
+            db.rollback()
+            _archive_attempt(
+                db, generation_id, placeholder,
+                attempt_number=attempt_number, outcome="render_error", gate="persistence",
+                violations=[f"{type(exc).__name__}: {exc}"], slot_values=values,
+                render_hash=render_hash, file_key=attempt_file_key,
+            )
+            _archive_attempt(
+                db, generation_id, placeholder,
+                attempt_number=attempt_count + 1, outcome="final_degradation", gate="final",
+                violations=["Accepted render could not be persisted; restored displaced brand page"],
+            )
+            return _restore_brand_slide(placeholder)
+        _archive_attempt(
+            db, generation_id, placeholder,
+            attempt_number=attempt_number, outcome="success", gate="accepted",
+            slot_values=values, render_hash=render_hash,
+            file_key=attempt_file_key, generated_slide_id=row.id,
         )
         return _instance_from_row(row, placeholder)
 
+    _archive_attempt(
+        db, generation_id, placeholder,
+        attempt_number=attempt_count + 1, outcome="final_degradation", gate="final",
+        violations=corrections or ["All generated slide attempts failed"],
+    )
     return _restore_brand_slide(placeholder)
 
 
@@ -987,6 +1193,7 @@ def realize_generated_slides(
     recipe_ref: str = "",
     temperature: str = "",
     duration: str = "",
+    generation_id: int | None = None,
     fill_fn: Any = _MISSING,
     vision_fn: Any = _MISSING,
     renderer: Any = _MISSING,
@@ -1049,5 +1256,6 @@ def realize_generated_slides(
             brand_page_fn=resolved_brand_page_fn,
             photo_fn=resolved_photo_fn,
             max_attempts=max_attempts,
+            generation_id=generation_id,
         )
     return result

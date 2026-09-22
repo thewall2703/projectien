@@ -20,6 +20,7 @@ from backend.pipeline.script_flow import (
     build_script_topics,
     notes_by_page,
     notes_by_slide_key,
+    reconcile_realized_slide_mapping,
 )
 from backend.pipeline.validator import (
     align_script_to_recipe,
@@ -418,6 +419,95 @@ class ScriptFlowTests(unittest.TestCase):
         self.assertEqual(notes["brand:p8#2"], "Second pass on Gurugram.")
         self.assertEqual(notes["brand:p92"], "Close spoken note.")
 
+    def test_generated_success_reconciles_placeholder_to_realized_key(self):
+        planned = [
+            SimpleNamespace(
+                slide_key="generated:m13-what-we-are-not",
+                page=None,
+            )
+        ]
+        realized = [
+            SimpleNamespace(
+                slide_key="generated-a1b2c3",
+                page=None,
+            )
+        ]
+        topics = [
+            ScriptTopic(
+                topic_id=1,
+                title="What we are not",
+                pages=[],
+                slide_keys=["generated:m13-what-we-are-not"],
+                recipe_modules=["M13"],
+            )
+        ]
+        script = {
+            "sections": [
+                {
+                    "topic_id": 1,
+                    "pages": [],
+                    "slide_keys": ["generated:m13-what-we-are-not"],
+                    "text": "We are a real institution.",
+                }
+            ],
+            "cta": "",
+        }
+
+        updated, updated_topics = reconcile_realized_slide_mapping(
+            script, topics, planned, realized
+        )
+
+        self.assertEqual(updated_topics[0].slide_keys, ["generated-a1b2c3"])
+        self.assertEqual(updated_topics[0].pages, [])
+        self.assertEqual(updated["sections"][0]["slide_keys"], ["generated-a1b2c3"])
+        self.assertEqual(
+            notes_by_slide_key(updated, realized),
+            {"generated-a1b2c3": "We are a real institution."},
+        )
+
+    def test_generated_degradation_reconciles_to_restored_brand_page(self):
+        """Exact failure mode: a generated beat degrades back to displaced p51."""
+        planned = [
+            SimpleNamespace(
+                slide_key="generated:m13-what-we-are-not",
+                page=None,
+            )
+        ]
+        restored = BrandSlide(51, "M04", "The five Outclass challenges")
+        topics = [
+            ScriptTopic(
+                topic_id=1,
+                title="What we are not",
+                pages=[],
+                slide_keys=["generated:m13-what-we-are-not"],
+                recipe_modules=["M13"],
+            )
+        ]
+        script = {
+            "sections": [
+                {
+                    "topic_id": 1,
+                    "pages": [],
+                    "slide_keys": ["generated:m13-what-we-are-not"],
+                    "text": "We are not a glorified weekend bootcamp.",
+                }
+            ],
+            "cta": "",
+        }
+
+        updated, updated_topics = reconcile_realized_slide_mapping(
+            script, topics, planned, [restored]
+        )
+
+        self.assertEqual(updated_topics[0].slide_keys, ["brand:p51"])
+        self.assertEqual(updated_topics[0].pages, [51])
+        self.assertEqual(updated["sections"][0]["slide_keys"], ["brand:p51"])
+        self.assertEqual(updated["sections"][0]["pages"], [51])
+        self.assertEqual(
+            notes_by_slide_key(updated, [restored]),
+            {"brand:p51": "We are not a glorified weekend bootcamp."},
+        )
+
 
 class PromptTests(unittest.TestCase):
     def test_duration_framework_progresses_with_time(self):
@@ -770,7 +860,13 @@ class RunnerGateTests(unittest.TestCase):
 
     def test_voice_rewrite_can_pass(self):
         generation = self._generation()
-        topic = ScriptTopic(topic_id=1, title="Open", pages=[1], recipe_modules=["M01"])
+        topic = ScriptTopic(
+            topic_id=1,
+            title="Open",
+            pages=[1],
+            slide_keys=["brand:p1"],
+            recipe_modules=["M01"],
+        )
         script = {
             "sections": [{"topic_id": 1, "topic_title": "Open", "pages": [1], "heading": "Open", "text": "Come sit in."}],
             "cta": "Come Saturday.",

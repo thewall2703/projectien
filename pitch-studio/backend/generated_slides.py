@@ -169,6 +169,42 @@ def save_generated_slide_image(render_hash: str, data: bytes) -> str:
     return save_file(key, data, "image/jpeg")
 
 
+def generated_slide_attempt_file_key(
+    generation_id: int,
+    placeholder_key: str,
+    attempt_number: int,
+    render_hash: str,
+) -> str:
+    """Private, generation-scoped key for one rendered audit attempt."""
+    if generation_id <= 0:
+        raise ValueError("generation_id must be positive")
+    if attempt_number <= 0:
+        raise ValueError("attempt_number must be positive")
+    normalized = (render_hash or "").strip().lower()
+    if not _HASH_RE.fullmatch(normalized):
+        raise ValueError("render_hash must be a 64-character lowercase SHA-256 digest")
+    placeholder_digest = hashlib.sha256((placeholder_key or "").encode("utf-8")).hexdigest()[:16]
+    return (
+        f"generated-slide-attempts/{generation_id}/"
+        f"{placeholder_digest}/attempt-{attempt_number}-{normalized[:16]}.jpg"
+    )
+
+
+def save_generated_slide_attempt_image(
+    generation_id: int,
+    placeholder_key: str,
+    attempt_number: int,
+    render_hash: str,
+    data: bytes,
+) -> str:
+    if not data:
+        raise ValueError("generated slide attempt image is empty")
+    key = generated_slide_attempt_file_key(
+        generation_id, placeholder_key, attempt_number, render_hash
+    )
+    return save_file(key, data, "image/jpeg")
+
+
 def read_generated_slide_image(slide: GeneratedSlide) -> bytes:
     if not slide.file_key:
         raise FileNotFoundError("generated slide has no rendered image")

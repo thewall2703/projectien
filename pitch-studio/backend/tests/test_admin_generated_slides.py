@@ -3,16 +3,20 @@ from __future__ import annotations
 import hashlib
 import json
 import unittest
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from backend.database import Base
-from backend.models import GeneratedSlide
+from backend.auth import get_current_user
+from backend.database import Base, get_db
+from backend.models import GeneratedSlide, GeneratedSlideAttempt, User, utc_now
+from backend.routers import admin_routes
 from backend.routers.admin_routes import (
     _invalidate_fact_slides,
     delete_generated_slide,
@@ -30,6 +34,35 @@ class GeneratedSlideAdminTests(unittest.TestCase):
         )
         Base.metadata.create_all(engine)
         self.db = sessionmaker(bind=engine)()
+        self.admin = User(
+            email="admin@example.com",
+            password_hash="unused",
+            is_admin=True,
+        )
+        self.member = User(
+            email="member@example.com",
+            password_hash="unused",
+            is_admin=False,
+        )
+        self.db.add_all([self.admin, self.member])
+        self.db.commit()
+        self.db.refresh(self.admin)
+        self.db.refresh(self.member)
+
+        self.app = FastAPI()
+        self.app.include_router(admin_routes.router)
+
+        def override_db():
+            yield self.db
+
+        self.current_user = self.admin
+
+        def override_user():
+            return self.current_user
+
+        self.app.dependency_overrides[get_db] = override_db
+        self.app.dependency_overrides[get_current_user] = override_user
+        self.client = TestClient(self.app)
 
     def tearDown(self):
         self.db.close()
@@ -48,6 +81,38 @@ class GeneratedSlideAdminTests(unittest.TestCase):
             status="ready",
             edited_by_human=edited,
             source_fact_ids=fact_ids,
+        )
+        self.db.add(row)
+        self.db.commit()
+        self.db.refresh(row)
+        return row
+
+    def add_attempt(
+        self,
+        *,
+        generation_id: int = 10,
+        outcome: str = "rendered",
+        gate: str = "passed",
+        review_status: str = "pending",
+        file_key: str = "generated-slide-attempts/attempt.jpg",
+        created_offset: int = 0,
+    ) -> GeneratedSlideAttempt:
+        row = GeneratedSlideAttempt(
+            generation_id=generation_id,
+            generated_slide_id=None,
+            placeholder_key=f"hero-{generation_id}-{created_offset}",
+            attempt_number=created_offset + 1,
+            claim="Students learn by building real companies.",
+            template_id="section-divider-light",
+            tone="light",
+            outcome=outcome,
+            gate=gate,
+            violations_json='["Title exceeds budget"]' if gate != "passed" else "[]",
+            slot_values_json='{"title":"Learn by doing","subtitle":"From day one"}',
+            render_hash=f"render-{generation_id}-{created_offset}",
+            file_key=file_key,
+            review_status=review_status,
+            created_at=utc_now() + timedelta(seconds=created_offset),
         )
         self.db.add(row)
         self.db.commit()
@@ -234,6 +299,86 @@ class GeneratedSlideAdminTests(unittest.TestCase):
         self.assertEqual(delete_generated_slide(row.id, self.db), {"ok": True})
         self.assertIsNone(self.db.get(GeneratedSlide, row.id))
         delete_file.assert_called_once_with("generated-slides/machine.jpg")
+
+    def test_attempt_api_requires_admin_and_lists_filtered_newest_first(self):
+        older = self.add_attempt(outcome="rejected", gate="schema", created_offset=0)
+        newer = self.add_attempt(outcome="rendered", gate="passed", created_offset=2)
+        newest = self.add_attempt(outcome="rendered", gate="passed", created_offset=3)
+
+        self.current_user = self.member
+        denied = self.client.get("/api/admin/generated-slide-attempts")
+        self.assertEqual(denied.status_code, 403)
+
+        self.current_user = self.admin
+        response = self.client.get(
+            "/api/admin/generated-slide-attempts",
+            params={"outcome": "rendered", "review_status": "pending"},
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual([entry["id"] for entry in body], [newest.id, newer.id])
+        self.assertEqual(body[0]["slot_values"]["title"], "Learn by doing")
+        self.assertEqual(body[0]["violations"], [])
+        self.assertNotIn(older.id, [entry["id"] for entry in body])
+
+    @patch("backend.routers.admin_routes.read_file", return_value=b"jpeg-bytes")
+    def test_attempt_image_reads_private_file(self, read_file):
+        attempt = self.add_attempt()
+        response = self.client.get(
+            f"/api/admin/generated-slide-attempts/{attempt.id}/image"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b"jpeg-bytes")
+        self.assertEqual(response.headers["content-type"], "image/jpeg")
+        read_file.assert_called_once_with(attempt.file_key)
+
+    def test_attempt_review_sets_only_review_metadata(self):
+        attempt = self.add_attempt()
+        original_claim = attempt.claim
+        response = self.client.put(
+            f"/api/admin/generated-slide-attempts/{attempt.id}/review",
+            json={
+                "review_status": "approved",
+                "review_note": "Keep the concrete, outcome-led headline.",
+                "use_as_guidance": True,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["reviewer_user_id"], self.admin.id)
+        self.assertIsNotNone(body["reviewed_at"])
+        stored = self.db.get(GeneratedSlideAttempt, attempt.id)
+        self.assertEqual(stored.claim, original_claim)
+        self.assertEqual(stored.review_status, "approved")
+        self.assertTrue(stored.use_as_guidance)
+
+        immutable = self.client.put(
+            f"/api/admin/generated-slide-attempts/{attempt.id}/review",
+            json={
+                "review_status": "reviewed",
+                "review_note": "",
+                "use_as_guidance": False,
+                "claim": "Mutated",
+            },
+        )
+        self.assertEqual(immutable.status_code, 422)
+        self.assertEqual(self.db.get(GeneratedSlideAttempt, attempt.id).claim, original_claim)
+
+    def test_guidance_review_requires_nonempty_note(self):
+        attempt = self.add_attempt()
+        response = self.client.put(
+            f"/api/admin/generated-slide-attempts/{attempt.id}/review",
+            json={
+                "review_status": "approved",
+                "review_note": "   ",
+                "use_as_guidance": True,
+            },
+        )
+        self.assertEqual(response.status_code, 400)
+        stored = self.db.get(GeneratedSlideAttempt, attempt.id)
+        self.assertEqual(stored.review_status, "pending")
+        self.assertIsNone(stored.reviewer_user_id)
+        self.assertIsNone(stored.reviewed_at)
 
 
 if __name__ == "__main__":

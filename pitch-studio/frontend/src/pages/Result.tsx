@@ -98,8 +98,17 @@ function ScriptBody({ text, factValues }: { text: string; factValues: string[] }
   );
 }
 
-function slidesForSection(pages: number[] | undefined, slides: DeckSlide[]): DeckSlide[] {
-  if (!pages?.length || !slides.length) return [];
+function slidesForSection(
+  pages: number[] | undefined,
+  slideKeys: string[] | undefined,
+  slides: DeckSlide[],
+): DeckSlide[] {
+  if (!slides.length) return [];
+  if (slideKeys?.length) {
+    const byKey = new Map(slides.map((slide) => [slide.slide_key, slide]));
+    return slideKeys.map((key) => byKey.get(key)).filter((slide): slide is DeckSlide => Boolean(slide));
+  }
+  if (!pages?.length) return [];
   const byPage = new Map<number, DeckSlide>();
   for (const slide of slides) {
     if (slide.page != null) byPage.set(slide.page, slide);
@@ -292,7 +301,7 @@ export default function Result() {
           )}
           {generation.script?.sections.map((section, index) => {
             const topicName = section.topic_title?.trim() || moduleName(section.module_id || "") || section.heading;
-            const matched = slidesForSection(section.pages, deckSlides);
+            const matched = slidesForSection(section.pages, section.slide_keys, deckSlides);
             return (
               <article
                 key={`${section.topic_id || section.module_id || "section"}-${index}`}

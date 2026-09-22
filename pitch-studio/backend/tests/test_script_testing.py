@@ -14,7 +14,9 @@ from sqlalchemy.pool import StaticPool
 from backend.auth import get_current_user, hash_password
 from backend.database import Base, get_db
 from backend.models import ScriptTestRun, User
+from backend.pipeline.brand_deck import BrandSlide
 from backend.pipeline.runner import run
+from backend.pipeline.script_flow import ScriptTopic
 from backend.routers import script_testing_routes
 from backend.script_testing import build_review_document, find_review_target, run_script_test, script_paragraphs
 
@@ -94,11 +96,29 @@ class ScriptPhaseShareTests(unittest.TestCase):
             report_asset_ids="",
             report_passages_json="",
         )
+        planned_slide = BrandSlide(1, "", "Learn by Doing")
         phase = SimpleNamespace(
             resolved=SimpleNamespace(module_sequence=["M01"]),
-            plan=["slide"],
-            topic_flow=[],
-            script={"sections": [], "cta": ""},
+            plan=[planned_slide],
+            topic_flow=[
+                ScriptTopic(
+                    topic_id=1,
+                    title="Learn by Doing",
+                    pages=[1],
+                    slide_keys=["brand:p1"],
+                )
+            ],
+            script={
+                "sections": [
+                    {
+                        "topic_id": 1,
+                        "pages": [1],
+                        "slide_keys": ["brand:p1"],
+                        "text": "Learn by doing.",
+                    }
+                ],
+                "cta": "",
+            },
             report_passages=[],
         )
         db = mock.MagicMock()
