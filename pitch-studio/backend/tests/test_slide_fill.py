@@ -315,6 +315,27 @@ class ConventionAndGateTests(unittest.TestCase):
                     gate_copy_register(self.spec, {"title": phrase, "subtitle": ""})
                 )
 
+    def test_divider_register_requires_an_italic_serif_accent(self):
+        violations = gate_copy_register(
+            self.spec,
+            {
+                "title": "What happens to ventures that fail?",
+                "subtitle": "",
+            },
+        )
+        self.assertTrue(
+            any("italic-serif accent" in violation for violation in violations)
+        )
+        self.assertFalse(
+            gate_copy_register(
+                self.spec,
+                {
+                    "title": "What happens to *ventures that fail?*",
+                    "subtitle": "",
+                },
+            )
+        )
+
     def test_register_gate_accepts_all_real_brand_exemplars(self):
         for template_id in (
             "section-divider-light",

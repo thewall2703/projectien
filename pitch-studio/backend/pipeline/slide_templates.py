@@ -44,7 +44,7 @@ SECTION_DIVIDER_TEMPLATE_ID = "section-divider"
 
 # Bump when a template's furniture, geometry, slots or copy conventions change,
 # so every cached generated render built on the old template is invalidated.
-SECTION_DIVIDER_TEMPLATE_VERSION = "3"
+SECTION_DIVIDER_TEMPLATE_VERSION = "4"
 
 # Brand furniture strings shown on every divider unless overridden.
 DEFAULT_BRANDING_LEFT = "Learn by Doing"
@@ -121,7 +121,7 @@ def section_divider_manifest(variant: Variant = "light") -> SlideManifest:
             font="sans",
             font_size=132,
             min_font_size=60,
-            weight=400,
+            weight=600,
             tracking_em=-0.015,
             line_height=1.0,
             color=colors["title"],

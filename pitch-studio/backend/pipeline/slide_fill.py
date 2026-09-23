@@ -366,6 +366,13 @@ def gate_copy_register(spec: TemplateSpec, values: Mapping[str, Any]) -> list[st
                 violations.append(
                     f"{location} uses bureaucratic phrasing {label}; rewrite as short, direct brand copy"
                 )
+    if spec.template_id.startswith("section-divider-"):
+        title = str(values.get("title") or "")
+        if not _EMPHASIS_RE.search(title):
+            violations.append(
+                "slot 'title' must wrap one meaningful 1-4 word phrase in "
+                "*single asterisks* for the divider's italic-serif accent"
+            )
     return violations
 
 
@@ -751,6 +758,13 @@ def _fill_payload(
             "Do not design; only write the slot copy.",
             "max_chars counts visible characters (spaces included, emphasis asterisks excluded); aim a few characters under every limit.",
             "When previous_values is present, fix only what corrections names and keep every other slot exactly as it was.",
+            *(
+                [
+                    "The section-divider title MUST wrap one meaningful 1-4 word phrase in *single asterisks*; the contrast between bold sans and italic serif is required brand furniture."
+                ]
+                if spec.template_id.startswith("section-divider-")
+                else []
+            ),
         ],
         "previous_values": dict(previous_values or {}),
         "corrections": list(corrections),
