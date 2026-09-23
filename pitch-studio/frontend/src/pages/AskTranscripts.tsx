@@ -183,6 +183,7 @@ export default function AskTranscripts() {
   const [result, setResult] = useState<AskResponse | null>(null);
   const [activeSegment, setActiveSegment] = useState<number | null>(null);
   const [flash, setFlash] = useState<{ sourceIndex: number; lines: number[] } | null>(null);
+  const [showJump, setShowJump] = useState(false);
   const flashTimer = useRef<number | null>(null);
 
   useEffect(() => {
@@ -190,6 +191,27 @@ export default function AskTranscripts() {
       if (flashTimer.current != null) window.clearTimeout(flashTimer.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (!result) {
+      setShowJump(false);
+      return;
+    }
+    const onScroll = () => {
+      setShowJump(window.scrollY > window.innerHeight * 0.85);
+    };
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+    };
+  }, [result]);
+
+  const jumpToAnswer = () => {
+    document.getElementById("ask-answer")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   const onSelectSegment = (segmentIndex: number) => {
     if (!result) return;
@@ -216,6 +238,10 @@ export default function AskTranscripts() {
     try {
       const data = await api.askTranscripts(next);
       setResult(data);
+      // After the answer lands, bring the user to it on the first fold if it is below.
+      window.setTimeout(() => {
+        document.getElementById("ask-answer")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 50);
     } catch (err) {
       setResult(null);
       setError(err instanceof Error ? err.message : "Failed to answer");
@@ -257,7 +283,7 @@ export default function AskTranscripts() {
 
       {result && (
         <div className="mt-8 space-y-8">
-          <section className="glass-panel p-5 md:p-7">
+          <section id="ask-answer" className="glass-panel scroll-mt-24 p-5 md:p-7">
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-grey">Answer</p>
             <div className="mt-4">
               <MarkdownAnswer
@@ -307,6 +333,16 @@ export default function AskTranscripts() {
             </section>
           )}
         </div>
+      )}
+
+      {result && showJump && (
+        <button
+          type="button"
+          onClick={jumpToAnswer}
+          className="fixed bottom-6 right-6 z-50 rounded-full bg-black px-4 py-3 text-sm font-semibold text-white shadow-lg transition hover:bg-black/90"
+        >
+          Jump to answer
+        </button>
       )}
     </div>
   );
