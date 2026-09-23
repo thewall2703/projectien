@@ -41,12 +41,24 @@ EMBED_BATCH = 32
 
 ASK_SYSTEM = (
     "You answer questions using ONLY the provided transcript passages from "
-    "Masters' Union conversations and materials. Write a thorough answer in "
-    "several short paragraphs. Wrap the most important figures, claims, and "
-    "takeaways in **bold** markdown. Cite sources by their source_name when "
-    "natural. If the passages do not support an answer, say so plainly — do "
-    "not invent facts. Return strict JSON: "
-    '{"answer_markdown":"...","highlights":["..."]}.'
+    "Masters' Union conversations and materials. Keep the answer to **200 words "
+    "or fewer** — concise, not a wall of text. Use short paragraphs or a few "
+    "bullets. Wrap the most important figures, claims, and takeaways in "
+    "**bold** markdown. Cite sources by their source_name when natural. If the "
+    "passages do not support an answer, say so plainly — do not invent facts. "
+    'Return strict JSON: {"answer_markdown":"...","highlights":["..."]}.'
+)
+
+MAX_ANSWER_WORDS = 200
+
+# WebVTT cue noise that often gets mashed into one line in stored uploads.
+_CUE_NOISE_RE = re.compile(
+    r"(?:^|\s+)\d{1,5}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?\s*(?:-->|→)\s*"
+    r"\d{2}:\d{2}:\d{2}(?:\.\d+)?\s*",
+    re.MULTILINE,
+)
+_STANDALONE_TIMESTAMP_RE = re.compile(
+    r"\b\d{2}:\d{2}:\d{2}(?:\.\d+)?\s*(?:-->|→)\s*\d{2}:\d{2}:\d{2}(?:\.\d+)?\b"
 )
 
 EmbedFn = Callable[[list[str]], list[list[float]]]
@@ -68,16 +80,121 @@ def _word_list(text: str) -> list[str]:
     return [part for part in re.split(r"\s+", (text or "").strip()) if part]
 
 
+def normalize_transcript_text(text: str) -> str:
+    """Strip WebVTT cue numbers/timestamps into one utterance per line.
+
+    Style uploads often store raw WebVTT. When that is chunked by words the cue
+    metadata becomes an unreadable wall of text in search results. Prefer the
+    existing WebVTT parser when the file is well-formed; otherwise peel cue
+    noise out of mashed single-line transcripts.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+    from backend.pipeline.style_guide import parse_webvtt
+
+    probe = raw.lstrip("\ufeff \t\r\n")
+    if probe.upper().startswith("WEBVTT") or "-->" in raw or "→" in raw:
+        lines = parse_webvtt(raw)
+        if lines:
+            joined = "\n".join(lines)
+            # If cue numbers/timestamps survived (newlines were lost upstream), scrub.
+            if not _CUE_NOISE_RE.search(joined) and not re.search(
+                r"\d{1,5}\s+\d{2}:\d{2}:\d{2}", joined
+            ):
+                return joined
+
+    scrubbed = _CUE_NOISE_RE.sub("\n", raw)
+    scrubbed = _STANDALONE_TIMESTAMP_RE.sub("\n", scrubbed)
+    scrubbed = re.sub(r"\n{2,}", "\n", scrubbed)
+    # Split on speaker labels for mashed "name: utter name: utter" runs.
+    pieces: list[str] = []
+    for block in scrubbed.splitlines():
+        block = block.strip()
+        if not block:
+            continue
+        # Drop leftover bare cue numbers.
+        if re.fullmatch(r"\d{1,5}", block):
+            continue
+        parts = re.split(r"(?=\b[A-Za-z][A-Za-z .'-]{1,40}:\s)", block)
+        for part in parts:
+            part = part.strip(" -\t")
+            if part:
+                pieces.append(part)
+    if not pieces:
+        return " ".join(_word_list(raw))
+    return "\n".join(pieces)
+
+
+def format_source_sentences(text: str) -> str:
+    """One clear sentence/utterance per line for UI display."""
+    normalized = normalize_transcript_text(text)
+    if not normalized:
+        return ""
+    lines: list[str] = []
+    for line in normalized.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # Further split long lines on sentence boundaries when no speaker breaks.
+        if ": " in line[:60]:
+            lines.append(line)
+            continue
+        parts = re.split(r"(?<=[.!?])\s+(?=[A-Z\"'])", line)
+        for part in parts:
+            part = part.strip()
+            if part:
+                lines.append(part)
+    return "\n".join(lines)
+
+
+def trim_to_word_limit(text: str, limit: int = MAX_ANSWER_WORDS) -> str:
+    """Hard-cap answer length while keeping markdown **bold** markers intact."""
+    words = _word_list(text)
+    if len(words) <= limit:
+        return (text or "").strip()
+    clipped = " ".join(words[:limit]).rstrip(" ,;:")
+    if not clipped.endswith((".", "!", "?", "…")):
+        clipped += "…"
+    return clipped
+
+
 def chunk_text(
     text: str,
     *,
     chunk_words: int = CHUNK_WORDS,
     overlap_words: int = CHUNK_OVERLAP_WORDS,
 ) -> list[str]:
-    """Split plain text into overlapping word windows."""
-    words = _word_list(text)
-    if not words:
+    """Split plain text into overlapping windows, preserving line breaks when present."""
+    normalized = (text or "").strip()
+    if not normalized:
         return []
+    lines = [line.strip() for line in normalized.splitlines() if line.strip()]
+    if len(lines) >= 2:
+        packed: list[str] = []
+        buffer: list[str] = []
+        buf_words = 0
+        for line in lines:
+            line_words = len(_word_list(line))
+            if buffer and buf_words + line_words > chunk_words:
+                packed.append("\n".join(buffer))
+                # Overlap by trailing lines until we cover ~overlap_words.
+                keep: list[str] = []
+                keep_words = 0
+                for prior in reversed(buffer):
+                    keep.insert(0, prior)
+                    keep_words += len(_word_list(prior))
+                    if keep_words >= overlap_words:
+                        break
+                buffer = keep
+                buf_words = keep_words
+            buffer.append(line)
+            buf_words += line_words
+        if buffer:
+            packed.append("\n".join(buffer))
+        return packed
+
+    words = _word_list(normalized)
     if len(words) <= chunk_words:
         return [" ".join(words)]
     step = max(1, chunk_words - overlap_words)
@@ -248,7 +365,7 @@ def _prepared_from_plain(
     start_ms: int | None = None,
     end_ms: int | None = None,
 ) -> list[PreparedChunk]:
-    body = (text or "").strip()
+    body = normalize_transcript_text(text)
     if not body:
         return []
     pieces = chunk_text(body)
@@ -566,9 +683,10 @@ def _default_answer_fn(question: str, passages: list[dict[str, Any]]) -> dict[st
         timeout=180.0,
         model=settings.openrouter_model,
         reasoning=True,
-        max_tokens=4000,
+        max_tokens=900,
     )
     answer = str(payload.get("answer_markdown") or "").strip()
+    answer = trim_to_word_limit(answer, MAX_ANSWER_WORDS)
     highlights = payload.get("highlights") or []
     if not isinstance(highlights, list):
         highlights = []
@@ -606,14 +724,15 @@ def ask(
         }
     answerer = answer_fn or _default_answer_fn
     result = answerer(query, sources)
+    answer = trim_to_word_limit(str(result.get("answer_markdown") or "").strip(), MAX_ANSWER_WORDS)
     return {
-        "answer_markdown": str(result.get("answer_markdown") or "").strip(),
+        "answer_markdown": answer,
         "highlights": list(result.get("highlights") or []),
         "sources": [
             {
                 "source_type": item["source_type"],
                 "source_name": item["source_name"],
-                "text": item["text"],
+                "text": format_source_sentences(str(item.get("text") or "")),
                 "score": item["score"],
                 "start_ms": item.get("start_ms"),
                 "end_ms": item.get("end_ms"),

@@ -36,6 +36,37 @@ class ChunkingTests(unittest.TestCase):
         second_head = chunks[1].split()[:10]
         self.assertEqual(first_tail, second_head)
 
+    def test_line_aware_chunks_keep_newlines(self):
+        lines = [f"Speaker: sentence number {i}." for i in range(30)]
+        chunks = chunk_text("\n".join(lines), chunk_words=40, overlap_words=8)
+        self.assertGreater(len(chunks), 1)
+        self.assertIn("\n", chunks[0])
+
+
+class NormalizeDisplayTests(unittest.TestCase):
+    def test_mashed_webvtt_becomes_sentences(self):
+        from backend.transcript_search import format_source_sentences, normalize_transcript_text
+
+        raw = (
+            "444 01:04:02.029 → 01:04:07.268 pratham mittal: All right, we are done. "
+            "445 01:04:07.649 → 01:04:18.249 pratham mittal: Next question about MU Ventures."
+        )
+        normalized = normalize_transcript_text(raw)
+        self.assertNotIn("01:04:02", normalized)
+        self.assertNotIn("444", normalized.split()[0] if normalized else "")
+        display = format_source_sentences(raw)
+        lines = [line for line in display.splitlines() if line.strip()]
+        self.assertGreaterEqual(len(lines), 2)
+        self.assertTrue(any("MU Ventures" in line for line in lines))
+
+    def test_trim_to_word_limit(self):
+        from backend.transcript_search import trim_to_word_limit
+
+        words = " ".join(f"w{i}" for i in range(250))
+        clipped = trim_to_word_limit(words, 200)
+        self.assertLessEqual(len(clipped.split()), 201)
+        self.assertTrue(clipped.endswith("…"))
+
 
 class RankingTests(unittest.TestCase):
     def test_cosine_identical_is_one(self):

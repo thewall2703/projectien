@@ -75,6 +75,28 @@ function MarkdownAnswer({ text }: { text: string }) {
   );
 }
 
+function SourcePassage({ text }: { text: string }) {
+  const lines = useMemo(
+    () =>
+      (text || "")
+        .replace(/\r\n/g, "\n")
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean),
+    [text],
+  );
+  if (!lines.length) return null;
+  return (
+    <div className="mt-3 space-y-2">
+      {lines.map((line, index) => (
+        <p key={`${index}-${line.slice(0, 24)}`} className="text-sm leading-6 text-black/75">
+          {line}
+        </p>
+      ))}
+    </div>
+  );
+}
+
 function sourceLabel(source: AskSource) {
   const kind =
     source.source_type === "style"
@@ -180,7 +202,7 @@ export default function AskTranscripts() {
                       <p className="text-sm font-semibold text-black">{sourceLabel(source)}</p>
                       <p className="text-xs text-grey">{Math.round(source.score * 100)}% match</p>
                     </div>
-                    <p className="mt-2 text-sm leading-6 text-black/75">{source.text}</p>
+                    <SourcePassage text={source.text} />
                   </article>
                 ))}
               </div>
