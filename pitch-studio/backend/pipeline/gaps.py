@@ -66,6 +66,7 @@ from backend.pipeline.deck import (
 from backend.pipeline.slide_templates import (
     PHOTO_REQUIRED_TEMPLATE_IDS,
     SECTION_DIVIDER_TEMPLATE_ID,
+    template_spec,
 )
 from backend.pipeline.slide_templates import (
     SUPPORTED_TEMPLATE_IDS as _ALL_TEMPLATE_IDS,
@@ -111,6 +112,7 @@ def generated_slide_budget(duration: str) -> int:
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 _SENTENCE_RE = re.compile(r"[.!?\n]+")
+_NUMERAL_RE = re.compile(r"\d")
 
 # Words that carry no discriminating signal for gap matching: ordinary stop
 # words plus a few brand-ubiquitous tokens that appear on nearly every page and
@@ -550,6 +552,8 @@ RankFn = Callable[[dict[str, Any]], dict[str, Any]]
 _RANK_SYSTEM = (
     "You rank real gaps in a pitch deck and pick a slide template for each. "
     "You do NOT invent gaps. Choose only from the supplied templates. "
+    "Pick the template whose purpose matches the claim. Never pick a numbers "
+    "template for a claim without figures. "
     "Keep at most `budget` gaps, most important first. "
     'Return strict JSON: {"slides":[{"key":"...","template_id":"..."}]}.'
 )
@@ -557,6 +561,18 @@ _RANK_SYSTEM = (
 
 def _template_tone(template_id: str) -> str:
     return "dark" if template_id.endswith("-dark") else "light"
+
+
+def _template_fits(candidate: GapCandidate, template_id: str) -> bool:
+    """Whether the candidate supplies the content shape a template requires."""
+    spec = template_spec(template_id)
+    if spec.needs_numbers:
+        return candidate.kind == "fact" or bool(_NUMERAL_RE.search(candidate.claim))
+    return True
+
+
+def _same_tone_divider(template_id: str) -> str:
+    return f"{SECTION_DIVIDER_TEMPLATE_ID}-{_template_tone(template_id)}"
 
 
 def _parse_ranked(
@@ -583,6 +599,8 @@ def _parse_ranked(
         template_id = str(row.get("template_id") or "")
         if template_id not in allowed:
             template_id = DEFAULT_TEMPLATE_ID
+        if not _template_fits(candidate, template_id):
+            template_id = _same_tone_divider(template_id)
         chosen.append((candidate, template_id))
         seen.add(key)
         if len(chosen) >= budget:
@@ -613,7 +631,13 @@ def rank_and_template(
         payload = rank_fn(
             {
                 "budget": budget,
-                "templates": list(allowed),
+                "templates": [
+                    {
+                        "id": template_id,
+                        "purpose": template_spec(template_id).purpose,
+                    }
+                    for template_id in allowed
+                ],
                 "gaps": [
                     {
                         "key": candidate.key,

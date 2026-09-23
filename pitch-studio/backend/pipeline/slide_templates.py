@@ -498,6 +498,8 @@ class TemplateSpec:
     budgets: dict[str, SlotBudget]
     exemplars: tuple[str, ...]
     reference_pages: tuple[int, ...]
+    purpose: str
+    needs_numbers: bool = False
     branding_left: str = DEFAULT_BRANDING_LEFT
     branding_right: str = DEFAULT_BRANDING_RIGHT
     # Repeated list slots (programme list): the slots the model fills with a
@@ -557,6 +559,10 @@ def _section_divider_spec(variant: Variant) -> TemplateSpec:
         budgets=dict(_SECTION_DIVIDER_BUDGETS),
         exemplars=_SECTION_DIVIDER_EXEMPLARS,
         reference_pages=_SECTION_DIVIDER_REFERENCE_PAGES,
+        purpose=(
+            "A question or bold statement with an optional one-line answer; "
+            "use for objections and yes/no questions."
+        ),
     )
 
 
@@ -610,6 +616,11 @@ def _stat_spec(variant: Variant) -> TemplateSpec:
         budgets=dict(_STAT_BUDGETS),
         exemplars=_STAT_EXEMPLARS,
         reference_pages=_STAT_REFERENCE_PAGES,
+        purpose=(
+            "A headline number plus supporting figures; use only when the claim "
+            "contains numbers backed by a locked fact."
+        ),
+        needs_numbers=True,
         photo_slots=("background_photo",) if variant == "dark" else (),
     )
 
@@ -643,6 +654,7 @@ def _campus_spec() -> TemplateSpec:
         budgets=dict(_CAMPUS_BUDGETS),
         exemplars=_CAMPUS_EXEMPLARS,
         reference_pages=_CAMPUS_REFERENCE_PAGES,
+        purpose="A named place or facility on campus, shown over a real photo.",
         photo_slots=("hero_photo",),
         required_photo_slots=("hero_photo",),
     )
@@ -681,6 +693,7 @@ def _programme_list_spec(variant: Variant) -> TemplateSpec:
         budgets=dict(_PROGRAMME_BUDGETS),
         exemplars=_PROGRAMME_EXEMPLARS,
         reference_pages=_PROGRAMME_REFERENCE_PAGES,
+        purpose="A list of programmes offered, supported by two real photos.",
         fillable_lists=("items",),
         list_budgets=dict(_PROGRAMME_LIST_BUDGETS),
         photo_slots=("photo_1", "photo_2"),

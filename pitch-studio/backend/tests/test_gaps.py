@@ -307,6 +307,73 @@ class ModelRankingTests(unittest.TestCase):
         self.assertEqual(len(result.generated), 1)
         self.assertEqual(result.generated[0].template_id, DEFAULT_TEMPLATE_ID)
 
+    def test_objection_without_numbers_cannot_use_stat_template(self):
+        from backend.pipeline.gaps import GapCandidate
+
+        candidate = GapCandidate(
+            kind="objection",
+            key="objection-1",
+            claim="Is this a real degree?",
+            title="Is this a real degree?",
+            keywords=frozenset({"real", "degree"}),
+            priority=(1, 0),
+        )
+        picked = rank_and_template(
+            [candidate],
+            1,
+            lambda payload: {
+                "slides": [{"key": "objection-1", "template_id": "stat-dark"}]
+            },
+        )
+        self.assertEqual(picked[0][1], "section-divider-dark")
+
+    def test_numeric_fact_can_use_stat_template(self):
+        from backend.pipeline.gaps import GapCandidate
+
+        candidate = GapCandidate(
+            kind="fact",
+            key="fact-1",
+            claim="Median CTC: 27.78 LPA",
+            title="Median CTC",
+            keywords=frozenset({"median", "ctc"}),
+            priority=(2, 0),
+            source_fact_ids=(1,),
+        )
+        picked = rank_and_template(
+            [candidate],
+            1,
+            lambda payload: {
+                "slides": [{"key": "fact-1", "template_id": "stat-light"}]
+            },
+        )
+        self.assertEqual(picked[0][1], "stat-light")
+
+    def test_ranker_receives_template_ids_with_purposes(self):
+        from backend.pipeline.gaps import GapCandidate
+
+        candidate = GapCandidate(
+            kind="context",
+            key="context-1",
+            claim="A boundary the deck must explain",
+            title="Boundary",
+            keywords=frozenset({"boundary"}),
+            priority=(3, 0),
+        )
+
+        def rank_fn(payload):
+            self.assertEqual(
+                {row["id"] for row in payload["templates"]},
+                set(SUPPORTED_TEMPLATE_IDS),
+            )
+            self.assertTrue(all(row["purpose"] for row in payload["templates"]))
+            return {
+                "slides": [
+                    {"key": "context-1", "template_id": DEFAULT_TEMPLATE_ID}
+                ]
+            }
+
+        rank_and_template([candidate], 1, rank_fn)
+
 
 class PhotoAwarenessTests(unittest.TestCase):
     """The planner may only pick a photo-required template when a photo exists."""
@@ -350,7 +417,10 @@ class PhotoAwarenessTests(unittest.TestCase):
         picked_ok = rank_and_template(
             [candidate], 1,
             lambda payload: (
-                self.assertNotIn(self.CAMPUS, payload["templates"])
+                self.assertNotIn(
+                    self.CAMPUS,
+                    {template["id"] for template in payload["templates"]},
+                )
                 or {"slides": [{"key": "context-0", "template_id": DEFAULT_TEMPLATE_ID}]}
             ),
             allow_photo_templates=False,
@@ -361,7 +431,10 @@ class PhotoAwarenessTests(unittest.TestCase):
         plan, context = self._setup()
 
         def rank_fn(payload):
-            self.assertIn(self.CAMPUS, payload["templates"])
+            self.assertIn(
+                self.CAMPUS,
+                {template["id"] for template in payload["templates"]},
+            )
             return {"slides": [{"key": payload["gaps"][0]["key"], "template_id": self.CAMPUS}]}
 
         result = build_gap_plan(

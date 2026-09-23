@@ -163,6 +163,15 @@ class TemplateRegistryTests(unittest.TestCase):
                 self.assertTrue(spec.version)
                 self.assertTrue(spec.reference_pages)
                 self.assertTrue(spec.exemplars)
+                self.assertTrue(spec.purpose)
+
+    def test_only_stat_templates_require_numbers(self):
+        number_templates = {
+            template_id
+            for template_id in SUPPORTED_TEMPLATE_IDS
+            if template_spec(template_id).needs_numbers
+        }
+        self.assertEqual(number_templates, {"stat-dark", "stat-light"})
 
     def test_char_budget_matches_manifest_floor(self):
         for template_id in SUPPORTED_TEMPLATE_IDS:
