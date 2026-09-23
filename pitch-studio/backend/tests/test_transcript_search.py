@@ -169,6 +169,13 @@ class AskFlowTests(unittest.TestCase):
             self.assertEqual(len(passages), 1)
             return {
                 "answer_markdown": "The **median** is twenty seven LPA.",
+                "segments": [
+                    {
+                        "text": "The **median** is twenty seven LPA.",
+                        "source_indexes": [0],
+                        "quote": "Median placement is twenty seven LPA.",
+                    }
+                ],
                 "highlights": ["median"],
             }
 
@@ -181,6 +188,15 @@ class AskFlowTests(unittest.TestCase):
         self.assertIn("**median**", result["answer_markdown"])
         self.assertEqual(result["highlights"], ["median"])
         self.assertEqual(result["sources"][0]["source_name"], "Parent call")
+        self.assertEqual(result["sources"][0]["highlight_lines"], [0])
+        self.assertEqual(result["segments"][0]["targets"][0]["source_index"], 0)
+
+    def test_match_quote_line_indexes(self):
+        from backend.transcript_search import match_quote_line_indexes
+
+        text = "Speaker: hello world.\nSpeaker: median placement is strong.\nSpeaker: goodbye."
+        hits = match_quote_line_indexes(text, "median placement is strong")
+        self.assertEqual(hits, [1])
 
 
 class RebuildGuardTests(unittest.TestCase):

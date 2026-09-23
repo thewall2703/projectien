@@ -42,11 +42,14 @@ EMBED_BATCH = 32
 ASK_SYSTEM = (
     "You answer questions using ONLY the provided transcript passages from "
     "Masters' Union conversations and materials. Keep the answer to **200 words "
-    "or fewer** — concise, not a wall of text. Use short paragraphs or a few "
-    "bullets. Wrap the most important figures, claims, and takeaways in "
-    "**bold** markdown. Cite sources by their source_name when natural. If the "
-    "passages do not support an answer, say so plainly — do not invent facts. "
-    'Return strict JSON: {"answer_markdown":"...","highlights":["..."]}.'
+    "or fewer**. Split the answer into short segments (one claim or sentence each). "
+    "For every segment, cite the passage index it comes from and copy a short "
+    "verbatim quote from that passage that supports it. Wrap key figures and "
+    "takeaways in **bold**. If the passages do not support an answer, return one "
+    "segment saying so with an empty quote and no source_indexes. "
+    "Passages are numbered from 0. Return strict JSON: "
+    '{"segments":[{"text":"...","source_indexes":[0],"quote":"verbatim from passage"}],'
+    '"highlights":["..."]}.'
 )
 
 MAX_ANSWER_WORDS = 200
@@ -678,16 +681,61 @@ def retrieve(
     return _dedupe_hits(scored)[: max(1, top_k)]
 
 
+def source_lines(text: str) -> list[str]:
+    formatted = format_source_sentences(text)
+    return [line.strip() for line in formatted.splitlines() if line.strip()]
+
+
+def match_quote_line_indexes(source_text: str, quote: str) -> list[int]:
+    """Find display-line indexes in ``source_text`` that support ``quote``."""
+    needle = re.sub(r"\s+", " ", (quote or "").strip().lower())
+    if len(needle) < 8:
+        return []
+    lines = source_lines(source_text)
+    if not lines:
+        return []
+    needle_words = {word for word in _word_list(needle) if len(word) > 2}
+    hits: list[int] = []
+    for index, line in enumerate(lines):
+        hay = re.sub(r"\s+", " ", line.lower())
+        if needle in hay or hay in needle:
+            hits.append(index)
+            continue
+        if len(needle) >= 24:
+            # Partial containment for longer quotes spanning a line.
+            for size in (48, 32, 24):
+                if len(needle) < size:
+                    continue
+                fragment = needle[:size]
+                if fragment in hay:
+                    hits.append(index)
+                    break
+            else:
+                line_words = {word for word in _word_list(hay) if len(word) > 2}
+                if needle_words and line_words:
+                    overlap = len(needle_words & line_words) / max(1, len(needle_words))
+                    if overlap >= 0.55:
+                        hits.append(index)
+        elif needle_words:
+            line_words = {word for word in _word_list(hay) if len(word) > 2}
+            if line_words:
+                overlap = len(needle_words & line_words) / max(1, len(needle_words))
+                if overlap >= 0.7:
+                    hits.append(index)
+    return hits
+
+
 def _default_answer_fn(question: str, passages: list[dict[str, Any]]) -> dict[str, Any]:
     from backend.pipeline.llm import chat_json
 
     packed = [
         {
+            "index": index,
             "source_name": item.get("source_name"),
             "source_type": item.get("source_type"),
             "text": item.get("text"),
         }
-        for item in passages
+        for index, item in enumerate(passages)
     ]
     payload = chat_json(
         [
@@ -703,17 +751,74 @@ def _default_answer_fn(question: str, passages: list[dict[str, Any]]) -> dict[st
         timeout=180.0,
         model=settings.openrouter_model,
         reasoning=True,
-        max_tokens=900,
+        max_tokens=1200,
     )
-    answer = str(payload.get("answer_markdown") or "").strip()
-    answer = trim_to_word_limit(answer, MAX_ANSWER_WORDS)
+    raw_segments = payload.get("segments")
+    segments: list[dict[str, Any]] = []
+    if isinstance(raw_segments, list):
+        for row in raw_segments:
+            if not isinstance(row, dict):
+                continue
+            text = str(row.get("text") or "").strip()
+            if not text:
+                continue
+            indexes_raw = row.get("source_indexes") or row.get("source_index") or []
+            if isinstance(indexes_raw, int):
+                indexes = [indexes_raw]
+            elif isinstance(indexes_raw, list):
+                indexes = []
+                for value in indexes_raw:
+                    try:
+                        indexes.append(int(value))
+                    except (TypeError, ValueError):
+                        continue
+            else:
+                indexes = []
+            indexes = [value for value in indexes if 0 <= value < len(passages)]
+            quote = str(row.get("quote") or "").strip()
+            segments.append(
+                {
+                    "text": text,
+                    "source_indexes": indexes,
+                    "quote": quote,
+                }
+            )
+
+    if not segments:
+        # Legacy fallback if the model ignored the segment schema.
+        legacy = str(payload.get("answer_markdown") or "").strip()
+        if legacy:
+            segments = [{"text": legacy, "source_indexes": [0] if passages else [], "quote": ""}]
+
+    joined = " ".join(str(item["text"]) for item in segments)
+    joined = trim_to_word_limit(joined, MAX_ANSWER_WORDS)
+    # Re-trim segment list if the join exceeded the cap.
+    kept: list[dict[str, Any]] = []
+    used = 0
+    for item in segments:
+        words = _word_list(str(item["text"]))
+        if used >= MAX_ANSWER_WORDS:
+            break
+        if used + len(words) > MAX_ANSWER_WORDS:
+            clipped = trim_to_word_limit(str(item["text"]), MAX_ANSWER_WORDS - used)
+            if clipped:
+                kept.append({**item, "text": clipped})
+            break
+        kept.append(item)
+        used += len(words)
+    segments = kept
+
     highlights = payload.get("highlights") or []
     if not isinstance(highlights, list):
         highlights = []
     highlights = [str(item).strip() for item in highlights if str(item).strip()]
     if not highlights:
-        highlights = re.findall(r"\*\*(.+?)\*\*", answer)
-    return {"answer_markdown": answer, "highlights": highlights}
+        highlights = re.findall(r"\*\*(.+?)\*\*", " ".join(item["text"] for item in segments))
+    return {
+        "answer_markdown": "\n\n".join(item["text"] for item in segments),
+        "segments": segments,
+        "highlights": highlights,
+    }
 
 
 def ask(
@@ -729,6 +834,7 @@ def ask(
     if not query:
         return {
             "answer_markdown": "Ask a question about the ingested transcripts.",
+            "segments": [],
             "highlights": [],
             "sources": [],
         }
@@ -739,26 +845,85 @@ def ask(
                 "The transcript index is empty, or nothing relevant was found. "
                 "An admin needs to rebuild the index after uploading transcripts."
             ),
+            "segments": [],
             "highlights": [],
             "sources": [],
         }
     answerer = answer_fn or _default_answer_fn
-    result = answerer(query, sources)
+    # Present cleaned sentence text to the model so quotes match UI lines.
+    model_passages = [
+        {
+            **item,
+            "text": format_source_sentences(str(item.get("text") or "")),
+        }
+        for item in sources
+    ]
+    result = answerer(query, model_passages)
+    segments = list(result.get("segments") or [])
     answer = trim_to_word_limit(str(result.get("answer_markdown") or "").strip(), MAX_ANSWER_WORDS)
-    return {
-        "answer_markdown": answer,
-        "highlights": list(result.get("highlights") or []),
-        "sources": [
+
+    enriched_sources: list[dict[str, Any]] = []
+    for index, item in enumerate(sources):
+        display = format_source_sentences(str(item.get("text") or ""))
+        highlight_lines: set[int] = set()
+        for segment in segments:
+            indexes = segment.get("source_indexes") or []
+            if index not in indexes:
+                continue
+            quote = str(segment.get("quote") or "").strip()
+            if quote:
+                highlight_lines.update(match_quote_line_indexes(display, quote))
+        enriched_sources.append(
             {
                 "source_type": item["source_type"],
                 "source_name": item["source_name"],
-                "text": format_source_sentences(str(item.get("text") or "")),
+                "text": display,
                 "score": item["score"],
                 "start_ms": item.get("start_ms"),
                 "end_ms": item.get("end_ms"),
+                "highlight_lines": sorted(highlight_lines),
             }
-            for item in sources
-        ],
+        )
+
+    # Attach resolved line indexes onto each segment for the UI jump target.
+    resolved_segments: list[dict[str, Any]] = []
+    for segment in segments:
+        targets: list[dict[str, Any]] = []
+        indexes = segment.get("source_indexes") or []
+        quote = str(segment.get("quote") or "").strip()
+        for source_index in indexes:
+            if not (0 <= int(source_index) < len(enriched_sources)):
+                continue
+            source = enriched_sources[int(source_index)]
+            line_indexes = (
+                match_quote_line_indexes(str(source["text"]), quote)
+                if quote
+                else list(source.get("highlight_lines") or [])
+            )
+            if not line_indexes and source.get("highlight_lines"):
+                line_indexes = list(source["highlight_lines"])[:1]
+            if not line_indexes:
+                line_indexes = [0] if source_lines(str(source["text"])) else []
+            targets.append(
+                {
+                    "source_index": int(source_index),
+                    "line_indexes": line_indexes,
+                }
+            )
+        resolved_segments.append(
+            {
+                "text": segment.get("text") or "",
+                "source_indexes": list(indexes),
+                "quote": quote,
+                "targets": targets,
+            }
+        )
+
+    return {
+        "answer_markdown": answer,
+        "segments": resolved_segments,
+        "highlights": list(result.get("highlights") or []),
+        "sources": enriched_sources,
     }
 
 

@@ -1,7 +1,7 @@
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { Button, ErrorBanner } from "../components/ui";
-import type { AskResponse, AskSource } from "../types";
+import type { AskResponse, AskSegment, AskSource } from "../types";
 
 function renderInline(text: string, keyPrefix: string) {
   const parts = text.split(/(\*\*[^*]+\*\*)/g);
@@ -17,7 +17,17 @@ function renderInline(text: string, keyPrefix: string) {
   });
 }
 
-function MarkdownAnswer({ text }: { text: string }) {
+function MarkdownAnswer({
+  text,
+  segments,
+  activeSegment,
+  onSelectSegment,
+}: {
+  text: string;
+  segments: AskSegment[];
+  activeSegment: number | null;
+  onSelectSegment: (index: number) => void;
+}) {
   const blocks = useMemo(() => {
     const lines = (text || "").replace(/\r\n/g, "\n").split("\n");
     const out: Array<{ type: "p" | "ul"; items: string[] }> = [];
@@ -56,6 +66,35 @@ function MarkdownAnswer({ text }: { text: string }) {
     return out;
   }, [text]);
 
+  if (segments.length > 0) {
+    return (
+      <div className="space-y-3 text-[17px] leading-8 text-black/85">
+        <p className="text-xs text-grey">Click a line to jump to its source.</p>
+        {segments.map((segment, index) => {
+          const clickable = (segment.targets || []).length > 0;
+          const active = activeSegment === index;
+          return (
+            <button
+              key={`seg-${index}`}
+              type="button"
+              disabled={!clickable}
+              onClick={() => clickable && onSelectSegment(index)}
+              className={`block w-full rounded-xl px-3 py-2 text-left transition ${
+                active
+                  ? "bg-amber-100 ring-1 ring-amber-300"
+                  : clickable
+                    ? "hover:bg-amber-50"
+                    : "cursor-default"
+              }`}
+            >
+              {renderInline(segment.text, `seg-${index}`)}
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
   if (!text.trim()) return null;
 
   return (
@@ -75,7 +114,17 @@ function MarkdownAnswer({ text }: { text: string }) {
   );
 }
 
-function SourcePassage({ text }: { text: string }) {
+function SourcePassage({
+  sourceIndex,
+  text,
+  highlightLines,
+  flashLines,
+}: {
+  sourceIndex: number;
+  text: string;
+  highlightLines: number[];
+  flashLines: number[];
+}) {
   const lines = useMemo(
     () =>
       (text || "")
@@ -85,14 +134,30 @@ function SourcePassage({ text }: { text: string }) {
         .filter(Boolean),
     [text],
   );
+  const highlightSet = useMemo(() => new Set(highlightLines), [highlightLines]);
+  const flashSet = useMemo(() => new Set(flashLines), [flashLines]);
   if (!lines.length) return null;
   return (
     <div className="mt-3 space-y-2">
-      {lines.map((line, index) => (
-        <p key={`${index}-${line.slice(0, 24)}`} className="text-sm leading-6 text-black/75">
-          {line}
-        </p>
-      ))}
+      {lines.map((line, index) => {
+        const cited = highlightSet.has(index);
+        const flashed = flashSet.has(index);
+        return (
+          <p
+            key={`${sourceIndex}-${index}`}
+            id={`ask-source-${sourceIndex}-line-${index}`}
+            className={`rounded-md px-2 py-1 text-sm leading-6 transition ${
+              flashed
+                ? "bg-amber-300 text-black ring-2 ring-amber-400"
+                : cited
+                  ? "bg-amber-100 text-black"
+                  : "text-black/75"
+            }`}
+          >
+            {line}
+          </p>
+        );
+      })}
     </div>
   );
 }
@@ -116,6 +181,29 @@ export default function AskTranscripts() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<AskResponse | null>(null);
+  const [activeSegment, setActiveSegment] = useState<number | null>(null);
+  const [flash, setFlash] = useState<{ sourceIndex: number; lines: number[] } | null>(null);
+  const flashTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (flashTimer.current != null) window.clearTimeout(flashTimer.current);
+    };
+  }, []);
+
+  const onSelectSegment = (segmentIndex: number) => {
+    if (!result) return;
+    const segment = result.segments[segmentIndex];
+    if (!segment?.targets?.length) return;
+    const target = segment.targets[0];
+    setActiveSegment(segmentIndex);
+    setFlash({ sourceIndex: target.source_index, lines: target.line_indexes || [0] });
+    const line = (target.line_indexes && target.line_indexes[0]) ?? 0;
+    const node = document.getElementById(`ask-source-${target.source_index}-line-${line}`);
+    node?.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (flashTimer.current != null) window.clearTimeout(flashTimer.current);
+    flashTimer.current = window.setTimeout(() => setFlash(null), 2600);
+  };
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -123,6 +211,8 @@ export default function AskTranscripts() {
     if (!next || loading) return;
     setLoading(true);
     setError("");
+    setActiveSegment(null);
+    setFlash(null);
     try {
       const data = await api.askTranscripts(next);
       setResult(data);
@@ -139,8 +229,8 @@ export default function AskTranscripts() {
       <p className="kicker">Library</p>
       <h1 className="mt-2 font-display text-4xl tracking-tight text-black">Ask the transcripts</h1>
       <p className="mt-3 max-w-2xl text-sm leading-6 text-grey">
-        Search across meeting uploads, video transcripts, and founder voice. Answers are grounded in
-        those sources — key claims are highlighted.
+        Search across meeting uploads, video transcripts, and founder voice. Click an answer line to
+        jump to the exact supporting source — cited lines are marked in yellow.
       </p>
 
       <form onSubmit={onSubmit} className="glass-panel mt-8 space-y-4 p-5 md:p-6">
@@ -170,7 +260,12 @@ export default function AskTranscripts() {
           <section className="glass-panel p-5 md:p-7">
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-grey">Answer</p>
             <div className="mt-4">
-              <MarkdownAnswer text={result.answer_markdown} />
+              <MarkdownAnswer
+                text={result.answer_markdown}
+                segments={result.segments || []}
+                activeSegment={activeSegment}
+                onSelectSegment={onSelectSegment}
+              />
             </div>
             {result.highlights.length > 0 && (
               <div className="mt-6 flex flex-wrap gap-2">
@@ -191,12 +286,21 @@ export default function AskTranscripts() {
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-grey">Sources</p>
               <div className="mt-3 space-y-3">
                 {result.sources.map((source, index) => (
-                  <article key={`${source.source_type}-${index}`} className="glass-panel p-4">
+                  <article
+                    key={`${source.source_type}-${index}`}
+                    id={`ask-source-${index}`}
+                    className="glass-panel p-4"
+                  >
                     <div className="flex items-center justify-between gap-3">
                       <p className="text-sm font-semibold text-black">{sourceLabel(source)}</p>
                       <p className="text-xs text-grey">{Math.round(source.score * 100)}% match</p>
                     </div>
-                    <SourcePassage text={source.text} />
+                    <SourcePassage
+                      sourceIndex={index}
+                      text={source.text}
+                      highlightLines={source.highlight_lines || []}
+                      flashLines={flash?.sourceIndex === index ? flash.lines : []}
+                    />
                   </article>
                 ))}
               </div>

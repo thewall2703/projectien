@@ -544,10 +544,24 @@ export type AskSource = {
   score: number;
   start_ms?: number | null;
   end_ms?: number | null;
+  highlight_lines?: number[];
+};
+
+export type AskSegmentTarget = {
+  source_index: number;
+  line_indexes: number[];
+};
+
+export type AskSegment = {
+  text: string;
+  source_indexes: number[];
+  quote: string;
+  targets: AskSegmentTarget[];
 };
 
 export type AskResponse = {
   answer_markdown: string;
+  segments: AskSegment[];
   highlights: string[];
   sources: AskSource[];
 };

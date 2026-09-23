@@ -25,10 +25,24 @@ class AskSourceOut(BaseModel):
     score: float
     start_ms: int | None = None
     end_ms: int | None = None
+    highlight_lines: list[int] = Field(default_factory=list)
+
+
+class AskSegmentTargetOut(BaseModel):
+    source_index: int
+    line_indexes: list[int] = Field(default_factory=list)
+
+
+class AskSegmentOut(BaseModel):
+    text: str
+    source_indexes: list[int] = Field(default_factory=list)
+    quote: str = ""
+    targets: list[AskSegmentTargetOut] = Field(default_factory=list)
 
 
 class AskOut(BaseModel):
     answer_markdown: str
+    segments: list[AskSegmentOut] = Field(default_factory=list)
     highlights: list[str]
     sources: list[AskSourceOut]
 
@@ -53,6 +67,7 @@ def ask_transcripts(payload: AskIn, db: Session = Depends(get_db)) -> AskOut:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return AskOut(
         answer_markdown=str(result.get("answer_markdown") or ""),
+        segments=[AskSegmentOut(**item) for item in result.get("segments") or []],
         highlights=list(result.get("highlights") or []),
         sources=[AskSourceOut(**item) for item in result.get("sources") or []],
     )
