@@ -169,16 +169,40 @@ def chunk_text(
     normalized = (text or "").strip()
     if not normalized:
         return []
+
+    def pack_words(words: list[str]) -> list[str]:
+        if not words:
+            return []
+        if len(words) <= chunk_words:
+            return [" ".join(words)]
+        step = max(1, chunk_words - overlap_words)
+        chunks: list[str] = []
+        start = 0
+        while start < len(words):
+            end = min(len(words), start + chunk_words)
+            chunks.append(" ".join(words[start:end]))
+            if end >= len(words):
+                break
+            start += step
+        return chunks
+
     lines = [line.strip() for line in normalized.splitlines() if line.strip()]
     if len(lines) >= 2:
         packed: list[str] = []
         buffer: list[str] = []
         buf_words = 0
         for line in lines:
-            line_words = len(_word_list(line))
-            if buffer and buf_words + line_words > chunk_words:
+            line_words = _word_list(line)
+            # A single oversized line must be word-split, not stored whole.
+            if len(line_words) > chunk_words:
+                if buffer:
+                    packed.append("\n".join(buffer))
+                    buffer = []
+                    buf_words = 0
+                packed.extend(pack_words(line_words))
+                continue
+            if buffer and buf_words + len(line_words) > chunk_words:
                 packed.append("\n".join(buffer))
-                # Overlap by trailing lines until we cover ~overlap_words.
                 keep: list[str] = []
                 keep_words = 0
                 for prior in reversed(buffer):
@@ -189,24 +213,12 @@ def chunk_text(
                 buffer = keep
                 buf_words = keep_words
             buffer.append(line)
-            buf_words += line_words
+            buf_words += len(line_words)
         if buffer:
             packed.append("\n".join(buffer))
         return packed
 
-    words = _word_list(normalized)
-    if len(words) <= chunk_words:
-        return [" ".join(words)]
-    step = max(1, chunk_words - overlap_words)
-    chunks: list[str] = []
-    start = 0
-    while start < len(words):
-        end = min(len(words), start + chunk_words)
-        chunks.append(" ".join(words[start:end]))
-        if end >= len(words):
-            break
-        start += step
-    return chunks
+    return pack_words(_word_list(normalized))
 
 
 def chunk_timed_sentences(
@@ -321,6 +333,14 @@ def default_embed_texts(texts: list[str]) -> list[list[float]]:
         return []
     if not settings.openrouter_api_key:
         raise RuntimeError("OPENROUTER_API_KEY is not set")
+    # text-embedding-3-small caps around 8192 tokens; keep a safe word budget.
+    safe_texts: list[str] = []
+    for text in texts:
+        words = _word_list(text)
+        if len(words) > 1200:
+            safe_texts.append(" ".join(words[:1200]))
+        else:
+            safe_texts.append(text)
     headers = {
         "Authorization": f"Bearer {settings.openrouter_api_key.strip()}",
         "Content-Type": "application/json",
@@ -329,8 +349,8 @@ def default_embed_texts(texts: list[str]) -> list[list[float]]:
     }
     out: list[list[float]] = []
     with httpx.Client(timeout=120.0) as client:
-        for start in range(0, len(texts), EMBED_BATCH):
-            batch = texts[start : start + EMBED_BATCH]
+        for start in range(0, len(safe_texts), EMBED_BATCH):
+            batch = safe_texts[start : start + EMBED_BATCH]
             response = client.post(
                 OPENROUTER_EMBEDDINGS_URL,
                 headers=headers,
