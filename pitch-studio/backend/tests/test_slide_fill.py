@@ -39,6 +39,8 @@ from backend.pipeline.slide_fill import (
     GeneratedSlideInstance,
     _fill_payload,
     _prepare_photos,
+    _repair_budgets,
+    _resolve_values,
     _run_vision,
     apply_deck_conventions,
     gate_budgets,
@@ -335,6 +337,36 @@ class ConventionAndGateTests(unittest.TestCase):
                 },
             )
         )
+
+    def test_divider_question_drops_subtitle_to_avoid_two_line_collision(self):
+        values = _repair_budgets(
+            self.spec,
+            _resolve_values(
+                self.spec,
+                {
+                    "title": "What happens to students whose *ventures fail*?",
+                    "subtitle": "Failure teaches reflection",
+                },
+            ),
+            {},
+            final_attempt=False,
+        )
+        self.assertEqual(values["subtitle"], "")
+
+    def test_short_divider_title_keeps_subtitle(self):
+        values = _repair_budgets(
+            self.spec,
+            _resolve_values(
+                self.spec,
+                {
+                    "title": "*Immersions*",
+                    "subtitle": "How students *learn by traveling*",
+                },
+            ),
+            {},
+            final_attempt=False,
+        )
+        self.assertEqual(values["subtitle"], "How students *learn by traveling*")
 
     def test_register_gate_accepts_all_real_brand_exemplars(self):
         for template_id in (

@@ -796,6 +796,13 @@ def _repair_budgets(
         budget = spec.budgets.get(name)
         if final_attempt and budget is not None and budget.droppable and name not in spec.required_slots:
             repaired[name] = ""
+    if spec.template_id.startswith("section-divider-"):
+        title = _plain(str(repaired.get("title") or ""))
+        # The source deck uses either a two-line question (p19) or a short
+        # title plus subtitle (p52). A subtitle beneath a question/long title
+        # collides with the second headline line, so select one composition.
+        if "?" in title or len(title) > 32:
+            repaired["subtitle"] = ""
     return repaired
 
 

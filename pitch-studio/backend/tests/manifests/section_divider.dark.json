@@ -74,15 +74,15 @@
     {
       "name": "title",
       "rect": [
-        96,
-        724,
-        1320,
-        220
+        160,
+        744,
+        1250,
+        200
       ],
       "font": "sans",
       "font_size": 132,
       "min_font_size": 60,
-      "weight": 600,
+      "weight": 500,
       "italic": false,
       "tracking_em": -0.015,
       "line_height": 1.0,
@@ -99,10 +99,10 @@
     {
       "name": "subtitle",
       "rect": [
-        100,
-        895,
-        900,
-        66
+        164,
+        902,
+        820,
+        58
       ],
       "font": "sans",
       "font_size": 40,

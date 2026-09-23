@@ -44,7 +44,7 @@ SECTION_DIVIDER_TEMPLATE_ID = "section-divider"
 
 # Bump when a template's furniture, geometry, slots or copy conventions change,
 # so every cached generated render built on the old template is invalidated.
-SECTION_DIVIDER_TEMPLATE_VERSION = "4"
+SECTION_DIVIDER_TEMPLATE_VERSION = "5"
 
 # Brand furniture strings shown on every divider unless overridden.
 DEFAULT_BRANDING_LEFT = "Learn by Doing"
@@ -117,11 +117,11 @@ def section_divider_manifest(variant: Variant = "light") -> SlideManifest:
         # renders italic-serif. Auto-fits down to a floor, then rejects.
         TextSlot(
             name="title",
-            rect=Rect(96, 724, 1320, 220),
+            rect=Rect(160, 744, 1250, 200),
             font="sans",
             font_size=132,
             min_font_size=60,
-            weight=600,
+            weight=500,
             tracking_em=-0.015,
             line_height=1.0,
             color=colors["title"],
@@ -133,7 +133,7 @@ def section_divider_manifest(variant: Variant = "light") -> SlideManifest:
         # Optional subtitle directly beneath the title.
         TextSlot(
             name="subtitle",
-            rect=Rect(100, 895, 900, 66),
+            rect=Rect(164, 902, 820, 58),
             font="sans",
             font_size=40,
             min_font_size=20,
