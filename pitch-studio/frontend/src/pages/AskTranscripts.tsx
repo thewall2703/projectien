@@ -1,6 +1,6 @@
 import { FormEvent, useMemo, useState } from "react";
 import { api } from "../api";
-import { Button, ErrorBanner, Spinner } from "../components/ui";
+import { Button, ErrorBanner } from "../components/ui";
 import type { AskResponse, AskSource } from "../types";
 
 function renderInline(text: string, keyPrefix: string) {
@@ -156,14 +156,8 @@ export default function AskTranscripts() {
         </label>
         <div className="flex items-center gap-3">
           <Button type="submit" loading={loading} disabled={!question.trim()}>
-            Ask
+            {loading ? "Reading the corpus…" : "Ask"}
           </Button>
-          {loading && (
-            <span className="inline-flex items-center gap-2 text-sm text-grey">
-              <Spinner className="h-4 w-4" />
-              Reading the corpus…
-            </span>
-          )}
         </div>
       </form>
 
