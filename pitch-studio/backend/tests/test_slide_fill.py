@@ -507,6 +507,34 @@ class RealizeTests(MemoryDbTestCase):
             {"title": "Not a *bootcamp*", "subtitle": "Built by founders"},
         )
 
+    def test_question_claim_keeps_question_mark_in_title(self):
+        plan = [
+            BrandSlide(COVER_PAGE, "", "Cover"),
+            placeholder(
+                claim="What happens when ventures fail?",
+                title="What happens when ventures fail?",
+            ),
+            BrandSlide(CLOSING_PAGE, "M14", "Close"),
+        ]
+        fill = mock.Mock(
+            return_value={
+                "title": "What happens when ventures *fail*",
+                "subtitle": "",
+            }
+        )
+        vision = mock.Mock(return_value={"passed": True, "violations": []})
+
+        result, save = self._realize(
+            plan, fill_fn=fill, vision_fn=vision, renderer=FakeRenderer()
+        )
+
+        self.assertIsInstance(result[1], GeneratedSlideInstance)
+        row = self.db.query(GeneratedSlide).one()
+        self.assertEqual(
+            json.loads(row.slot_values_json)["title"],
+            "What happens when ventures *fail*?",
+        )
+
     def test_droppable_line_still_over_budget_is_blanked_on_final_attempt(self):
         plan = [BrandSlide(COVER_PAGE, "", "Cover"), placeholder(), BrandSlide(CLOSING_PAGE, "M14", "Close")]
         long_subtitle = "Hands-on learning with founders " * 4
@@ -640,7 +668,7 @@ class RealizeTests(MemoryDbTestCase):
         )
         save.assert_not_called()
 
-    def test_furniture_vision_failure_degrades_immediately(self):
+    def test_confirmed_furniture_vision_failure_degrades_immediately(self):
         plan = [BrandSlide(COVER_PAGE, "", "Cover"), placeholder(), BrandSlide(CLOSING_PAGE, "M14", "Close")]
         renderer = FakeRenderer()
         fill = mock.Mock(return_value={"title": "Not a *bootcamp*", "subtitle": ""})
@@ -656,9 +684,33 @@ class RealizeTests(MemoryDbTestCase):
 
         self.assertIsInstance(result[1], BrandSlide)
         self.assertEqual(fill.call_count, 1)
-        self.assertEqual(vision.call_count, 1)
+        self.assertEqual(vision.call_count, 2)
         self.assertEqual(len(renderer.calls), 1)
         save.assert_not_called()
+
+    def test_transient_furniture_verdict_is_confirmed_before_suppression(self):
+        plan = [BrandSlide(COVER_PAGE, "", "Cover"), placeholder(), BrandSlide(CLOSING_PAGE, "M14", "Close")]
+        renderer = FakeRenderer()
+        fill = mock.Mock(return_value={"title": "Not a *bootcamp*", "subtitle": ""})
+        vision = mock.Mock(side_effect=[
+            {
+                "passed": False,
+                "violations": [
+                    {"category": "furniture", "detail": "Ribbon moved"},
+                ],
+            },
+            {"passed": True, "violations": []},
+        ])
+
+        result, save = self._realize(
+            plan, fill_fn=fill, vision_fn=vision, renderer=renderer
+        )
+
+        self.assertIsInstance(result[1], GeneratedSlideInstance)
+        self.assertEqual(fill.call_count, 1)
+        self.assertEqual(vision.call_count, 2)
+        self.assertEqual(len(renderer.calls), 1)
+        save.assert_called_once()
 
     def test_vision_exception_is_treated_as_a_failed_gate(self):
         plan = [BrandSlide(COVER_PAGE, "", "Cover"), placeholder(), BrandSlide(CLOSING_PAGE, "M14", "Close")]
@@ -993,7 +1045,7 @@ class AttemptAuditTests(MemoryDbTestCase):
         self.assertIsInstance(result[1], BrandSlide)
         self.assertIsInstance(result[2], BrandSlide)
         fill.assert_called_once()
-        vision.assert_called_once()
+        self.assertEqual(vision.call_count, 2)
         self.assertEqual(len(renderer.calls), 1)
         rows = (
             self.db.query(GeneratedSlideAttempt)

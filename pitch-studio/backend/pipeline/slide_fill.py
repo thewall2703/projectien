@@ -1214,6 +1214,12 @@ def _realize_one(
             previous_values,
             final_attempt=attempt_number == attempt_count,
         )
+        if (
+            placeholder.claim.rstrip().endswith("?")
+            and values.get("title")
+            and not _plain(str(values["title"])).endswith("?")
+        ):
+            values["title"] = f"{str(values['title']).rstrip()}?"
         previous_values = values
 
         # Gate a: schema + exact word/character budgets.
@@ -1314,6 +1320,18 @@ def _realize_one(
 
         # Gate e: Opus multimodal vision review vs three brand pages.
         review = _run_vision(vision_fn, render_result.jpeg, brand_pages, spec, placeholder)
+        # Furniture is invariant for a rendered image, but the multimodal
+        # classifier is stochastic. A single false furniture verdict currently
+        # suppresses the template for the whole run, so require the same image
+        # to receive a second furniture verdict before taking that irreversible
+        # path. A passing or copy-only confirmation follows the normal flow.
+        if not review["passed"] and any(
+            violation["category"] == "furniture"
+            for violation in review["violations"]
+        ):
+            review = _run_vision(
+                vision_fn, render_result.jpeg, brand_pages, spec, placeholder
+            )
         if not review["passed"]:
             typed_violations = review["violations"]
             furniture = [
