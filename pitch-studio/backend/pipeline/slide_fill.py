@@ -1181,6 +1181,9 @@ def _realize_one(
 
     # 2) Miss: fill + gate, up to the configured attempts, then degrade.
     allowed = allowed_numerals(source_facts, source_passages)
+    if placeholder.gap_kind == "objection":
+        # Restating the listener's own question quotes their figure; it asserts nothing.
+        allowed |= _numerals(placeholder.claim)
     brand_pages = _reference_pages(spec, placeholder, brand_page_fn)
     corrections: list[str] = []
     previous_values: dict[str, Any] = {}

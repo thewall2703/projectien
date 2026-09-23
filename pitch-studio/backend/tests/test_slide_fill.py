@@ -941,10 +941,10 @@ class AttemptAuditTests(MemoryDbTestCase):
         self.db.commit()
         self.generation_id = generation.id
 
-    def _run(self, *, fill_fn, vision_fn, renderer=None):
+    def _run(self, *, fill_fn, vision_fn, renderer=None, slide=None):
         plan = [
             BrandSlide(COVER_PAGE, "", "Cover"),
-            placeholder(),
+            slide or placeholder(),
             BrandSlide(CLOSING_PAGE, "M14", "Close"),
         ]
         with mock.patch(
@@ -1009,6 +1009,36 @@ class AttemptAuditTests(MemoryDbTestCase):
         self.assertEqual([row.attempt_number for row in rows], [1, 2, 3, 4])
         self.assertTrue(json.loads(rows[0].violations_json))
         save_attempt.assert_not_called()
+
+    def test_objection_may_quote_its_own_figure(self):
+        objection = placeholder(
+            slide_key="generated:objection-10",
+            gap_kind="objection",
+            claim="₹40 lakh for four years is a lot.",
+        )
+        result, _save_attempt = self._run(
+            fill_fn=mock.Mock(return_value={"title": "₹40 lakh for four years is a *lot*", "subtitle": ""}),
+            vision_fn=mock.Mock(return_value={"passed": True, "violations": []}),
+            slide=objection,
+        )
+
+        self.assertIsInstance(result[1], GeneratedSlideInstance)
+
+    def test_objection_cannot_introduce_new_figures(self):
+        objection = placeholder(
+            slide_key="generated:objection-10",
+            gap_kind="objection",
+            claim="₹40 lakh for four years is a lot.",
+        )
+        result, _save_attempt = self._run(
+            fill_fn=mock.Mock(return_value={"title": "₹40 lakh buys *27 LPA*", "subtitle": ""}),
+            vision_fn=mock.Mock(return_value={"passed": True, "violations": []}),
+            slide=objection,
+        )
+
+        self.assertIsInstance(result[1], BrandSlide)
+        outcomes = [row.outcome for row in self.db.query(GeneratedSlideAttempt).all()]
+        self.assertIn("provenance", outcomes)
 
     def test_furniture_rejection_is_archived_and_suppresses_same_template(self):
         first = placeholder(slide_key="generated:first", claim="First unsupported beat")
