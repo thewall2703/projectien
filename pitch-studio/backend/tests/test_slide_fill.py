@@ -277,6 +277,11 @@ class ConventionAndGateTests(unittest.TestCase):
     def test_budget_gate_passes_short_copy(self):
         self.assertFalse(gate_budgets(self.spec, {"title": "Not a *bootcamp*", "subtitle": ""}))
 
+    def test_budget_gate_ignores_emphasis_markup_in_character_count(self):
+        spec = template_spec("stat-light")
+        visible = "x" * 48
+        self.assertFalse(gate_budgets(spec, {"title": f"*{visible}*", "hero_value": "3x", "hero_label": "Salary"}))
+
     def test_number_gate_rejects_unsupported_numeral(self):
         allowed = {"27.78"}
         violations = gate_number_provenance(
@@ -426,6 +431,41 @@ class RealizeTests(MemoryDbTestCase):
         self.assertEqual(row.status, "ready")
         self.assertEqual(json.loads(row.slot_values_json)["title"], "Not a *weekend bootcamp*")
         self.assertEqual(row.slide_key, generated_slide_key(row.render_hash))
+
+    def test_budget_retry_keeps_slots_that_already_fitted(self):
+        plan = [BrandSlide(COVER_PAGE, "", "Cover"), placeholder(), BrandSlide(CLOSING_PAGE, "M14", "Close")]
+        long_subtitle = "Hands-on learning with founders " * 4
+        long_title = "Not a bootcamp " * 10
+        fill = mock.Mock(side_effect=[
+            {"title": "Not a *bootcamp*", "subtitle": long_subtitle},
+            {"title": long_title, "subtitle": "Built by founders"},
+        ])
+        vision = mock.Mock(return_value={"passed": True, "violations": []})
+
+        result, save = self._realize(plan, fill_fn=fill, vision_fn=vision, renderer=FakeRenderer())
+
+        self.assertIsInstance(result[1], GeneratedSlideInstance)
+        self.assertEqual(fill.call_count, 2)
+        retry_payload = fill.call_args_list[1].args[0]
+        self.assertEqual(retry_payload["previous_values"]["title"], "Not a *bootcamp*")
+        row = self.db.query(GeneratedSlide).one()
+        self.assertEqual(
+            json.loads(row.slot_values_json),
+            {"title": "Not a *bootcamp*", "subtitle": "Built by founders"},
+        )
+
+    def test_droppable_line_still_over_budget_is_blanked_on_final_attempt(self):
+        plan = [BrandSlide(COVER_PAGE, "", "Cover"), placeholder(), BrandSlide(CLOSING_PAGE, "M14", "Close")]
+        long_subtitle = "Hands-on learning with founders " * 4
+        fill = mock.Mock(return_value={"title": "Not a *bootcamp*", "subtitle": long_subtitle})
+        vision = mock.Mock(return_value={"passed": True, "violations": []})
+
+        result, save = self._realize(plan, fill_fn=fill, vision_fn=vision, renderer=FakeRenderer())
+
+        self.assertIsInstance(result[1], GeneratedSlideInstance)
+        self.assertEqual(fill.call_count, 3)
+        row = self.db.query(GeneratedSlide).one()
+        self.assertEqual(json.loads(row.slot_values_json)["subtitle"], "")
 
     def test_cache_hit_reuses_without_model_vision_or_render(self):
         plan = [BrandSlide(COVER_PAGE, "", "Cover"), placeholder(), BrandSlide(CLOSING_PAGE, "M14", "Close")]

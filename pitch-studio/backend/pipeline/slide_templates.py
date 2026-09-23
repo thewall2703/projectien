@@ -458,6 +458,9 @@ class SlotBudget:
     # keep copy in the brand's 7-11 word / 43-72 char band, not a fragment.
     min_words: int = 0
     min_chars: int = 0
+    # A supporting line the slide still reads well without: if it is still over
+    # budget on the final attempt it is blanked rather than failing the slide.
+    droppable: bool = False
 
 
 @dataclass(frozen=True)
@@ -537,7 +540,7 @@ _SECTION_DIVIDER_REFERENCE_PAGES: tuple[int, ...] = (19, 52)
 _SECTION_DIVIDER_BUDGETS: dict[str, SlotBudget] = {
     # Kept in lockstep with the manifest slot ``char_budget`` floors.
     "title": SlotBudget(max_words=14, max_chars=120),
-    "subtitle": SlotBudget(max_words=12, max_chars=90),
+    "subtitle": SlotBudget(max_words=12, max_chars=90, droppable=True),
 }
 
 
@@ -572,10 +575,10 @@ _STAT_REFERENCE_PAGES: tuple[int, ...] = (58, 57)
 
 _STAT_BUDGETS: dict[str, SlotBudget] = {
     "title": SlotBudget(max_words=6, max_chars=48),
-    "subtitle": SlotBudget(max_words=18, max_chars=110),
+    "subtitle": SlotBudget(max_words=18, max_chars=110, droppable=True),
     "hero_value": SlotBudget(max_words=2, max_chars=12),
     "hero_label": SlotBudget(max_words=10, max_chars=64),
-    "footnote": SlotBudget(max_words=10, max_chars=64),
+    "footnote": SlotBudget(max_words=10, max_chars=64, droppable=True),
 }
 for _i in range(1, STAT_ROW_COUNT + 1):
     _STAT_BUDGETS[f"stat{_i}_value"] = SlotBudget(max_words=3, max_chars=12)

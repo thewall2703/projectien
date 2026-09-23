@@ -257,37 +257,45 @@ def gate_schema(spec: TemplateSpec, values: Mapping[str, Any]) -> list[str]:
     return violations
 
 
+def slot_budget_violations(spec: TemplateSpec, name: str, value: Any) -> list[str]:
+    """Budget violations for one scalar slot (empty when it fits or is unbounded)."""
+    budget = spec.budgets.get(name)
+    if budget is None:
+        return []
+    value = str(value or "")
+    if not value:
+        # A required slot being empty is a schema violation, not a budget
+        # one; an empty optional slot has nothing to bound.
+        if budget.min_chars and name in spec.required_slots:
+            return [f"slot '{name}' is empty, needs at least {budget.min_chars} characters"]
+        return []
+    plain = _plain(value)
+    chars = len(plain)
+    words = len(plain.split())
+    violations: list[str] = []
+    if chars > budget.max_chars:
+        violations.append(
+            f"slot '{name}' is {chars} characters, over the {budget.max_chars} limit"
+        )
+    if words > budget.max_words:
+        violations.append(
+            f"slot '{name}' is {words} words, over the {budget.max_words} limit"
+        )
+    if budget.min_chars and chars < budget.min_chars:
+        violations.append(
+            f"slot '{name}' is {chars} characters, under the {budget.min_chars} minimum"
+        )
+    if budget.min_words and words < budget.min_words:
+        violations.append(
+            f"slot '{name}' is {words} words, under the {budget.min_words} minimum"
+        )
+    return violations
+
+
 def gate_budgets(spec: TemplateSpec, values: Mapping[str, Any]) -> list[str]:
     violations: list[str] = []
     for name in spec.fillable_slots:
-        value = str(values.get(name) or "")
-        budget = spec.budgets.get(name)
-        if budget is None:
-            continue
-        plain = _plain(value)
-        if not value:
-            # A required slot being empty is a schema violation, not a budget
-            # one; an empty optional slot has nothing to bound.
-            if budget.min_chars and name in spec.required_slots:
-                violations.append(f"slot '{name}' is empty, needs at least {budget.min_chars} characters")
-            continue
-        words = len(plain.split())
-        if len(value) > budget.max_chars:
-            violations.append(
-                f"slot '{name}' is {len(value)} characters, over the {budget.max_chars} limit"
-            )
-        if words > budget.max_words:
-            violations.append(
-                f"slot '{name}' is {words} words, over the {budget.max_words} limit"
-            )
-        if budget.min_chars and len(plain) < budget.min_chars:
-            violations.append(
-                f"slot '{name}' is {len(plain)} characters, under the {budget.min_chars} minimum"
-            )
-        if budget.min_words and words < budget.min_words:
-            violations.append(
-                f"slot '{name}' is {words} words, under the {budget.min_words} minimum"
-            )
+        violations.extend(slot_budget_violations(spec, name, values.get(name)))
     for name in spec.fillable_lists:
         items = _list_items(values, name)
         budget = spec.list_budgets.get(name)
@@ -692,6 +700,7 @@ def _fill_payload(
     source_passages: Sequence[Mapping[str, Any]],
     corrections: Sequence[str],
     review_guidance: Sequence[str] = (),
+    previous_values: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "template_id": spec.template_id,
@@ -740,10 +749,40 @@ def _fill_payload(
             "Never use 'as per', 'pursuant to', 'in order to', 'with respect to', 'following ... approval', 'for the purpose of', 'in this regard', 'it is/should be noted that', or passive 'hereby' constructions.",
             "Only use numbers that appear in locked_facts or report_passages.",
             "Do not design; only write the slot copy.",
+            "max_chars counts visible characters (spaces included, emphasis asterisks excluded); aim a few characters under every limit.",
+            "When previous_values is present, fix only what corrections names and keep every other slot exactly as it was.",
         ],
+        "previous_values": dict(previous_values or {}),
         "corrections": list(corrections),
         "approved_review_guidance": list(review_guidance),
     }
+
+
+def _repair_budgets(
+    spec: TemplateSpec,
+    values: Mapping[str, Any],
+    previous_values: Mapping[str, Any],
+    *,
+    final_attempt: bool,
+) -> dict[str, Any]:
+    """Stop a retry from trading one over-budget slot for another.
+
+    A slot that now overflows falls back to its previous value when that one
+    fitted. On the final attempt a droppable supporting line that still
+    overflows is blanked, so a long footnote cannot sink an otherwise good slide.
+    """
+    repaired = dict(values)
+    for name in spec.fillable_slots:
+        if not slot_budget_violations(spec, name, repaired.get(name)):
+            continue
+        prior = previous_values.get(name)
+        if prior and not slot_budget_violations(spec, name, prior):
+            repaired[name] = prior
+            continue
+        budget = spec.budgets.get(name)
+        if final_attempt and budget is not None and budget.droppable and name not in spec.required_slots:
+            repaired[name] = ""
+    return repaired
 
 
 def _resolve_values(spec: TemplateSpec, raw: Any) -> dict[str, Any]:
@@ -1123,6 +1162,7 @@ def _realize_one(
     allowed = allowed_numerals(source_facts, source_passages)
     brand_pages = _reference_pages(spec, placeholder, brand_page_fn)
     corrections: list[str] = []
+    previous_values: dict[str, Any] = {}
     review_guidance = _approved_guidance(db, spec.template_id)
     attempt_count = max(1, max_attempts)
     for attempt_number in range(1, attempt_count + 1):
@@ -1136,6 +1176,7 @@ def _realize_one(
                     source_passages,
                     corrections,
                     review_guidance,
+                    previous_values,
                 )
             )
         except Exception as exc:  # noqa: BLE001 - a failed fill is a retryable attempt
@@ -1146,7 +1187,13 @@ def _realize_one(
                 violations=corrections,
             )
             continue
-        values = _resolve_values(spec, raw)
+        values = _repair_budgets(
+            spec,
+            _resolve_values(spec, raw),
+            previous_values,
+            final_attempt=attempt_number == attempt_count,
+        )
+        previous_values = values
 
         # Gate a: schema + exact word/character budgets.
         violations = gate_schema(spec, values) + gate_budgets(spec, values)
