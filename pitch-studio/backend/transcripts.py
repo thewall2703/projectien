@@ -317,6 +317,13 @@ def ingest_transcripts(
                         )
                     counts["kept"] += 1
             db.commit()
+        # Refresh semantic index for Drive bundles + newly curated quotes.
+        try:
+            from backend.transcript_search import rebuild_index
+
+            rebuild_index(db, drive_root=directory)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  transcript index rebuild skipped: {exc}", flush=True)
         return dict(counts)
     except Exception:
         db.rollback()

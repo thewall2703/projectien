@@ -1211,6 +1211,20 @@ def save_media_transcript(
     touch(item)
     db.commit()
     db.refresh(item)
+    try:
+        from backend.models import Asset
+        from backend.transcript_search import SOURCE_MEDIA, safe_upsert_source
+
+        asset = db.get(Asset, item.asset_id)
+        safe_upsert_source(
+            db=db,
+            source_type=SOURCE_MEDIA,
+            source_id=str(item.id),
+            source_name=(asset.title if asset else "") or f"Media {item.id}",
+            text=item.transcript or "",
+        )
+    except Exception:
+        pass
     return serialize(item, db)
 
 

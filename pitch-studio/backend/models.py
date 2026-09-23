@@ -484,3 +484,33 @@ class QaCandidate(Base):
     error: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TranscriptChunk(Base):
+    """One embedded passage in the Ask-the-transcripts semantic index.
+
+    Sources are style transcripts, media STT, founder quotes, and Drive file
+    bundles. Objections and AMA Q&A candidates are never indexed here.
+    """
+
+    __tablename__ = "transcript_chunks"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_type",
+            "source_id",
+            "chunk_index",
+            name="uq_transcript_chunk_source_index",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_type: Mapped[str] = mapped_column(String(16), index=True)
+    source_id: Mapped[str] = mapped_column(String(128), index=True)
+    source_name: Mapped[str] = mapped_column(String(500), default="")
+    chunk_index: Mapped[int] = mapped_column(Integer, default=0)
+    text: Mapped[str] = mapped_column(Text)
+    start_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    end_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    text_hash: Mapped[str] = mapped_column(String(64), default="", index=True)
+    embedding_json: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

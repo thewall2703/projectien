@@ -1044,6 +1044,19 @@ def prepare_media(db: Session, asset_id: int, on_stage: StageCallback | None = N
         row.image_keys = json.dumps(retained_keys[:MAX_IMAGES], ensure_ascii=False)
     db.commit()
     db.refresh(row)
+    if row.media_kind == "video" and (row.transcript or "").strip():
+        try:
+            from backend.transcript_search import SOURCE_MEDIA, safe_upsert_source
+
+            safe_upsert_source(
+                db=db,
+                source_type=SOURCE_MEDIA,
+                source_id=str(row.id),
+                source_name=(asset.title if asset else "") or f"Media {row.id}",
+                text=row.transcript or "",
+            )
+        except Exception:  # noqa: BLE001
+            print(f"  media {getattr(row, 'id', '?')} transcript index skipped", flush=True)
     return row
 
 

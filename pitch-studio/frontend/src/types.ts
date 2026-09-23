@@ -536,3 +536,18 @@ export type StyleGuide = {
   persona_label: string;
   source_transcript_ids?: string;
 };
+
+export type AskSource = {
+  source_type: string;
+  source_name: string;
+  text: string;
+  score: number;
+  start_ms?: number | null;
+  end_ms?: number | null;
+};
+
+export type AskResponse = {
+  answer_markdown: string;
+  highlights: string[];
+  sources: AskSource[];
+};

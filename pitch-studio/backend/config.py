@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     openrouter_interpret_model: str = "google/gemini-2.5-flash"
     openrouter_slide_model: str = "anthropic/claude-haiku-4.5"
     openrouter_stt_model: str = "openai/whisper-large-v3"
+    openrouter_embedding_model: str = "openai/text-embedding-3-small"
     openrouter_verbosity: str = "medium"
     admin_email: str = "admin@example.com"
     admin_password: str = "changeme"

@@ -455,6 +455,18 @@ def store_style_transcript(
     except Exception:
         db.rollback()
         raise
+    try:
+        from backend.transcript_search import SOURCE_STYLE, safe_upsert_source
+
+        safe_upsert_source(
+            db=db,
+            source_type=SOURCE_STYLE,
+            source_id=str(transcript.id),
+            source_name=transcript.name,
+            text=transcript.raw_text or "",
+        )
+    except Exception:
+        pass
     return transcript
 
 
@@ -510,6 +522,18 @@ def index_style_transcript(
             failed.status = "failed"
             db.commit()
         raise
+    try:
+        from backend.transcript_search import SOURCE_STYLE, safe_upsert_source
+
+        safe_upsert_source(
+            db=db,
+            source_type=SOURCE_STYLE,
+            source_id=str(transcript.id),
+            source_name=transcript.name,
+            text=transcript.raw_text or "",
+        )
+    except Exception:
+        pass
     return {
         "guide_version": max_version,
         "quotes_kept": quotes["quotes_kept"],

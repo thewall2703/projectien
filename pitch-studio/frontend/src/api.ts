@@ -1,4 +1,5 @@
 import type {
+  AskResponse,
   DeckTopicList,
   DeckTopicRow,
   InterpretResult,
@@ -27,7 +28,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     : /\/(describe|reindex|sync|prepare)(\?|$)/.test(path) ||
         path.includes("/sync-assets") ||
         path.includes("/deck-topics/prepare") ||
-        path.includes("/style-transcripts")
+        path.includes("/style-transcripts") ||
+        path === "/api/ask" ||
+        path.startsWith("/api/ask/")
       ? 1200000
       : path.includes("/deck-topics") ||
           path.includes("/media-index") ||
@@ -319,5 +322,11 @@ export const api = {
       method: "POST",
       headers: jsonHeaders,
       body: JSON.stringify({ review_note }),
+    }),
+  askTranscripts: (question: string) =>
+    request<AskResponse>("/api/ask", {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ question }),
     }),
 };
