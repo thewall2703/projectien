@@ -17,7 +17,8 @@ This module turns that observation into a small, deterministic pipeline:
    persona/use case.
 2. **RULE ZERO — prefer real brand slides, always.** Before anything is
    generated, look for an *unused* brand page that already answers the gap and
-   swap it in. Only gaps the brand deck cannot cover survive to generation.
+   place it (insert under the duration ceiling, else swap the weakest body page).
+   Only gaps the brand deck cannot cover survive to generation.
 3. **Rank + template (Haiku only).** :data:`settings.openrouter_slide_model`
    ranks the *surviving* real gaps and picks a currently-supported template.
    The model never detects gaps and never overrides RULE ZERO; if it is
@@ -27,14 +28,17 @@ This module turns that observation into a small, deterministic pipeline:
    :class:`~backend.pipeline.deck.PlannedSlide`) *and* is woven into the script
    flow as a synthetic topic, so the existing script generator writes a spoken
    beat for it. Placeholders carry no brand page and enough claim metadata for
-   Stage 4 to fill and render them.
+   Stage 4 to fill and render them. An evidence brand page may sit immediately
+   after the placeholder when one exists and fits under the ceiling.
 
 Two invariants keep the deck safe:
 
-* **The deck length never grows.** A gap is filled by *replacing the weakest
-  planned body page*, never by appending. The cover and closing are never
+* **The deck grows up to the duration ceiling.** Under the ceiling a real answer
+  page or generated placeholder is *inserted* (with optional evidence). At the
+  ceiling a gap fill replaces the weakest planned body page, and unused evidence
+  is skipped rather than pushing past the limit. The cover and closing are never
   touched, and a page that is the sole carrier of a recipe module is never
-  removed (that would just open a new gap).
+  removed or moved (that would just open a new gap).
 * **Nothing changes when there is no true gap.** With no surviving gap — or at
   T0, whose generated budget is zero — the plan is returned exactly as planned.
 
@@ -61,6 +65,7 @@ from backend.pipeline.deck import (
     BRAND_SOURCE,
     GENERATED_SOURCE,
     PlannedSlide,
+    slide_ceiling_for,
     slide_count_for,
 )
 from backend.pipeline.slide_templates import (
@@ -212,11 +217,16 @@ class GeneratedSlidePlaceholder:
 
     # The real brand page this placeholder displaced when it was planted. Stage
     # 4 restores exactly this page if the slide cannot be generated on brand, so
-    # a failed fill degrades to the original brand slide rather than a gap or a
-    # shorter deck. ``None`` only for a placeholder built outside the planner.
+    # a failed fill degrades to the original brand slide rather than a gap.
+    # ``None`` when the placeholder was *inserted* under the ceiling (no page
+    # displaced) — Stage 4 then drops the slide on failure.
     replaced_page: int | None = None
     replaced_module_id: str = ""
     replaced_label: str = ""
+    # Brand page that sits immediately after this placeholder as supporting
+    # evidence. ``None`` when no evidence was placed (or it was skipped at the
+    # ceiling / blocked as a sole carrier).
+    evidence_page: int | None = None
 
     # -- PlannedSlide interface --------------------------------------------
     @property
@@ -483,6 +493,295 @@ def rule_zero_page(
 
 
 # ---------------------------------------------------------------------------
+# Meaning-based answer / evidence matching (non-module gaps)
+# ---------------------------------------------------------------------------
+
+MatchFn = Callable[[dict[str, Any]], dict[str, Any]]
+
+_MATCH_KINDS = frozenset({"objection", "context", "fact"})
+
+_MATCH_SYSTEM = (
+    "You match pitch-deck gaps to brand-deck pages by meaning. "
+    "A page is an 'answer_page' only if it directly answers the gap's "
+    "claim/question on its own. An 'evidence_page' supports or backs up the "
+    "answer (proof, numbers, examples) without fully answering it. "
+    "Use null when none fits. Prefer pages not already in the deck for "
+    "evidence. Return strict JSON: "
+    '{"gaps":[{"key":"...","answer_page":null,"evidence_page":null}]}.'
+)
+
+
+@dataclass(frozen=True)
+class AnswerMatch:
+    """Pages that answer / evidence a non-module gap, or ``None`` for either."""
+
+    answer_page: int | None
+    evidence_page: int | None
+
+
+def _catalogue_pages(used_pages: set[int]) -> list[dict[str, Any]]:
+    """Brand pages the matcher may cite, excluding cover and closing."""
+    rows: list[dict[str, Any]] = []
+    for page in sorted(PAGE_LABELS):
+        if page in (COVER_PAGE, CLOSING_PAGE):
+            continue
+        rows.append(
+            {
+                "page": page,
+                "label": PAGE_LABELS[page],
+                "module": PAGE_MODULES.get(page, ""),
+                "in_deck": page in used_pages,
+            }
+        )
+    return rows
+
+
+def _coerce_match_page(value: Any) -> int | None:
+    """Accept only a real catalogue body page; anything else is ignored."""
+    if type(value) is not int:
+        return None
+    if value not in PAGE_LABELS or value in (COVER_PAGE, CLOSING_PAGE):
+        return None
+    return value
+
+
+def _keyword_evidence_page(
+    candidate: GapCandidate,
+    used_pages: set[int],
+) -> int | None:
+    """Best unused page by keyword overlap (score >= 1) for evidence."""
+    search_modules = list(candidate.modules) or list(MODULE_PAGES.keys())
+    best_page: int | None = None
+    best_score = 0
+    for module_id in search_modules:
+        for page, label in MODULE_PAGES.get(module_id, ()):
+            if page in used_pages:
+                continue
+            score = len(candidate.keywords & _salient_tokens(label))
+            if score >= 1 and score > best_score:
+                best_score = score
+                best_page = page
+    return best_page
+
+
+def _fallback_answer_matches(
+    candidates: Sequence[GapCandidate],
+    used_pages: set[int],
+) -> dict[str, AnswerMatch]:
+    """Deterministic answer/evidence when the model is unavailable."""
+    matches: dict[str, AnswerMatch] = {}
+    for candidate in candidates:
+        answer = rule_zero_page(candidate, used_pages)
+        evidence_used = set(used_pages)
+        if answer is not None:
+            evidence_used.add(answer)
+        evidence = _keyword_evidence_page(candidate, evidence_used)
+        if evidence is not None and evidence == answer:
+            evidence = None
+        matches[candidate.key] = AnswerMatch(answer, evidence)
+    return matches
+
+
+def _parse_answer_matches(
+    payload: Any,
+    candidates: Sequence[GapCandidate],
+) -> dict[str, AnswerMatch] | None:
+    """Validate a model match payload, or ``None`` when the shape is unusable."""
+    if not isinstance(payload, dict):
+        return None
+    rows = payload.get("gaps")
+    if not isinstance(rows, list):
+        return None
+    parsed: dict[str, AnswerMatch] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        key = str(row.get("key") or "")
+        if not key:
+            continue
+        answer = _coerce_match_page(row.get("answer_page"))
+        evidence = _coerce_match_page(row.get("evidence_page"))
+        if evidence is not None and evidence == answer:
+            evidence = None
+        parsed[key] = AnswerMatch(answer, evidence)
+    # Missing keys in an otherwise valid response stay unanswered — no
+    # per-candidate keyword fallback.
+    return {
+        candidate.key: parsed.get(candidate.key, AnswerMatch(None, None))
+        for candidate in candidates
+    }
+
+
+def match_answer_pages(
+    candidates: Sequence[GapCandidate],
+    used_pages: set[int],
+    match_fn: MatchFn | None,
+) -> dict[str, AnswerMatch]:
+    """Match non-module gaps to answer/evidence pages by meaning.
+
+    Only candidates with ``kind`` in {objection, context, fact} are considered;
+    module gaps keep the existing keyword :func:`rule_zero_page` path. When
+    ``match_fn`` is ``None``, raises, or returns a malformed payload, each
+    candidate falls back to :func:`rule_zero_page` for the answer and keyword
+    overlap for evidence.
+    """
+    eligible = [candidate for candidate in candidates if candidate.kind in _MATCH_KINDS]
+    if not eligible:
+        return {}
+    if match_fn is None:
+        return _fallback_answer_matches(eligible, used_pages)
+
+    payload = {
+        "gaps": [
+            {
+                "key": candidate.key,
+                "kind": candidate.kind,
+                "claim": candidate.claim,
+                "title": candidate.title,
+                "modules": list(candidate.modules),
+            }
+            for candidate in eligible
+        ],
+        "pages": _catalogue_pages(used_pages),
+    }
+    try:
+        response = match_fn(payload)
+    except Exception:  # noqa: BLE001 - any model failure -> keyword fallback
+        return _fallback_answer_matches(eligible, used_pages)
+    parsed = _parse_answer_matches(response, eligible)
+    if parsed is None:
+        return _fallback_answer_matches(eligible, used_pages)
+    return parsed
+
+
+def _default_model_match(payload: dict[str, Any]) -> dict[str, Any]:
+    from backend.pipeline.llm import chat_json
+
+    return chat_json(
+        [
+            {"role": "system", "content": _MATCH_SYSTEM},
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+        ],
+        timeout=45.0,
+        model=settings.openrouter_slide_model,
+        reasoning=False,
+        max_tokens=800,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Placement helpers (insert under ceiling, else replace weakest)
+# ---------------------------------------------------------------------------
+
+
+def _insert_index_for_modules(
+    plan: Sequence[Any],
+    modules: tuple[str, ...],
+) -> int:
+    """Index after the last body slide of ``modules[0]``, else before the closing.
+
+    The closing slide carries M14, so the search stops short of it: nothing is
+    ever inserted after the closing.
+    """
+    closing_index = max(len(plan) - 1, 0)
+    target = modules[0] if modules else ""
+    if target:
+        last: int | None = None
+        for index, slide in enumerate(plan[:closing_index]):
+            if getattr(slide, "module_id", "") == target:
+                last = index
+        if last is not None:
+            return last + 1
+    return closing_index
+
+
+def _brand_for_page(page: int) -> BrandSlide:
+    return BrandSlide(page, PAGE_MODULES.get(page, ""), PAGE_LABELS.get(page, f"Page {page}"))
+
+
+def _place_real_page(
+    result_plan: list[PlannedSlide],
+    page: int,
+    modules: tuple[str, ...],
+    sequence_set: set[str],
+    protected_keys: set[str],
+    used_pages: set[int],
+    swapped_pages: list[int],
+    ceiling: int,
+) -> bool:
+    """Insert or replace ``page`` into the plan. Returns False if nowhere to put it."""
+    real = _brand_for_page(page)
+    if len(result_plan) < ceiling:
+        result_plan.insert(_insert_index_for_modules(result_plan, modules), real)
+    else:
+        index = weakest_body_index(result_plan, sequence_set, protected_keys)
+        if index is None:
+            return False
+        result_plan[index] = real
+    used_pages.add(page)
+    protected_keys.add(real.slide_key)
+    swapped_pages.append(page)
+    return True
+
+
+def _page_index(plan: Sequence[Any], page: int) -> int | None:
+    for index, slide in enumerate(plan):
+        if _is_brand(slide) and slide.page == page:
+            return index
+    return None
+
+
+def _can_move_evidence(
+    plan: Sequence[Any],
+    page: int,
+    sequence_set: set[str],
+    protected_keys: set[str],
+) -> bool:
+    """Whether an in-plan evidence page may be relocated after a placeholder."""
+    if page in (COVER_PAGE, CLOSING_PAGE):
+        return False
+    index = _page_index(plan, page)
+    if index is None:
+        return False
+    slide = plan[index]
+    if getattr(slide, "slide_key", "") in protected_keys:
+        return False
+    module_id = getattr(slide, "module_id", "") or ""
+    if module_id and module_id in sequence_set:
+        carriers = sum(
+            1
+            for item in plan
+            if _is_brand(item) and getattr(item, "module_id", "") == module_id
+        )
+        if carriers <= 1:
+            return False
+    return True
+
+
+def _resolve_evidence_page(
+    candidate: GapCandidate,
+    matched: AnswerMatch | None,
+    used_pages: set[int],
+    result_plan: Sequence[Any],
+    sequence_set: set[str],
+    protected_keys: set[str],
+) -> int | None:
+    """Evidence page to try placing after a placeholder, or ``None``."""
+    if candidate.kind == "module":
+        evidence = _keyword_evidence_page(candidate, used_pages)
+    elif matched is not None:
+        evidence = matched.evidence_page
+    else:
+        evidence = _keyword_evidence_page(candidate, used_pages)
+    if evidence is None:
+        return None
+    if evidence in used_pages:
+        if not _can_move_evidence(result_plan, evidence, sequence_set, protected_keys):
+            return None
+    return evidence
+
+
+# ---------------------------------------------------------------------------
 # Weakest body page (the one a gap fill is allowed to replace)
 # ---------------------------------------------------------------------------
 
@@ -721,21 +1020,26 @@ def build_gap_plan(
     facts: Sequence[Any] | None = None,
     modules: Sequence[Any] | None = None,
     rank_fn: RankFn | None = None,
+    match_fn: MatchFn | None = None,
     allow_photo_templates: bool = True,
+    ceiling: int | None = None,
 ) -> GapPlanResult:
-    """Augment ``plan`` with brand-page swaps and generated placeholders.
+    """Augment ``plan`` with brand-page placements and generated placeholders.
 
     Pure and database-free so it can be unit-tested directly. When there is no
     true gap — or at T0 — the original plan is returned unchanged.
     ``allow_photo_templates`` gates the photo-required templates: when the
     recipe has no approved recommended picture it is ``False`` and the planner
-    only plants photo-free placeholders.
+    only plants photo-free placeholders. ``match_fn`` defaults to ``None`` so
+    pure tests stay offline (keyword answer/evidence fallback). ``ceiling``
+    defaults to :func:`slide_ceiling_for` for ``duration``.
     """
     original = list(plan)
     budget = generated_slide_budget(duration)
     if budget <= 0:
         return GapPlanResult(plan=original)
 
+    deck_ceiling = slide_ceiling_for(duration) if ceiling is None else max(3, ceiling)
     sequence_order = list(dict.fromkeys(sequence))
     sequence_set = set(sequence_order)
     module_info = {
@@ -760,24 +1064,52 @@ def build_gap_plan(
     protected_keys: set[str] = set()
     swapped_pages: list[int] = []
     surviving: list[GapCandidate] = []
+    evidence_by_key: dict[str, int | None] = {}
 
-    # RULE ZERO first: fill with a real brand page wherever possible.
-    for candidate in candidates:
+    # Module gaps: RULE ZERO with insert-under-ceiling / replace-at-ceiling.
+    module_candidates = [candidate for candidate in candidates if candidate.kind == "module"]
+    other_candidates = [candidate for candidate in candidates if candidate.kind != "module"]
+
+    for candidate in module_candidates:
         page = rule_zero_page(candidate, used_pages)
         if page is None:
             surviving.append(candidate)
             continue
-        index = weakest_body_index(result_plan, sequence_set, protected_keys)
-        if index is None:
-            # No page can be sacrificed without extending the deck — leave the
-            # gap for generation (which is bounded and may still find room).
+        if not _place_real_page(
+            result_plan,
+            page,
+            candidate.modules,
+            sequence_set,
+            protected_keys,
+            used_pages,
+            swapped_pages,
+            deck_ceiling,
+        ):
             surviving.append(candidate)
+
+    # Non-module gaps: one meaning-based match call, then place or survive.
+    matches = match_answer_pages(other_candidates, used_pages, match_fn)
+    for candidate in other_candidates:
+        matched = matches.get(candidate.key, AnswerMatch(None, None))
+        answer = matched.answer_page
+        if answer is not None and answer in used_pages:
+            # Already covered by a page in the deck — drop silently.
             continue
-        real = BrandSlide(page, PAGE_MODULES.get(page, ""), PAGE_LABELS.get(page, f"Page {page}"))
-        result_plan[index] = real
-        used_pages.add(page)
-        protected_keys.add(real.slide_key)
-        swapped_pages.append(page)
+        if answer is not None and answer not in used_pages:
+            if _place_real_page(
+                result_plan,
+                answer,
+                candidate.modules,
+                sequence_set,
+                protected_keys,
+                used_pages,
+                swapped_pages,
+                deck_ceiling,
+            ):
+                continue
+            # Nowhere to put the real page — fall through to generation.
+        surviving.append(candidate)
+        evidence_by_key[candidate.key] = matched.evidence_page
 
     # Generation for the gaps the brand deck cannot cover, capped by budget.
     existing_keys = {
@@ -787,6 +1119,56 @@ def build_gap_plan(
     for candidate, template_id in rank_and_template(
         surviving, budget, rank_fn, allow_photo_templates=allow_photo_templates
     ):
+        matched = AnswerMatch(None, evidence_by_key.get(candidate.key))
+        evidence = _resolve_evidence_page(
+            candidate,
+            matched if candidate.kind != "module" else None,
+            used_pages,
+            result_plan,
+            sequence_set,
+            protected_keys,
+        )
+        evidence_unused = evidence is not None and evidence not in used_pages
+        evidence_in_plan = evidence is not None and evidence in used_pages
+
+        if len(result_plan) < deck_ceiling:
+            insert_at = _insert_index_for_modules(result_plan, candidate.modules)
+            moved: BrandSlide | None = None
+            if evidence_in_plan and evidence is not None:
+                old_idx = _page_index(result_plan, evidence)
+                if old_idx is None:
+                    evidence = None
+                    evidence_in_plan = False
+                else:
+                    moved = result_plan.pop(old_idx)  # type: ignore[assignment]
+                    if old_idx < insert_at:
+                        insert_at -= 1
+
+            placeholder = _make_placeholder(candidate, template_id, existing_keys)
+            result_plan.insert(insert_at, placeholder)
+
+            placed_evidence: int | None = None
+            if evidence_unused and evidence is not None:
+                if len(result_plan) < deck_ceiling:
+                    evidence_slide = _brand_for_page(evidence)
+                    result_plan.insert(insert_at + 1, evidence_slide)
+                    used_pages.add(evidence)
+                    protected_keys.add(evidence_slide.slide_key)
+                    placed_evidence = evidence
+                # else: placeholder fitted but unused evidence would exceed — skip
+            elif moved is not None and evidence is not None:
+                result_plan.insert(insert_at + 1, moved)
+                protected_keys.add(getattr(moved, "slide_key", ""))
+                placed_evidence = evidence
+
+            if placed_evidence is not None:
+                placeholder = replace(placeholder, evidence_page=placed_evidence)
+                result_plan[insert_at] = placeholder
+            protected_keys.add(placeholder.slide_key)
+            generated.append(placeholder)
+            continue
+
+        # At the ceiling: replace the weakest body page; skip unused evidence.
         index = weakest_body_index(result_plan, sequence_set, protected_keys)
         if index is None:
             break
@@ -799,7 +1181,28 @@ def build_gap_plan(
             or getattr(displaced, "label", "")
             or "",
         )
-        result_plan[index] = placeholder
+        # If evidence is already in the plan and movable, place it after the
+        # replacement slot (a MOVE does not change length). Unused evidence is
+        # skipped at the ceiling.
+        placed_evidence = None
+        if evidence_in_plan and evidence is not None and _can_move_evidence(
+            result_plan, evidence, sequence_set, protected_keys
+        ):
+            old_idx = _page_index(result_plan, evidence)
+            if old_idx is not None and old_idx != index:
+                moved = result_plan.pop(old_idx)
+                if old_idx < index:
+                    index -= 1
+                result_plan[index] = placeholder
+                result_plan.insert(index + 1, moved)
+                protected_keys.add(getattr(moved, "slide_key", ""))
+                placed_evidence = evidence
+                placeholder = replace(placeholder, evidence_page=placed_evidence)
+                result_plan[index] = placeholder
+            else:
+                result_plan[index] = placeholder
+        else:
+            result_plan[index] = placeholder
         protected_keys.add(placeholder.slide_key)
         generated.append(placeholder)
 
@@ -859,6 +1262,7 @@ def plan_with_generated_slides(
     recipe_ref: str = "",
     modules: Sequence[Any] | None = None,
     rank_fn: Any = _MISSING,
+    match_fn: Any = _MISSING,
 ) -> list[PlannedSlide]:
     """Runner entry point: detect gaps and return the (possibly) augmented plan.
 
@@ -881,6 +1285,7 @@ def plan_with_generated_slides(
             modules = []
 
     resolved_rank_fn = _default_model_rank if rank_fn is _MISSING else rank_fn
+    resolved_match_fn = _default_model_match if match_fn is _MISSING else match_fn
     result = build_gap_plan(
         plan,
         sequence,
@@ -890,7 +1295,9 @@ def plan_with_generated_slides(
         facts=facts,
         modules=modules,
         rank_fn=resolved_rank_fn,
+        match_fn=resolved_match_fn,
         allow_photo_templates=_recipe_has_approved_photos(db, recipe_ref),
+        ceiling=slide_ceiling_for(duration),
     )
     return result.plan
 

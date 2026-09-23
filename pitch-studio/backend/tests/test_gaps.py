@@ -15,6 +15,7 @@ from backend.pipeline.gaps import (
     build_gap_plan,
     detect_gaps,
     generated_slide_budget,
+    match_answer_pages,
     rank_and_template,
     rule_zero_page,
     weakest_body_index,
@@ -57,11 +58,13 @@ class BudgetTests(unittest.TestCase):
             BrandSlide(CLOSING_PAGE, "M14", "Close"),
         ]
         context = "Xylophone qwerty flumox. Bazinga quokka snorlax. Zibbit wobble frobnicate."
-        result = build_gap_plan(plan, ["M01", "M14"], "T1", context_note=context)
+        result = build_gap_plan(
+            plan, ["M01", "M14"], "T1", context_note=context, ceiling=len(plan)
+        )
         self.assertEqual(generated_slide_budget("T1"), 1)
         self.assertEqual(len(result.generated), 1)
-        self.assertEqual(len(result.plan), len(plan))  # no extension
-
+        self.assertEqual(len(result.plan), len(plan))  # at ceiling: replace, no extension
+        self.assertIsNotNone(result.generated[0].replaced_page)
 
 class NoOpTests(unittest.TestCase):
     def test_t0_is_left_exactly_as_planned(self):
@@ -100,7 +103,8 @@ class RuleZeroTests(unittest.TestCase):
         self.assertEqual(result.swapped_pages, [best_m09_page])
         self.assertEqual(result.generated, [])  # a real page beats generation
         self.assertIn(best_m09_page, brand_pages(result.plan))
-        self.assertEqual(len(result.plan), len(plan))
+        # Under the ceiling the real page is inserted, not swapped over another.
+        self.assertEqual(len(result.plan), len(plan) + 1)
         # Cover and closing untouched.
         self.assertEqual(result.plan[0].page, COVER_PAGE)
         self.assertEqual(result.plan[-1].page, CLOSING_PAGE)
@@ -210,7 +214,10 @@ class CanonicalM13Tests(unittest.TestCase):
 
     def test_generates_one_placeholder_tied_to_m13(self):
         sequence, plan, context, modules = self._plan_and_inputs()
-        result = build_gap_plan(plan, sequence, "T2", context_note=context, modules=modules)
+        # Hold length fixed so this regression stays about replacement, not growth.
+        result = build_gap_plan(
+            plan, sequence, "T2", context_note=context, modules=modules, ceiling=len(plan)
+        )
 
         self.assertEqual(len(result.generated), 1)
         self.assertEqual(result.swapped_pages, [])  # brand deck cannot answer it
@@ -219,10 +226,11 @@ class CanonicalM13Tests(unittest.TestCase):
         self.assertEqual(placeholder.module_id, "M13")
         self.assertIn("bootcamp", placeholder.claim.lower())
 
-        # No extension; cover and closing untouched.
+        # At the ceiling: replace, cover and closing untouched.
         self.assertEqual(len(result.plan), len(plan))
         self.assertEqual(result.plan[0].page, COVER_PAGE)
         self.assertEqual(result.plan[-1].page, CLOSING_PAGE)
+        self.assertIsNotNone(placeholder.replaced_page)
 
         # The placeholder replaced a body page (it appears once, in the middle).
         generated_positions = [i for i, s in enumerate(result.plan) if s.source == GENERATED_SOURCE]
@@ -231,7 +239,9 @@ class CanonicalM13Tests(unittest.TestCase):
 
     def test_placeholder_satisfies_planned_slide_contract(self):
         sequence, plan, context, modules = self._plan_and_inputs()
-        result = build_gap_plan(plan, sequence, "T2", context_note=context, modules=modules)
+        result = build_gap_plan(
+            plan, sequence, "T2", context_note=context, modules=modules, ceiling=len(plan)
+        )
         placeholder = result.generated[0]
 
         self.assertIsInstance(placeholder, PlannedSlide)
@@ -249,7 +259,9 @@ class CanonicalM13Tests(unittest.TestCase):
 
     def test_slide_keys_stay_unique_across_the_augmented_plan(self):
         sequence, plan, context, modules = self._plan_and_inputs()
-        result = build_gap_plan(plan, sequence, "T2", context_note=context, modules=modules)
+        result = build_gap_plan(
+            plan, sequence, "T2", context_note=context, modules=modules, ceiling=len(plan)
+        )
         keys = [slide.slide_key for slide in result.plan]
         self.assertEqual(len(keys), len(set(keys)))
 
@@ -274,7 +286,9 @@ class ModelRankingTests(unittest.TestCase):
             key = payload["gaps"][0]["key"]
             return {"slides": [{"key": key, "template_id": dark}]}
 
-        result = build_gap_plan(plan, ["M01", "M14"], "T2", context_note=context, rank_fn=rank_fn)
+        result = build_gap_plan(
+            plan, ["M01", "M14"], "T2", context_note=context, rank_fn=rank_fn, ceiling=len(plan)
+        )
         self.assertEqual(len(result.generated), 1)
         self.assertEqual(result.generated[0].template_id, dark)
         self.assertEqual(result.generated[0].tone, "dark")
@@ -285,7 +299,9 @@ class ModelRankingTests(unittest.TestCase):
         def rank_fn(payload):
             raise RuntimeError("model unavailable")
 
-        result = build_gap_plan(plan, ["M01", "M14"], "T2", context_note=context, rank_fn=rank_fn)
+        result = build_gap_plan(
+            plan, ["M01", "M14"], "T2", context_note=context, rank_fn=rank_fn, ceiling=len(plan)
+        )
         self.assertEqual(len(result.generated), 1)
         self.assertEqual(result.generated[0].template_id, DEFAULT_TEMPLATE_ID)
 
@@ -296,13 +312,20 @@ class ModelRankingTests(unittest.TestCase):
             key = payload["gaps"][0]["key"]
             return {"slides": [{"key": key, "template_id": "carousel-9000"}]}
 
-        result = build_gap_plan(plan, ["M01", "M14"], "T2", context_note=context, rank_fn=rank_fn)
+        result = build_gap_plan(
+            plan, ["M01", "M14"], "T2", context_note=context, rank_fn=rank_fn, ceiling=len(plan)
+        )
         self.assertEqual(result.generated[0].template_id, DEFAULT_TEMPLATE_ID)
 
     def test_malformed_model_payload_falls_back(self):
         plan, context = self._setup()
         result = build_gap_plan(
-            plan, ["M01", "M14"], "T2", context_note=context, rank_fn=lambda payload: {"nonsense": True}
+            plan,
+            ["M01", "M14"],
+            "T2",
+            context_note=context,
+            rank_fn=lambda payload: {"nonsense": True},
+            ceiling=len(plan),
         )
         self.assertEqual(len(result.generated), 1)
         self.assertEqual(result.generated[0].template_id, DEFAULT_TEMPLATE_ID)
@@ -439,7 +462,7 @@ class PhotoAwarenessTests(unittest.TestCase):
 
         result = build_gap_plan(
             plan, ["M01", "M14"], "T2", context_note=context,
-            rank_fn=rank_fn, allow_photo_templates=True,
+            rank_fn=rank_fn, allow_photo_templates=True, ceiling=len(plan),
         )
         self.assertEqual(result.generated[0].template_id, self.CAMPUS)
 
@@ -451,7 +474,7 @@ class PhotoAwarenessTests(unittest.TestCase):
 
         result = build_gap_plan(
             plan, ["M01", "M14"], "T2", context_note=context,
-            rank_fn=rank_fn, allow_photo_templates=False,
+            rank_fn=rank_fn, allow_photo_templates=False, ceiling=len(plan),
         )
         self.assertEqual(result.generated[0].template_id, DEFAULT_TEMPLATE_ID)
 
@@ -484,9 +507,252 @@ class RecipePhotoLookupTests(unittest.TestCase):
             media_index.pick_recommended_media = original
 
 
+class AnswerMatchTests(unittest.TestCase):
+    """Meaning-based answer/evidence matching and ceiling growth."""
+
+    def _base_plan(self):
+        return [
+            BrandSlide(COVER_PAGE, "", "Cover"),
+            BrandSlide(6, "M01", "Hence born"),
+            BrandSlide(2, "M01", "Origin story"),
+            BrandSlide(4, "M01", "Medical students"),
+            BrandSlide(CLOSING_PAGE, "M14", "Close"),
+        ]
+
+    def test_m14_gap_is_inserted_before_the_closing_slide(self):
+        from backend.pipeline.gaps import _insert_index_for_modules
+
+        plan = self._base_plan()
+        self.assertEqual(_insert_index_for_modules(plan, ("M14",)), len(plan) - 1)
+        self.assertEqual(_insert_index_for_modules(plan, ("M01",)), 4)
+        self.assertEqual(_insert_index_for_modules(plan, ()), len(plan) - 1)
+
+    def test_answer_already_in_deck_drops_gap_without_placeholder(self):
+        plan = self._base_plan()
+        original = list(plan)
+
+        def match_fn(payload):
+            key = payload["gaps"][0]["key"]
+            return {"gaps": [{"key": key, "answer_page": 6, "evidence_page": None}]}
+
+        result = build_gap_plan(
+            plan,
+            ["M01", "M14"],
+            "T2",
+            context_note="Zibbit wobble frobnicate objection nobody answered.",
+            match_fn=match_fn,
+        )
+        self.assertEqual(result.generated, [])
+        self.assertEqual(result.swapped_pages, [])
+        self.assertEqual([s.page for s in result.plan], [s.page for s in original])
+
+    def test_unused_answer_page_is_inserted(self):
+        plan = self._base_plan()
+        answer_page = 58  # placements — unused
+
+        def match_fn(payload):
+            key = payload["gaps"][0]["key"]
+            return {"gaps": [{"key": key, "answer_page": answer_page, "evidence_page": None}]}
+
+        result = build_gap_plan(
+            plan,
+            ["M01", "M14"],
+            "T2",
+            context_note="Zibbit wobble frobnicate placement outcomes nobody answered.",
+            match_fn=match_fn,
+        )
+        self.assertEqual(result.generated, [])
+        self.assertEqual(result.swapped_pages, [answer_page])
+        self.assertEqual(len(result.plan), len(plan) + 1)
+        self.assertIn(answer_page, brand_pages(result.plan))
+
+    def test_no_answer_inserts_placeholder_then_unused_evidence(self):
+        plan = self._base_plan()
+        evidence_page = 58
+
+        def match_fn(payload):
+            key = payload["gaps"][0]["key"]
+            return {"gaps": [{"key": key, "answer_page": None, "evidence_page": evidence_page}]}
+
+        result = build_gap_plan(
+            plan,
+            ["M01", "M14"],
+            "T2",
+            context_note="Zibbit wobble frobnicate objection nobody answered.",
+            match_fn=match_fn,
+        )
+        self.assertEqual(len(result.generated), 1)
+        placeholder = result.generated[0]
+        self.assertIsNone(placeholder.replaced_page)
+        self.assertEqual(placeholder.evidence_page, evidence_page)
+        self.assertEqual(len(result.plan), len(plan) + 2)
+        idx = next(i for i, s in enumerate(result.plan) if s.source == GENERATED_SOURCE)
+        self.assertEqual(result.plan[idx + 1].page, evidence_page)
+
+    def test_in_deck_evidence_moves_after_placeholder_from_before(self):
+        plan = self._base_plan()
+        evidence_page = 2  # already in plan, before the usual insert point near M01 end
+
+        def match_fn(payload):
+            key = payload["gaps"][0]["key"]
+            return {"gaps": [{"key": key, "answer_page": None, "evidence_page": evidence_page}]}
+
+        result = build_gap_plan(
+            plan,
+            ["M01", "M14"],
+            "T2",
+            context_note="Zibbit wobble frobnicate objection nobody answered.",
+            match_fn=match_fn,
+        )
+        self.assertEqual(len(result.generated), 1)
+        self.assertEqual(len(result.plan), len(plan) + 1)  # MOVE: +1 for placeholder only
+        placeholder = result.generated[0]
+        self.assertEqual(placeholder.evidence_page, evidence_page)
+        idx = next(i for i, s in enumerate(result.plan) if s.source == GENERATED_SOURCE)
+        self.assertEqual(result.plan[idx + 1].page, evidence_page)
+        # Evidence appears only once.
+        self.assertEqual(brand_pages(result.plan).count(evidence_page), 1)
+
+    def test_in_deck_evidence_moves_after_placeholder_from_after(self):
+        # Evidence sits after the insertion point and is a redundant recipe page
+        # (two M07 carriers), so it can be moved forward without opening a gap.
+        plan = [
+            BrandSlide(COVER_PAGE, "", "Cover"),
+            BrandSlide(6, "M01", "Hence born"),
+            BrandSlide(58, "M07", "Placements median average outcomes"),
+            BrandSlide(57, "M07", "Outcomes of this approach"),
+            BrandSlide(CLOSING_PAGE, "M14", "Close"),
+        ]
+        evidence_page = 57
+
+        def match_fn(payload):
+            key = payload["gaps"][0]["key"]
+            return {"gaps": [{"key": key, "answer_page": None, "evidence_page": evidence_page}]}
+
+        result = build_gap_plan(
+            plan,
+            ["M01", "M07", "M14"],
+            "T2",
+            context_note="Zibbit wobble frobnicate objection nobody answered.",
+            match_fn=match_fn,
+            modules=[module("M01"), module("M07"), module("M14")],
+        )
+        self.assertEqual(len(result.generated), 1)
+        self.assertEqual(len(result.plan), len(plan) + 1)
+        idx = next(i for i, s in enumerate(result.plan) if s.source == GENERATED_SOURCE)
+        self.assertEqual(result.plan[idx + 1].page, evidence_page)
+        self.assertEqual(result.generated[0].evidence_page, evidence_page)
+
+    def test_sole_carrier_evidence_is_not_moved(self):
+        plan = [
+            BrandSlide(COVER_PAGE, "", "Cover"),
+            BrandSlide(6, "M01", "Hence born"),
+            BrandSlide(58, "M07", "Placements median average outcomes"),  # sole M07 carrier
+            BrandSlide(CLOSING_PAGE, "M14", "Close"),
+        ]
+
+        def match_fn(payload):
+            key = payload["gaps"][0]["key"]
+            return {"gaps": [{"key": key, "answer_page": None, "evidence_page": 58}]}
+
+        result = build_gap_plan(
+            plan,
+            ["M01", "M07", "M14"],
+            "T2",
+            context_note="Zibbit wobble frobnicate objection nobody answered.",
+            match_fn=match_fn,
+            modules=[module("M01"), module("M07"), module("M14")],
+        )
+        self.assertEqual(len(result.generated), 1)
+        self.assertIsNone(result.generated[0].evidence_page)
+        # Sole carrier stays where it was (index 2 originally; after insert before
+        # closing for a context gap with no module, insert is before closing).
+        self.assertIn(58, brand_pages(result.plan))
+        idx = next(i for i, s in enumerate(result.plan) if s.source == GENERATED_SOURCE)
+        if idx + 1 < len(result.plan) - 1:
+            self.assertNotEqual(result.plan[idx + 1].page, 58)
+
+    def test_at_ceiling_replaces_weakest_and_skips_unused_evidence(self):
+        plan = self._base_plan()
+
+        def match_fn(payload):
+            key = payload["gaps"][0]["key"]
+            return {"gaps": [{"key": key, "answer_page": None, "evidence_page": 58}]}
+
+        result = build_gap_plan(
+            plan,
+            ["M01", "M14"],
+            "T2",
+            context_note="Zibbit wobble frobnicate objection nobody answered.",
+            match_fn=match_fn,
+            ceiling=len(plan),
+        )
+        self.assertEqual(len(result.generated), 1)
+        placeholder = result.generated[0]
+        self.assertIsNotNone(placeholder.replaced_page)
+        self.assertIsNone(placeholder.evidence_page)
+        self.assertEqual(len(result.plan), len(plan))
+        self.assertNotIn(58, brand_pages(result.plan))
+
+    def test_match_fn_raise_uses_keyword_fallback(self):
+        plan = self._base_plan()
+
+        def match_fn(payload):
+            raise RuntimeError("boom")
+
+        result = build_gap_plan(
+            plan,
+            ["M01", "M14"],
+            "T2",
+            context_note="Zibbit wobble frobnicate objection nobody answered.",
+            match_fn=match_fn,
+            ceiling=len(plan),
+        )
+        # Falls back without crashing; uncoverable claim still generates.
+        self.assertEqual(len(result.generated), 1)
+
+    def test_malformed_and_unknown_pages_are_ignored(self):
+        plan = self._base_plan()
+        used = {slide.page for slide in plan}
+
+        def match_fn(payload):
+            key = payload["gaps"][0]["key"]
+            return {
+                "gaps": [
+                    {
+                        "key": key,
+                        "answer_page": "58",
+                        "evidence_page": 9999,
+                    },
+                    {"key": "unknown-gap", "answer_page": 58, "evidence_page": 1},
+                ]
+            }
+
+        from backend.pipeline.gaps import GapCandidate
+
+        candidate = GapCandidate(
+            kind="context",
+            key="context-0",
+            claim="Zibbit wobble frobnicate",
+            title="Zibbit",
+            keywords=frozenset({"zibbit", "wobble", "frobnicate"}),
+            priority=(3, 0),
+        )
+        matches = match_answer_pages([candidate], used, match_fn)
+        self.assertEqual(matches[candidate.key].answer_page, None)
+        self.assertEqual(matches[candidate.key].evidence_page, None)
+
+        # Cover page as evidence is rejected even when typed as int.
+        def match_cover(payload):
+            return {"gaps": [{"key": "context-0", "answer_page": None, "evidence_page": COVER_PAGE}]}
+
+        matches = match_answer_pages([candidate], used, match_cover)
+        self.assertIsNone(matches[candidate.key].evidence_page)
+
+
 class SyntheticTopicTests(unittest.TestCase):
-    def _placeholder(self) -> GeneratedSlidePlaceholder:
-        return GeneratedSlidePlaceholder(
+    def _placeholder(self, **overrides) -> GeneratedSlidePlaceholder:
+        base = dict(
             slide_key="generated:m13-what-we-are-not",
             gap_kind="context",
             claim="Here is what we are not: not a bootcamp.",
@@ -495,6 +761,8 @@ class SyntheticTopicTests(unittest.TestCase):
             recipe_modules=("M13",),
             summary="Here is what we are not: not a bootcamp.",
         )
+        base.update(overrides)
+        return GeneratedSlidePlaceholder(**base)
 
     def test_generated_slide_becomes_its_own_beat_with_no_pages(self):
         placeholder = self._placeholder()
@@ -516,6 +784,30 @@ class SyntheticTopicTests(unittest.TestCase):
         self.assertEqual(generated.title, "What we are not")
         # Empty pages must not break the prompt serialisation.
         self.assertEqual(generated.to_prompt_dict()["page_range"], "")
+
+    def test_evidence_page_merges_into_generated_topic(self):
+        placeholder = self._placeholder(evidence_page=89)
+        plan = [
+            BrandSlide(COVER_PAGE, "", "Cover"),
+            placeholder,
+            BrandSlide(89, "M13", "Acknowledged across industry and academia"),
+            BrandSlide(6, "M01", "Hence born"),
+            BrandSlide(CLOSING_PAGE, "M14", "Close"),
+        ]
+        topics = [
+            SimpleNamespace(id=1, title="Open", pages_json="[1]", summary="Start", vision="", module_ids=""),
+            SimpleNamespace(id=2, title="Honest", pages_json="[89]", summary="Rec", vision="", module_ids="M13"),
+            SimpleNamespace(id=3, title="Origin", pages_json="[6]", summary="Origin", vision="", module_ids="M01"),
+            SimpleNamespace(id=9, title="Close", pages_json="[92]", summary="Ask", vision="", module_ids="M14"),
+        ]
+        flow = build_script_topics(plan, topics, ["M01", "M13", "M14"])
+        generated = flow[1]
+        self.assertEqual(generated.slide_keys, ["generated:m13-what-we-are-not", "brand:p89"])
+        self.assertEqual(generated.pages, [89])
+        self.assertEqual(generated.recipe_modules, ["M13"])
+        # Following unrelated brand slide starts its own topic.
+        self.assertEqual(flow[2].pages, [6])
+        self.assertEqual(flow[2].slide_keys, ["brand:p6"])
 
     def test_generated_topic_passes_order_and_coverage_validation(self):
         topics = [

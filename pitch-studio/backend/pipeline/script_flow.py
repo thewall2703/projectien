@@ -65,9 +65,10 @@ def _is_generated(slide: Any) -> bool:
 def _generated_topic(slide: Any, topic_id: int, sequence_set: list[str]) -> ScriptTopic:
     """Build a spoken beat straight from a generated placeholder's claim metadata.
 
-    A generated slide carries no brand page, so it never touches the page-based
-    topic index: its beat is synthesised from the placeholder itself, with an
-    empty ``pages`` list so page-coverage validation is a no-op for it.
+    A generated slide carries no brand page of its own, so it never touches the
+    page-based topic index: its beat is synthesised from the placeholder itself.
+    ``pages`` starts empty and may later gain the placeholder's evidence page when
+    that brand slide immediately follows it in the plan.
     """
     module_id = getattr(slide, "module_id", "") or ""
     recipe_modules = list(getattr(slide, "recipe_modules", ()) or ())
@@ -127,11 +128,32 @@ def build_script_topics(
         selected_modules_by_topic.setdefault(source_topic_id, set()).add(slide.module_id)
     flow: list[ScriptTopic] = []
     current: ScriptTopic | None = None
+    pending_evidence_page: int | None = None
     for slide in plan:
         if _is_generated(slide):
             current = _generated_topic(slide, len(flow) + 1, sequence_set)
             flow.append(current)
+            pending_evidence_page = getattr(slide, "evidence_page", None)
             continue
+        # Evidence brand page that Stage 3 planted immediately after a generated
+        # placeholder stays in that generated beat — never starts a new topic.
+        if (
+            current is not None
+            and pending_evidence_page is not None
+            and getattr(slide, "page", None) == pending_evidence_page
+        ):
+            current.pages.append(slide.page)
+            current.slide_keys.append(slide.slide_key)
+            current.labels.append(slide.label or PAGE_LABELS.get(slide.page, f"Page {slide.page}"))
+            if (
+                slide.module_id
+                and slide.module_id in sequence_set
+                and slide.module_id not in current.recipe_modules
+            ):
+                current.recipe_modules.append(slide.module_id)
+            pending_evidence_page = None
+            continue
+        pending_evidence_page = None
         topic = mapping[slide.page]
         source_topic_id = int(topic.id)
         # Deck-topic rows are intentionally broad visual chapters and can span
@@ -199,18 +221,32 @@ def reconcile_realized_slide_mapping(
 
     Topic beats are built before generated placeholders are realised. Stage 4
     preserves plan order but replaces each placeholder with either a
-    content-addressed generated slide or its displaced brand page. Reconcile by
-    plan position, while verifying the original keys, so duplicate pages and
-    generated keys cannot accidentally attach a beat to another slide.
+    content-addressed generated slide, its displaced brand page, or ``None``
+    when an *inserted* placeholder could not be realised (no page to restore).
+    Reconcile by plan position, while verifying the original keys, so duplicate
+    pages and generated keys cannot accidentally attach a beat to another slide.
+    Dropped (``None``) entries are removed from the topic's ``slide_keys`` /
+    ``pages``; section text is kept even when no slides remain.
     """
     if len(planned) != len(realized):
         raise ScriptFlowError(
             "Cannot reconcile script topics: the realised deck changed slide count"
         )
 
+    for planned_slide, realized_slide in zip(planned, realized):
+        if realized_slide is None:
+            if not _is_generated(planned_slide):
+                raise ScriptFlowError(
+                    "Cannot reconcile script topics: a non-generated slide was dropped"
+                )
+            continue
+        if not (getattr(planned_slide, "slide_key", "") and getattr(realized_slide, "slide_key", "")):
+            raise ScriptFlowError(
+                "Cannot reconcile script topics: every planned slide needs a stable key"
+            )
+
     planned_keys = [str(getattr(slide, "slide_key", "") or "") for slide in planned]
-    realized_keys = [str(getattr(slide, "slide_key", "") or "") for slide in realized]
-    if not all(planned_keys) or not all(realized_keys):
+    if not all(planned_keys):
         raise ScriptFlowError(
             "Cannot reconcile script topics: every planned slide needs a stable key"
         )
@@ -225,7 +261,7 @@ def reconcile_realized_slide_mapping(
     position = 0
     for topic in reconciled_topics:
         count = len(topic.slide_keys)
-        final_slides = realized[position : position + count]
+        final_slides = [slide for slide in realized[position : position + count] if slide is not None]
         topic.slide_keys = [
             str(getattr(slide, "slide_key", "") or "") for slide in final_slides
         ]

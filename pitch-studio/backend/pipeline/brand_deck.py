@@ -237,11 +237,12 @@ for _module_id, _pages in MODULE_PAGES.items():
 def plan_pages(sequence: list[str], slide_count: int) -> list[BrandSlide]:
     """Pick brand deck pages for ``sequence``, capped at ``slide_count`` slides.
 
-    The cover and the closing page always bookend the deck. The remaining
-    budget is dealt out round-robin across the modules in recipe order, so
-    every module gets its best page before any module gets its second. Modules
-    with a shallow page list simply drop out of the rotation and the deeper
-    ones keep going.
+    ``slide_count`` is a *ceiling*, not a fixed length: the cover and closing
+    always bookend the deck, and the remaining slots are dealt out round-robin
+    across the recipe modules (best page first). When the recipe runs out of
+    pages the deck simply stops — it is never padded with off-recipe pages.
+    Modules with a shallow page list drop out of the rotation and the deeper
+    ones keep going until the ceiling.
     """
     budget = max(3, slide_count)
     modules = [module_id for module_id in dict.fromkeys(sequence) if MODULE_PAGES.get(module_id)]
@@ -265,18 +266,6 @@ def plan_pages(sequence: list[str], slide_count: int) -> list[BrandSlide]:
     for module_id in modules:
         for page, label in sorted(chosen[module_id]):
             slides.append(BrandSlide(page, module_id, label))
-
-    # The recipe may not cover enough of the deck to fill the budget (a
-    # four-module sequence cannot fill a 30-slide deck). Top up with the
-    # remaining pages in brand deck order so the length is still honoured.
-    if len(slides) + 1 < budget:
-        used = {slide.page for slide in slides} | {CLOSING_PAGE}
-        for page in sorted(PAGE_MODULES):
-            if len(slides) + 1 >= budget:
-                break
-            if page in used:
-                continue
-            slides.append(BrandSlide(page, PAGE_MODULES[page], PAGE_LABELS[page]))
 
     slides.append(CLOSING)
     return _assign_occurrences(slides)

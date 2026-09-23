@@ -508,6 +508,56 @@ class ScriptFlowTests(unittest.TestCase):
             {"brand:p51": "We are not a glorified weekend bootcamp."},
         )
 
+    def test_dropped_generated_slide_removes_key_keeps_evidence_and_text(self):
+        planned = [
+            SimpleNamespace(slide_key="generated:m13-what-we-are-not", page=None, source="generated"),
+            BrandSlide(89, "M13", "Acknowledged across industry and academia"),
+        ]
+        realized = [None, BrandSlide(89, "M13", "Acknowledged across industry and academia")]
+        topics = [
+            ScriptTopic(
+                topic_id=1,
+                title="What we are not",
+                pages=[89],
+                slide_keys=["generated:m13-what-we-are-not", "brand:p89"],
+                recipe_modules=["M13"],
+            )
+        ]
+        script = {
+            "sections": [
+                {
+                    "topic_id": 1,
+                    "pages": [89],
+                    "slide_keys": ["generated:m13-what-we-are-not", "brand:p89"],
+                    "text": "We are a real institution, acknowledged nationally.",
+                }
+            ],
+            "cta": "",
+        }
+
+        updated, updated_topics = reconcile_realized_slide_mapping(
+            script, topics, planned, realized
+        )
+
+        self.assertEqual(updated_topics[0].slide_keys, ["brand:p89"])
+        self.assertEqual(updated_topics[0].pages, [89])
+        self.assertEqual(updated["sections"][0]["slide_keys"], ["brand:p89"])
+        self.assertEqual(updated["sections"][0]["pages"], [89])
+        self.assertEqual(
+            updated["sections"][0]["text"],
+            "We are a real institution, acknowledged nationally.",
+        )
+
+    def test_none_at_non_generated_position_raises(self):
+        planned = [BrandSlide(6, "M01", "Origin")]
+        with self.assertRaises(ScriptFlowError):
+            reconcile_realized_slide_mapping(
+                {"sections": [], "cta": ""},
+                [ScriptTopic(topic_id=1, title="Origin", pages=[6], slide_keys=["brand:p6"])],
+                planned,
+                [None],
+            )
+
 
 class PromptTests(unittest.TestCase):
     def test_duration_framework_progresses_with_time(self):
@@ -879,6 +929,9 @@ class RunnerGateTests(unittest.TestCase):
             "backend.pipeline.runner.resolve_recipe", return_value=self._resolved()
         ), mock.patch(
             "backend.pipeline.runner.plan_pages", return_value=[BrandSlide(1, "", "Cover")]
+        ), mock.patch(
+            "backend.pipeline.runner.plan_with_generated_slides",
+            side_effect=lambda db, plan, *args, **kwargs: list(plan),
         ), mock.patch(
             "backend.pipeline.runner.pick_report_passages", return_value=[]
         ), mock.patch(

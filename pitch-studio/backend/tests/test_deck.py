@@ -21,7 +21,13 @@ from backend.pipeline.brand_deck import (
     render_pptx,
     resolve_source,
 )
-from backend.pipeline.deck import BRAND_SOURCE, SLIDE_COUNTS, PlannedSlide, slide_count_for
+from backend.pipeline.deck import (
+    BRAND_SOURCE,
+    SLIDE_COUNTS,
+    PlannedSlide,
+    slide_ceiling_for,
+    slide_count_for,
+)
 from backend.pipeline.resolver import FALLBACK_BY_INTENT
 
 
@@ -43,6 +49,14 @@ class BrandDeckPlanTests(unittest.TestCase):
     def test_ninety_minute_deck_is_longer_than_thirty(self):
         self.assertGreater(SLIDE_COUNTS["T5"], SLIDE_COUNTS["T4"])
         self.assertEqual(slide_count_for("T5"), 50)
+
+    def test_slide_ceiling_for_all_durations(self):
+        self.assertEqual(slide_ceiling_for("T0"), 8)
+        self.assertEqual(slide_ceiling_for("T1"), 12)
+        self.assertEqual(slide_ceiling_for("T2"), 16)
+        self.assertEqual(slide_ceiling_for("T3"), 22)
+        self.assertEqual(slide_ceiling_for("T4"), 51)
+        self.assertEqual(slide_ceiling_for("T5"), 153)
 
     def test_plan_is_bookended_and_within_budget(self):
         plan = plan_pages(["M01", "M04", "M07", "M14"], 12)
@@ -76,20 +90,43 @@ class BrandDeckPlanTests(unittest.TestCase):
         self.assertIn(6, [slide.page for slide in plan])  # M01's best page
         self.assertIn(51, [slide.page for slide in plan])  # M04's best page
 
-    def test_thin_sequence_is_topped_up_to_the_slide_budget(self):
-        # M13 has two pages and M14 one, so the budget can only be met by
-        # topping up from the rest of the deck.
-        plan = plan_pages(["M13", "M14"], 16)
-        self.assertEqual(len(plan), 16)
+    def test_thin_sequence_stays_within_ceiling_without_off_recipe_pages(self):
+        # M13 has two pages and M14 one — the deck stays short rather than
+        # padding with unrelated modules.
+        sequence = ["M13", "M14"]
+        plan = plan_pages(sequence, 16)
+        self.assertLessEqual(len(plan), 16)
+        self.assertEqual(plan[0].page, COVER_PAGE)
+        self.assertEqual(plan[-1].page, CLOSING_PAGE)
+        for slide in plan[1:-1]:
+            self.assertIn(slide.module_id, sequence)
 
-    def test_every_recipe_fallback_fills_every_duration(self):
+    def test_every_recipe_fallback_stays_within_ceiling(self):
         for intent, sequence in FALLBACK_BY_INTENT.items():
             for duration in ("T0", "T1", "T2", "T3", "T4", "T5"):
-                count = slide_count_for(duration)
-                plan = plan_pages(list(sequence), count)
-                self.assertEqual(
-                    len(plan), count, f"{intent}/{duration} produced {len(plan)} of {count} slides"
+                ceiling = slide_ceiling_for(duration)
+                plan = plan_pages(list(sequence), ceiling)
+                self.assertLessEqual(
+                    len(plan),
+                    ceiling,
+                    f"{intent}/{duration} produced {len(plan)} over ceiling {ceiling}",
                 )
+                for slide in plan[1:-1]:
+                    self.assertIn(
+                        slide.module_id,
+                        sequence,
+                        f"{intent}/{duration} body page {slide.page} is off-recipe",
+                    )
+
+    def test_t4_plan_includes_every_curated_page_of_sequence(self):
+        sequence = ["M01", "M02", "M04", "M07", "M13", "M14"]
+        ceiling = slide_ceiling_for("T4")
+        plan = plan_pages(sequence, ceiling)
+        self.assertLess(len(plan), ceiling)
+        planned_pages = {slide.page for slide in plan}
+        for module_id in sequence:
+            for page, _label in MODULE_PAGES[module_id]:
+                self.assertIn(page, planned_pages, f"{module_id} p{page} missing from T4 plan")
 
     def test_unknown_modules_are_ignored(self):
         plan = plan_pages(["M99", "M01"], 6)
@@ -145,7 +182,7 @@ class SlideIdentityTests(unittest.TestCase):
         # every recipe fallback across every duration.
         for intent, sequence in FALLBACK_BY_INTENT.items():
             for duration in ("T0", "T1", "T2", "T3", "T4", "T5"):
-                plan = plan_pages(list(sequence), slide_count_for(duration))
+                plan = plan_pages(list(sequence), slide_ceiling_for(duration))
                 keys = [slide.slide_key for slide in plan]
                 self.assertEqual(
                     len(keys), len(set(keys)), f"{intent}/{duration} has duplicate slide keys"

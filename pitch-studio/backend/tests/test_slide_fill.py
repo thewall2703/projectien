@@ -1212,7 +1212,7 @@ class DisplacedMetadataTests(unittest.TestCase):
         plan = plan_pages(sequence, slide_count_for("T2"))
         context = "Here is what we are not: not a glorified weekend bootcamp reselling recycled MOOCs."
         modules = [SimpleNamespace(id="M13", name="The honest boundary", job="We are a real institution", core_content="")]
-        result = build_gap_plan(plan, sequence, "T2", context_note=context, modules=modules)
+        result = build_gap_plan(plan, sequence, "T2", context_note=context, modules=modules, ceiling=len(plan))
 
         self.assertEqual(len(result.generated), 1)
         planted = result.generated[0]
@@ -1221,6 +1221,67 @@ class DisplacedMetadataTests(unittest.TestCase):
         # It is a real brand page that was in the original plan.
         original_pages = {slide.page for slide in plan}
         self.assertIn(planted.replaced_page, original_pages)
+
+
+class InsertedPlaceholderDropTests(MemoryDbTestCase):
+    """Inserted placeholders (no displaced page) drop to None on failure."""
+
+    def test_inserted_placeholder_failure_yields_none(self):
+        plan = [
+            BrandSlide(COVER_PAGE, "", "Cover"),
+            placeholder(replaced_page=None, replaced_module_id="", replaced_label=""),
+            BrandSlide(CLOSING_PAGE, "M14", "Close"),
+        ]
+        renderer = FakeRenderer()
+        fill = mock.Mock(side_effect=RuntimeError("boom"))
+        vision = mock.Mock(return_value={"passed": True, "violations": []})
+
+        with mock.patch(f"{SLIDE_MODULE}.save_generated_slide_image") as save, mock.patch(
+            f"{SLIDE_MODULE}.file_exists", return_value=True
+        ):
+            result = realize_generated_slides(
+                self.db,
+                plan,
+                facts=[],
+                passages=[],
+                fill_fn=fill,
+                vision_fn=vision,
+                renderer=renderer,
+                brand_page_fn=lambda page: make_jpeg((10, 10, 10)),
+            )
+
+        self.assertIsNone(result[1])
+        self.assertIsInstance(result[0], BrandSlide)
+        self.assertIsInstance(result[2], BrandSlide)
+        save.assert_not_called()
+
+    def test_displaced_placeholder_still_restores_brand_page(self):
+        plan = [
+            BrandSlide(COVER_PAGE, "", "Cover"),
+            placeholder(),  # replaced_page=51 by default
+            BrandSlide(CLOSING_PAGE, "M14", "Close"),
+        ]
+        renderer = FakeRenderer()
+        fill = mock.Mock(side_effect=RuntimeError("boom"))
+        vision = mock.Mock(return_value={"passed": True, "violations": []})
+
+        with mock.patch(f"{SLIDE_MODULE}.save_generated_slide_image") as save, mock.patch(
+            f"{SLIDE_MODULE}.file_exists", return_value=True
+        ):
+            result = realize_generated_slides(
+                self.db,
+                plan,
+                facts=[],
+                passages=[],
+                fill_fn=fill,
+                vision_fn=vision,
+                renderer=renderer,
+                brand_page_fn=lambda page: make_jpeg((10, 10, 10)),
+            )
+
+        self.assertIsInstance(result[1], BrandSlide)
+        self.assertEqual(result[1].page, 51)
+        save.assert_not_called()
 
 
 if __name__ == "__main__":

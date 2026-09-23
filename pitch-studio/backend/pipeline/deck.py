@@ -16,9 +16,12 @@ two occurrences apart.
 
 from __future__ import annotations
 
+from math import floor
 from typing import Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
+
+from backend.pipeline.resolver import DURATION_MINUTES
 
 SLIDE_W = 13.333
 SLIDE_H = 7.5
@@ -35,6 +38,10 @@ SLIDE_COUNTS = {
     "T5": 50,
 }
 
+# Soft speaking pace used to raise the ceiling for long pitches (T4/T5) so the
+# deck can grow with real answers and evidence without padding off-recipe pages.
+SLIDES_PER_MINUTE = 1.7
+
 # A slide either comes from the brand deck or, in later stages, is generated.
 BRAND_SOURCE = "brand"
 GENERATED_SOURCE = "generated"
@@ -44,6 +51,17 @@ SlideSource = Literal["brand", "generated"]
 
 def slide_count_for(duration: str) -> int:
     return SLIDE_COUNTS.get(duration, 16)
+
+
+def slide_ceiling_for(duration: str) -> int:
+    """Hard upper bound on deck length for ``duration``.
+
+    At least the classic :data:`SLIDE_COUNTS` budget, and for longer pitches
+    also ``floor(SLIDES_PER_MINUTE * minutes)`` so a 30-minute deck can grow
+    with real brand answers and evidence instead of swapping them away.
+    """
+    minutes = DURATION_MINUTES.get(duration, DURATION_MINUTES.get("T2", 5))
+    return max(SLIDE_COUNTS.get(duration, 16), floor(SLIDES_PER_MINUTE * minutes))
 
 
 @runtime_checkable

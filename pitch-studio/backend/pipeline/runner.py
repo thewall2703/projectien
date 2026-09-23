@@ -15,7 +15,7 @@ from backend.pipeline.brand_deck import (
     plan_pages,
     render_pptx,
 )
-from backend.pipeline.deck import slide_count_for
+from backend.pipeline.deck import slide_ceiling_for
 from backend.pipeline.gaps import plan_with_generated_slides
 from backend.pipeline.slide_fill import realize_generated_slides
 from backend.pipeline.llm import chat_json
@@ -212,7 +212,7 @@ def generate_script_phase(
     )
     style_guide = latest_style_guide(db, persona_label=persona_label)
     report_passages = pick_report_passages(db.query(Asset).all(), resolved.module_sequence)
-    plan = plan_pages(resolved.module_sequence, slide_count_for(target.duration))
+    plan = plan_pages(resolved.module_sequence, slide_ceiling_for(target.duration))
     # Stage 3: fill true gaps the brand deck cannot answer. Prefers swapping in a
     # real unused brand page (RULE ZERO); only otherwise plants a generated
     # placeholder for Stage 4 to fill/render. Returns the plan unchanged when
@@ -429,6 +429,9 @@ def run(generation_id: int) -> None:
             phase.plan,
             plan,
         )
+        # Inserted placeholders that Stage 4 could not realise leave a None hole;
+        # drop them so the deck/PPTX only contain slides that actually exist.
+        plan = [slide for slide in plan if slide is not None]
         generation.script_json = json.dumps(script, ensure_ascii=False)
         generation.deck_spec_json = deck_spec_from_plan(plan).model_dump_json()
 

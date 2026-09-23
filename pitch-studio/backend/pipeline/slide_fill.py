@@ -891,16 +891,16 @@ def _instance_from_row(
     )
 
 
-def _restore_brand_slide(placeholder: GeneratedSlidePlaceholder) -> PlannedSlide:
-    """Put back the exact brand page the placeholder displaced.
+def _restore_brand_slide(placeholder: GeneratedSlidePlaceholder) -> PlannedSlide | None:
+    """Put back the brand page the placeholder displaced, or drop the slide.
 
-    Degrading to the original brand slide keeps the deck the same length and the
-    page it would otherwise have shown; it never shortens the deck or skips a
-    page. If the placeholder somehow carries no displaced page (built outside the
-    planner), it is returned unchanged and the PPTX renderer skips it.
+    When the placeholder replaced a weakest body page, restoring that page keeps
+    the deck the same length. When the placeholder was *inserted* under the
+    ceiling (``replaced_page`` is ``None``), there is nothing to restore — return
+    ``None`` so the runner drops the hole from the final deck.
     """
     if placeholder.replaced_page is None:
-        return placeholder
+        return None
     label = placeholder.replaced_label or PAGE_LABELS.get(
         placeholder.replaced_page, f"Page {placeholder.replaced_page}"
     )
@@ -1096,7 +1096,7 @@ def _realize_one(
     max_attempts: int,
     generation_id: int | None,
     furniture_rejected_templates: set[str],
-) -> PlannedSlide:
+) -> PlannedSlide | None:
     spec = _spec_or_none(placeholder.template_id)
     if spec is None:
         # The planner should only emit supported templates, but never render an
@@ -1440,17 +1440,20 @@ def realize_generated_slides(
     brand_page_fn: Any = _MISSING,
     photo_fn: Any = _MISSING,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
-) -> list[PlannedSlide]:
+) -> list[PlannedSlide | None]:
     """Realise every generated placeholder in ``plan``.
 
     Runs between the approved script and the DeckSpec/PPTX render. Each
     :class:`~backend.pipeline.gaps.GeneratedSlidePlaceholder` becomes either a
     concrete :class:`GeneratedSlideInstance` (rendered + persisted, or reused
-    from the shared cache) or the brand page it displaced. A plan with no
-    placeholders is returned unchanged and touches nothing (no model, no DB, no
-    storage), so existing gap-free generations are byte-for-byte unaffected.
+    from the shared cache), the brand page it displaced, or ``None`` when an
+    inserted placeholder (no displaced page) cannot be realised. Positional
+    alignment with ``plan`` is preserved so the list may contain ``None``
+    holes. A plan with no placeholders is returned unchanged and touches
+    nothing (no model, no DB, no storage), so existing gap-free generations are
+    byte-for-byte unaffected.
     """
-    result = list(plan)
+    result: list[PlannedSlide | None] = list(plan)
     placeholder_indexes = [
         index
         for index, slide in enumerate(result)
