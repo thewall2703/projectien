@@ -1,0 +1,8 @@
+-r requirements.txt
+yt-dlp>=2026.8.19
+numpy
+soundfile
+scikit-learn
+torch==2.8.*
+torchaudio==2.8.*
+speechbrain>=1.0,<1.2
