@@ -173,6 +173,22 @@ class IngestStyleTranscriptTests(unittest.TestCase):
         self.assertTrue(latest_style_guide(self.db, "International / NRI applicant"))
         self.assertGreaterEqual(self.db.query(FounderQuote).count(), 1)
 
+    def test_video_link_is_stored_and_carried_to_quotes(self):
+        url = "https://drive.google.com/file/d/abc123/view"
+        stored = store_style_transcript(self.db, "Parents session", SAMPLE_VTT, f"  {url}  ")
+        self.assertEqual(stored.source_url, url)
+        with mock.patch("backend.pipeline.style_guide.chat_json", side_effect=self._fake_chat_json), mock.patch(
+            "backend.transcripts.chat_json", side_effect=self._fake_chat_json
+        ):
+            index_style_transcript(self.db, stored.id, ["International / NRI applicant"])
+        quotes = self.db.query(FounderQuote).all()
+        self.assertTrue(quotes)
+        self.assertTrue(all(quote.source_url == url for quote in quotes))
+
+    def test_rejects_non_http_video_link(self):
+        with self.assertRaises(ValueError):
+            store_style_transcript(self.db, "Bad link", SAMPLE_VTT, "drive/file/abc")
+
     def test_creates_persona_scoped_guides_and_rejects_duplicate(self):
         with mock.patch("backend.pipeline.style_guide.chat_json", side_effect=self._fake_chat_json), mock.patch(
             "backend.transcripts.chat_json", side_effect=self._fake_chat_json

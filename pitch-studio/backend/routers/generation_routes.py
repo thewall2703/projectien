@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, load_only
 from backend.auth import get_current_user
 from backend.config import settings
 from backend.database import get_db
+from backend.generation_cache import compute_cache_key
 from backend.generated_slides import read_generated_slide_image
 from backend.media_index import pick_recommended_media, record_video_click
 from backend.models import Asset, FounderQuote, GeneratedSlide, Generation, Objection, Recipe, User
@@ -43,7 +44,7 @@ from backend.schemas import (
     VideoClickOut,
 )
 from backend.storage import file_exists, get_url, read_file
-from backend.thumbnails import ensure_thumbnail, thumbnail_key
+from backend.thumbnails import ensure_thumbnail, resolve_thumbnail_key
 
 router = APIRouter(prefix="/api", tags=["generations"], dependencies=[Depends(get_current_user)])
 
@@ -57,8 +58,14 @@ def _parse_ids(raw: str) -> list[int]:
     return ids
 
 
+def _user_email(db: Session, user_id: int) -> str | None:
+    owner = db.get(User, user_id)
+    return owner.email if owner else None
+
+
 def _enrich(db: Session, generation: Generation) -> GenerationOut:
     payload = GenerationOut.model_validate(generation)
+    payload.user_email = _user_email(db, generation.user_id)
     if generation.script_json:
         try:
             payload.script = json.loads(generation.script_json)
@@ -107,10 +114,11 @@ def _enrich(db: Session, generation: Generation) -> GenerationOut:
     return payload
 
 
-def _list_item(generation: Generation) -> GenerationOut:
+def _list_item(generation: Generation, user_email: str | None = None) -> GenerationOut:
     return GenerationOut(
         id=generation.id,
         user_id=generation.user_id,
+        user_email=user_email,
         audience_cluster=generation.audience_cluster,
         duration=generation.duration,
         channel=generation.channel,
@@ -130,6 +138,8 @@ def _list_item(generation: Generation) -> GenerationOut:
         report_passages_json="",
         validation_report=generation.validation_report,
         error=generation.error,
+        cache_key=generation.cache_key or "",
+        cached_from_id=generation.cached_from_id,
         created_at=generation.created_at,
     )
 
@@ -197,6 +207,45 @@ def create_generation(
             "channel": axes["channel"] or recipe.channel,
             "intent": axes["intent"] or recipe.intent,
         }
+    cache_key = compute_cache_key(
+        axes,
+        payload.temperature,
+        payload.context_note,
+        recipe_ref,
+        db,
+    )
+    cached = (
+        db.query(Generation)
+        .filter(Generation.cache_key == cache_key, Generation.status == "done")
+        .order_by(Generation.created_at.desc(), Generation.id.desc())
+        .first()
+    )
+    if cached is not None:
+        generation = Generation(
+            user_id=user.id,
+            **axes,
+            temperature=payload.temperature,
+            context_note=payload.context_note,
+            recipe_ref=recipe_ref,
+            module_sequence=cached.module_sequence,
+            status="done",
+            script_json=cached.script_json,
+            deck_spec_json=cached.deck_spec_json,
+            pptx_path=cached.pptx_path,
+            asset_ids=cached.asset_ids,
+            objection_ids=cached.objection_ids,
+            founder_quote_ids=cached.founder_quote_ids,
+            report_asset_ids=cached.report_asset_ids,
+            report_passages_json=cached.report_passages_json,
+            validation_report=cached.validation_report,
+            cache_key=cache_key,
+            cached_from_id=cached.id,
+        )
+        db.add(generation)
+        db.commit()
+        db.refresh(generation)
+        return _enrich(db, generation)
+
     generation = Generation(
         user_id=user.id,
         **axes,
@@ -204,6 +253,7 @@ def create_generation(
         context_note=payload.context_note,
         recipe_ref=recipe_ref,
         status="queued",
+        cache_key=cache_key,
     )
     db.add(generation)
     db.commit()
@@ -240,10 +290,17 @@ def list_generations(
             Generation.report_asset_ids,
             Generation.validation_report,
             Generation.error,
+            Generation.cache_key,
+            Generation.cached_from_id,
             Generation.created_at,
         )
     ).all()
-    return [_list_item(item) for item in rows]
+    user_ids = {row.user_id for row in rows}
+    emails = {
+        item.id: item.email
+        for item in db.query(User).filter(User.id.in_(user_ids)).all()
+    } if user_ids else {}
+    return [_list_item(item, emails.get(item.user_id)) for item in rows]
 
 
 @router.get("/generations/{generation_id}", response_model=GenerationOut)
@@ -341,11 +398,11 @@ def download_asset_thumbnail(
     if not (asset.content_type or "").startswith("image/"):
         raise HTTPException(status_code=400, detail="Thumbnails apply to images")
 
-    key = thumbnail_key(asset)
-    if not file_exists(key) and not asset.file_key:
+    key = resolve_thumbnail_key(asset)
+    if key is None and not asset.file_key:
         raise HTTPException(status_code=404, detail="Thumbnail not found")
     try:
-        if not file_exists(key):
+        if key is None:
             key = ensure_thumbnail(asset)
         # Stream bytes through the API. Redirecting to a Spaces signed URL often
         # fails in <img> tags even when the object is readable server-side.

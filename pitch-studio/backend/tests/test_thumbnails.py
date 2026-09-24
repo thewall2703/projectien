@@ -18,12 +18,12 @@ def image_bytes(size: tuple[int, int] = (2400, 1600)) -> bytes:
 
 
 class ThumbnailTests(unittest.TestCase):
-    def test_key_changes_with_asset_version(self):
+    def test_key_is_stable_per_asset(self):
         asset = SimpleNamespace(
             id=42,
             synced_at=datetime(2026, 9, 10, 12, 0, tzinfo=timezone.utc),
         )
-        self.assertEqual(thumbnail_key(asset), "thumbnails/assets/42-1789041600.jpg")
+        self.assertEqual(thumbnail_key(asset), "thumbnails/assets/42.jpg")
 
     def test_thumbnail_fits_preview_bounds(self):
         result = thumbnail_jpeg(image_bytes())
@@ -43,7 +43,7 @@ class ThumbnailTests(unittest.TestCase):
             with mock.patch("backend.thumbnails.read_file", return_value=source):
                 with mock.patch("backend.thumbnails.save_file") as save:
                     key = ensure_thumbnail(asset)
-        self.assertEqual(key, "thumbnails/assets/8-0.jpg")
+        self.assertEqual(key, "thumbnails/assets/8.jpg")
         save.assert_called_once()
         self.assertEqual(save.call_args.args[0], key)
         self.assertEqual(save.call_args.args[2], "image/jpeg")
@@ -55,9 +55,9 @@ class ThumbnailTests(unittest.TestCase):
             file_key="assets/8/original.jpg",
             content_type="image/jpeg",
         )
-        with mock.patch("backend.thumbnails.file_exists", return_value=True):
+        with mock.patch("backend.thumbnails.resolve_thumbnail_key", return_value="thumbnails/assets/8.jpg"):
             with mock.patch("backend.thumbnails.read_file") as read:
-                self.assertEqual(ensure_thumbnail(asset), "thumbnails/assets/8-0.jpg")
+                self.assertEqual(ensure_thumbnail(asset), "thumbnails/assets/8.jpg")
         read.assert_not_called()
 
 

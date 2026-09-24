@@ -641,23 +641,50 @@ function VideoCard({
     "";
   const [thumb, setThumb] = useState(initialThumb);
   const [thumbFailed, setThumbFailed] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
 
   useEffect(() => {
     setThumb(initialThumb);
     setThumbFailed(false);
-  }, [initialThumb]);
+  }, [initialThumb, retryKey]);
+
+  const retryPreview = () => {
+    setThumbFailed(false);
+    setThumb(initialThumb);
+    setRetryKey((value) => value + 1);
+  };
 
   return (
     <article className="glass-panel w-[calc((100%-1rem)/2)] shrink-0 snap-start overflow-hidden sm:w-[calc((100%-2rem)/3)] lg:w-[calc((100%-4rem)/5)]">
       {playing && embed ? (
         <div className="aspect-video bg-black">
           <iframe
+            key={`${video.asset_id}-${retryKey}`}
             className="h-full w-full"
             src={embed}
             title={video.title}
             allow="autoplay; fullscreen"
             allowFullScreen
           />
+        </div>
+      ) : thumbFailed || (!embed && !thumb) ? (
+        <div className="relative flex aspect-video flex-col items-center justify-center gap-3 bg-grey-light/70 px-4 text-center">
+          <p className="text-sm font-medium text-black">Unable to load video</p>
+          <button type="button" className="btn text-xs" onClick={retryPreview}>
+            Try again
+          </button>
+          {video.source_url ? (
+            <a
+              className="absolute right-2 top-2 inline-flex h-8 w-8 items-center justify-center rounded-lg bg-black/50 text-offwhite"
+              href={video.source_url}
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Open source"
+              onClick={() => onInteract("open_source")}
+            >
+              ↗
+            </a>
+          ) : null}
         </div>
       ) : embed || thumb ? (
         <button
@@ -672,6 +699,7 @@ function VideoCard({
         >
           {thumb && !thumbFailed ? (
             <img
+              key={retryKey}
               src={thumb}
               alt=""
               className="h-full w-full object-cover"

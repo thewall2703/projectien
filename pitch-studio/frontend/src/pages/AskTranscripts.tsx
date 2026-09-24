@@ -253,10 +253,10 @@ export default function AskTranscripts() {
   return (
     <div className="mx-auto max-w-3xl px-6 py-10 md:px-10">
       <p className="kicker">Library</p>
-      <h1 className="mt-2 font-display text-4xl tracking-tight text-black">Ask the transcripts</h1>
+      <h1 className="mt-2 font-display text-4xl tracking-tight text-black">Ask the library</h1>
       <p className="mt-3 max-w-2xl text-sm leading-6 text-grey">
-        Search across meeting uploads, video transcripts, and founder voice. Click an answer line to
-        jump to the exact supporting source — cited lines are marked in yellow.
+        Ask questions across meeting uploads, video transcripts, and founder voice. Click an answer
+        line to jump to the exact supporting source — cited lines are marked in yellow.
       </p>
 
       <form onSubmit={onSubmit} className="glass-panel mt-8 space-y-4 p-5 md:p-6">
@@ -272,7 +272,7 @@ export default function AskTranscripts() {
         </label>
         <div className="flex items-center gap-3">
           <Button type="submit" loading={loading} disabled={!question.trim()}>
-            {loading ? "Reading the corpus…" : "Ask"}
+            {loading ? "Searching the library…" : "Ask"}
           </Button>
         </div>
       </form>

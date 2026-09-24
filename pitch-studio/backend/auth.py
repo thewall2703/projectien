@@ -19,7 +19,12 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password: str, password_hash: str) -> bool:
-    return pwd_context.verify(password, password_hash)
+    if not password_hash:
+        return False
+    try:
+        return pwd_context.verify(password, password_hash)
+    except Exception:
+        return False
 
 
 def set_session_cookie(response: Response, user_id: int) -> None:

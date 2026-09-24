@@ -10,6 +10,21 @@ function errMessage(err: unknown) {
   return err instanceof Error ? err.message : "Something went wrong";
 }
 
+function VideoLink({ url }: { url: string }) {
+  if (!url) return null;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      className="text-xs font-medium text-black underline underline-offset-4 hover:text-grey-dark"
+      onClick={(event) => event.stopPropagation()}
+    >
+      Watch video ↗
+    </a>
+  );
+}
+
 type PersonaOption = {
   label: string;
   cluster: string;
@@ -153,6 +168,7 @@ function PersonaMultiselect({
 
 export default function VoiceTranscripts() {
   const [name, setName] = useState("");
+  const [videoUrl, setVideoUrl] = useState("");
   const [text, setText] = useState("");
   const [selectedFileName, setSelectedFileName] = useState("");
   const [pasteOpen, setPasteOpen] = useState(false);
@@ -229,9 +245,10 @@ export default function VoiceTranscripts() {
     setError("");
     setSuccess("");
     try {
-      const result = await api.styleTranscriptCreate(name.trim(), text);
+      const result = await api.styleTranscriptCreate(name.trim(), text, videoUrl.trim());
       setSuccess(`“${result.name}” was added to the transcript library. Select it below when you are ready to index it.`);
       setName("");
+      setVideoUrl("");
       setText("");
       setSelectedFileName("");
       setPasteOpen(false);
@@ -430,6 +447,14 @@ export default function VoiceTranscripts() {
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. Raising capital AMA · 13 September"
             />
+            <span className="mt-4 block">Video link (optional)</span>
+            <input
+              className="field mt-2"
+              type="url"
+              value={videoUrl}
+              onChange={(e) => setVideoUrl(e.target.value)}
+              placeholder="https://drive.google.com/file/d/…"
+            />
           </label>
           <div>
             <p className="text-sm font-medium text-grey-dark">Transcript file</p>
@@ -567,9 +592,12 @@ export default function VoiceTranscripts() {
                             />
                             <span className="min-w-0 flex-1">
                               <span className="block truncate text-sm font-medium text-black">{row.name}</span>
-                              <span className="mt-0.5 block text-xs text-grey">
-                                {row.text_length.toLocaleString()} characters
-                                {row.status === "failed" ? " · Previous attempt failed" : ""}
+                              <span className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-grey">
+                                <span>
+                                  {row.text_length.toLocaleString()} characters
+                                  {row.status === "failed" ? " · Previous attempt failed" : ""}
+                                </span>
+                                <VideoLink url={row.source_url} />
                               </span>
                             </span>
                             <StatusBadge status={row.status} />
@@ -655,9 +683,12 @@ export default function VoiceTranscripts() {
                         <h3 className="truncate font-medium text-black">{row.name}</h3>
                         <StatusBadge status={row.status} />
                       </div>
-                      <p className="mt-1 text-xs text-grey">
-                        {row.text_length.toLocaleString()} characters
-                        {row.created_at ? ` · Added ${new Date(row.created_at).toLocaleString()}` : ""}
+                      <p className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-grey">
+                        <span>
+                          {row.text_length.toLocaleString()} characters
+                          {row.created_at ? ` · Added ${new Date(row.created_at).toLocaleString()}` : ""}
+                        </span>
+                        <VideoLink url={row.source_url} />
                       </p>
                       {!editingThis && (
                         <div className="mt-3 flex flex-wrap gap-1.5">

@@ -71,6 +71,15 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class GoogleLoginRequest(BaseModel):
+    credential: str
+
+
+class AuthConfigOut(BaseModel):
+    google_client_id: str
+    google_allowed_domain: str = ""
+
+
 class UserOut(BaseModel):
     id: int
     email: str
@@ -347,6 +356,7 @@ class ScriptPayload(BaseModel):
 class GenerationOut(BaseModel):
     id: int
     user_id: int
+    user_email: str | None = None
     audience_cluster: str
     duration: str
     channel: str
@@ -366,6 +376,8 @@ class GenerationOut(BaseModel):
     report_passages_json: str = ""
     validation_report: str
     error: str
+    cache_key: str = ""
+    cached_from_id: int | None = None
     created_at: datetime
     script: dict[str, Any] | None = None
     deck_spec: dict[str, Any] | None = None
@@ -565,6 +577,7 @@ class TranscriptIngestCounts(BaseModel):
 class StyleTranscriptUploadIn(BaseModel):
     name: str
     text: str
+    source_url: str = ""
 
 
 class StyleTranscriptIndexIn(BaseModel):
@@ -590,6 +603,7 @@ class StyleTranscriptOut(BaseModel):
     status: str
     created_at: datetime | None = None
     text_length: int = 0
+    source_url: str = ""
     persona_labels: list[str] = Field(default_factory=list)
 
 

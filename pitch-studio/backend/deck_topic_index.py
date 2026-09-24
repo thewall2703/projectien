@@ -344,11 +344,18 @@ def has_extract(row: DeckTopic) -> bool:
 
 
 def derive_status(row: DeckTopic, job: Job | None = None) -> str:
-    if job is not None and job.status in ACTIVE_JOB_STATUSES:
+    # A global prepare job must not paint every topic as processing once it is indexed.
+    recommendations = getattr(row, "recommendations_json", None) or ""
+    if (
+        job is not None
+        and job.status in ACTIVE_JOB_STATUSES
+        and getattr(row, "status", "") not in {"indexed", "frozen"}
+        and not recommendations
+    ):
         return "processing"
-    if row.vision_frozen:
+    if getattr(row, "vision_frozen", False):
         return "frozen"
-    if row.status == "indexed":
+    if getattr(row, "status", "") == "indexed":
         return "indexed"
     if has_extract(row):
         return "ready"
@@ -455,11 +462,23 @@ def active_deck_job(db: Session, asset_id: int) -> Job | None:
     )
 
 
-def enqueue_deck_prepare(db: Session, asset_id: int) -> Job:
+def enqueue_deck_prepare(db: Session, asset_id: int, *, force: bool = False) -> Job:
     _ensure_schema()
+    try:
+        from backend.worker import reclaim_stale_jobs
+
+        reclaim_stale_jobs(db)
+    except Exception:
+        pass
     existing = active_deck_job(db, asset_id)
     if existing is not None:
-        return existing
+        if not force:
+            return existing
+        existing.status = "error"
+        existing.error = "Superseded by a new prepare request"
+        existing.stage = "Cancelled"
+        existing.finished_at = utc_now()
+        db.commit()
     job = Job(
         job_type=JOB_DECK_PREPARE,
         media_id=0,
@@ -535,6 +554,12 @@ def serialize(row: DeckTopic, job: Job | None = None) -> DeckTopicOut:
 
 def list_deck_topics(db: Session) -> DeckTopicListOut:
     _ensure_schema()
+    try:
+        from backend.worker import reclaim_stale_jobs
+
+        reclaim_stale_jobs(db)
+    except Exception:
+        pass
     rows = db.query(DeckTopic).order_by(DeckTopic.sort_order, DeckTopic.id).all()
     asset: Asset | None = None
     try:

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { api } from "../../api";
+import Modal from "../../components/Modal";
 import { Button, EmptyState, ErrorBanner, formatStatusLabel, Skeleton, Spinner } from "../../components/ui";
 import type { FieldConfig } from "../../types";
 
@@ -11,6 +12,9 @@ type Props = {
   extra?: ReactNode;
   createLabel?: string;
   editLabel?: string;
+  searchable?: boolean;
+  searchPlaceholder?: string;
+  entityLabel?: string;
 };
 
 function emptyRow(fields: FieldConfig[]): Record<string, unknown> {
@@ -71,6 +75,9 @@ export default function DataTable({
   extra,
   createLabel = "Create",
   editLabel = "Edit",
+  searchable = false,
+  searchPlaceholder = "Search…",
+  entityLabel,
 }: Props) {
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [draft, setDraft] = useState<Record<string, unknown> | null>(null);
@@ -79,6 +86,10 @@ export default function DataTable({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [removing, setRemoving] = useState<string>("");
+  const [query, setQuery] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<Record<string, unknown> | null>(null);
+
+  const noun = entityLabel || title.replace(/s$/i, "").toLowerCase() || "item";
 
   const reload = () =>
     api
@@ -91,6 +102,15 @@ export default function DataTable({
     setLoading(true);
     reload();
   }, [path]);
+
+  useEffect(() => {
+    if (!draft) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [draft]);
 
   const save = async () => {
     if (!draft) return;
@@ -112,12 +132,14 @@ export default function DataTable({
     }
   };
 
-  const remove = async (id: string | number) => {
-    if (!window.confirm("Delete this row?")) return;
+  const confirmRemove = async () => {
+    if (!pendingDelete?.id) return;
+    const id = pendingDelete.id as string | number;
     setRemoving(String(id));
     setError("");
     try {
       await api.remove(`${path}/${id}`);
+      setPendingDelete(null);
       await reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Delete failed");
@@ -133,11 +155,33 @@ export default function DataTable({
     return pool.slice(0, 4);
   }, [fields, rows]);
 
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return rows;
+    return rows.filter((row) =>
+      fields.some((field) => {
+        const value = row[field.key];
+        if (isEmptyCell(value)) return false;
+        return formatCell(field, value).toLowerCase().includes(needle);
+      }),
+    );
+  }, [rows, fields, query]);
+
   return (
-    <div className="mx-auto max-w-7xl px-6 py-10 md:px-10">
-      <div className="flex items-center justify-between gap-4">
+    <div className="mx-auto w-full max-w-[90rem] px-6 py-10 md:px-10">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <h1 className="font-display text-3xl tracking-tight text-black">{title}</h1>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {searchable && (
+            <input
+              className="field !w-64 !py-2"
+              type="search"
+              value={query}
+              placeholder={searchPlaceholder}
+              onChange={(event) => setQuery(event.target.value)}
+              aria-label={searchPlaceholder}
+            />
+          )}
           {extra}
           <Button
             variant="accent"
@@ -154,8 +198,8 @@ export default function DataTable({
       <div className="mt-3">
         <ErrorBanner message={error} />
       </div>
-      <div className="glass-panel mt-5 overflow-x-auto">
-        <table className="w-full table-fixed text-left text-sm">
+      <div className="admin-table-panel mt-5">
+        <table className="w-full min-w-full table-auto text-left text-sm">
           <thead className="border-b border-black/15 bg-black/[0.04]">
             <tr>
               {visible.map((field) => (
@@ -181,10 +225,10 @@ export default function DataTable({
                 </tr>
               ))}
             {!loading &&
-              rows.map((row) => (
+              filtered.map((row) => (
                 <tr key={String(row.id)} className="border-t border-black/5">
                   {visible.map((field) => (
-                    <td key={field.key} className="truncate px-4 py-3 text-black">
+                    <td key={field.key} className="max-w-[18rem] truncate px-4 py-3 text-black">
                       {formatCell(field, row[field.key])}
                     </td>
                   ))}
@@ -205,7 +249,7 @@ export default function DataTable({
                       type="button"
                       aria-label="Delete"
                       disabled={removing === String(row.id)}
-                      onClick={() => remove(row.id as string | number)}
+                      onClick={() => setPendingDelete(row)}
                     >
                       {removing === String(row.id) ? <Spinner /> : <DeleteIcon />}
                     </button>
@@ -214,12 +258,47 @@ export default function DataTable({
               ))}
           </tbody>
         </table>
-        {!loading && rows.length === 0 && !error && (
+        {!loading && filtered.length === 0 && !error && (
           <div className="p-6">
-            <EmptyState title={`No ${title.toLowerCase()} yet`} description="Create a row to get started." />
+            <EmptyState
+              title={query.trim() ? `No ${title.toLowerCase()} match` : `No ${title.toLowerCase()} yet`}
+              description={query.trim() ? "Try a different search." : "Create a row to get started."}
+            />
           </div>
         )}
       </div>
+
+      <Modal
+        open={Boolean(pendingDelete)}
+        title={`Delete ${noun}?`}
+        onClose={() => {
+          if (!removing) setPendingDelete(null);
+        }}
+        footer={
+          <div className="flex justify-end gap-3">
+            <Button disabled={Boolean(removing)} onClick={() => setPendingDelete(null)}>
+              Cancel
+            </Button>
+            <Button
+              className="!bg-danger !text-white hover:!bg-danger/90"
+              variant="accent"
+              loading={Boolean(removing)}
+              onClick={confirmRemove}
+            >
+              Delete
+            </Button>
+          </div>
+        }
+      >
+        <p className="text-sm leading-relaxed text-grey-dark">
+          Are you sure you want to delete
+          {pendingDelete?.title || pendingDelete?.fact
+            ? ` “${String(pendingDelete.title || pendingDelete.fact)}”`
+            : ` this ${noun}`}
+          ? This action cannot be undone.
+        </p>
+      </Modal>
+
       {draft && (
         <div
           className="fixed inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-sm"

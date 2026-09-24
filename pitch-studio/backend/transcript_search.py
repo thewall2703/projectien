@@ -1,4 +1,4 @@
-"""Semantic index over ingested transcripts for Library → Ask the transcripts.
+"""Semantic index over ingested transcripts for Library → Ask the library.
 
 Corpus (combined): style transcripts, media_index video STT, founder quotes, and
 Drive file bundles under output/transcripts/. Objections and AMA Q&A candidates
@@ -13,6 +13,7 @@ import json
 import logging
 import math
 import re
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -21,7 +22,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from backend.config import REPO_ROOT, settings
-from backend.models import Asset, FounderQuote, MediaIndex, StyleTranscript, TranscriptChunk
+from backend.models import AskAnswerCache, Asset, FounderQuote, MediaIndex, StyleTranscript, TranscriptChunk
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,15 @@ CHUNK_WORDS = 550
 CHUNK_OVERLAP_WORDS = 80
 TOP_K = 12
 EMBED_BATCH = 32
+
+# Process-local vector cache for retrieve(); invalidated when the index changes.
+_VECTOR_CACHE_LOCK = threading.Lock()
+_VECTOR_CACHE_FINGERPRINT = ""
+_VECTOR_CACHE_ROWS: list[dict[str, Any]] = []
+# Small process-local cache of question embeddings (normalized question → vector).
+_QUERY_EMBED_LOCK = threading.Lock()
+_QUERY_EMBED_CACHE: dict[str, list[float]] = {}
+_QUERY_EMBED_CACHE_MAX = 256
 
 ASK_SYSTEM = (
     "You answer questions using ONLY the provided transcript passages from "
@@ -297,6 +307,165 @@ def text_hash(text: str) -> str:
     return hashlib.sha256((text or "").encode("utf-8")).hexdigest()
 
 
+def normalize_question(question: str) -> str:
+    return re.sub(r"\s+", " ", (question or "").strip().lower())
+
+
+def question_cache_key(question: str) -> str:
+    return text_hash(normalize_question(question))
+
+
+def index_fingerprint(db: Session) -> str:
+    """Cheap fingerprint of the semantic index for cache invalidation."""
+    try:
+        rows = db.query(TranscriptChunk).all()
+    except Exception:
+        return "empty"
+    if not rows:
+        return "empty"
+    digest = hashlib.sha256()
+    digest.update(f"{len(rows)}".encode())
+    normalized: list[tuple[int, str]] = []
+    for row in rows:
+        row_id = int(getattr(row, "id", 0) or 0)
+        row_hash = str(getattr(row, "text_hash", "") or "")
+        if not row_hash:
+            row_hash = text_hash(str(getattr(row, "text", "") or ""))
+        normalized.append((row_id, row_hash))
+    for row_id, row_hash in sorted(normalized):
+        digest.update(f"{row_id}:{row_hash}|".encode())
+    return digest.hexdigest()[:32]
+
+
+def clear_ask_caches(db: Session | None = None) -> None:
+    """Drop process-local caches and, when possible, persisted answer rows."""
+    global _VECTOR_CACHE_FINGERPRINT, _VECTOR_CACHE_ROWS
+    with _VECTOR_CACHE_LOCK:
+        _VECTOR_CACHE_FINGERPRINT = ""
+        _VECTOR_CACHE_ROWS = []
+    with _QUERY_EMBED_LOCK:
+        _QUERY_EMBED_CACHE.clear()
+    if db is None:
+        return
+    try:
+        db.query(AskAnswerCache).delete(synchronize_session=False)
+        db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+
+def get_cached_answer(db: Session, question: str, fingerprint: str) -> dict[str, Any] | None:
+    key = question_cache_key(question)
+    if not key or fingerprint == "empty":
+        return None
+    try:
+        row = (
+            db.query(AskAnswerCache)
+            .filter(
+                AskAnswerCache.question_hash == key,
+                AskAnswerCache.index_fingerprint == fingerprint,
+            )
+            .first()
+        )
+    except Exception:
+        return None
+    if row is None or not (row.response_json or "").strip():
+        return None
+    try:
+        payload = json.loads(row.response_json)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return payload
+
+
+def store_cached_answer(
+    db: Session,
+    question: str,
+    fingerprint: str,
+    response: dict[str, Any],
+) -> None:
+    key = question_cache_key(question)
+    if not key or fingerprint == "empty":
+        return
+    try:
+        existing = (
+            db.query(AskAnswerCache)
+            .filter(
+                AskAnswerCache.question_hash == key,
+                AskAnswerCache.index_fingerprint == fingerprint,
+            )
+            .first()
+        )
+        blob = json.dumps(response, ensure_ascii=False)
+        if existing is None:
+            db.add(
+                AskAnswerCache(
+                    question_hash=key,
+                    question=normalize_question(question)[:2000],
+                    index_fingerprint=fingerprint,
+                    response_json=blob,
+                )
+            )
+        else:
+            existing.question = normalize_question(question)[:2000]
+            existing.response_json = blob
+        db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+
+def _cached_query_embedding(question: str, embed: EmbedFn) -> list[float]:
+    key = normalize_question(question)
+    with _QUERY_EMBED_LOCK:
+        cached = _QUERY_EMBED_CACHE.get(key)
+    if cached is not None:
+        return cached
+    vector = embed([question])[0]
+    with _QUERY_EMBED_LOCK:
+        if len(_QUERY_EMBED_CACHE) >= _QUERY_EMBED_CACHE_MAX:
+            # Drop an arbitrary oldest entry; insertion order is fine here.
+            _QUERY_EMBED_CACHE.pop(next(iter(_QUERY_EMBED_CACHE)), None)
+        _QUERY_EMBED_CACHE[key] = vector
+    return vector
+
+
+def _load_vector_rows(db: Session, fingerprint: str) -> list[dict[str, Any]]:
+    global _VECTOR_CACHE_FINGERPRINT, _VECTOR_CACHE_ROWS
+    with _VECTOR_CACHE_LOCK:
+        if _VECTOR_CACHE_FINGERPRINT == fingerprint and _VECTOR_CACHE_ROWS:
+            return list(_VECTOR_CACHE_ROWS)
+    rows = db.query(TranscriptChunk).all()
+    loaded: list[dict[str, Any]] = []
+    for row in rows:
+        vector = parse_embedding(row.embedding_json)
+        if not vector:
+            continue
+        loaded.append(
+            {
+                "id": row.id,
+                "source_type": row.source_type,
+                "source_id": row.source_id,
+                "source_name": row.source_name,
+                "text": row.text,
+                "start_ms": row.start_ms,
+                "end_ms": row.end_ms,
+                "vector": vector,
+            }
+        )
+    with _VECTOR_CACHE_LOCK:
+        _VECTOR_CACHE_FINGERPRINT = fingerprint
+        _VECTOR_CACHE_ROWS = loaded
+        return list(loaded)
+
+
 def cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
     if not a or not b or len(a) != len(b):
         return 0.0
@@ -550,6 +719,9 @@ def upsert_prepared(
             written += 1
     if commit:
         db.commit()
+        clear_ask_caches(db)
+    else:
+        clear_ask_caches(None)
     return written
 
 
@@ -575,8 +747,22 @@ def upsert_source(
     if not chunks:
         _delete_source(db, source_type, source_id)
         db.commit()
+        clear_ask_caches(db)
+        try:
+            from backend.generation_cache import bump_content_version
+
+            bump_content_version()
+        except Exception:
+            logger.exception("Content version bump after upsert_source delete failed")
         return 0
-    return upsert_prepared(db, chunks, embed_fn=embed_fn, commit=True)
+    written = upsert_prepared(db, chunks, embed_fn=embed_fn, commit=True)
+    try:
+        from backend.generation_cache import bump_content_version
+
+        bump_content_version()
+    except Exception:
+        logger.exception("Content version bump after upsert_source failed")
+    return written
 
 
 def safe_upsert_source(**kwargs: Any) -> None:
@@ -604,6 +790,7 @@ def rebuild_index(
     embed_fn: EmbedFn | None = None,
 ) -> dict[str, int]:
     """Wipe and rebuild the full semantic index from allowed sources only."""
+    clear_ask_caches(db)
     deleted = db.query(TranscriptChunk).delete(synchronize_session=False)
     db.commit()
     prepared = collect_corpus(db, drive_root=drive_root)
@@ -618,6 +805,12 @@ def rebuild_index(
         "quote": sum(1 for item in prepared if item.source_type == SOURCE_QUOTE),
         "drive": sum(1 for item in prepared if item.source_type == SOURCE_DRIVE),
     }
+    try:
+        from backend.generation_cache import bump_content_version
+
+        bump_content_version()
+    except Exception:
+        logger.exception("Content version bump after rebuild_index failed")
     return counts
 
 
@@ -654,26 +847,28 @@ def retrieve(
     query = (question or "").strip()
     if not query:
         return []
-    rows = db.query(TranscriptChunk).all()
+    fingerprint = index_fingerprint(db)
+    rows = _load_vector_rows(db, fingerprint)
     if not rows:
         return []
     embed = embed_fn or default_embed_texts
-    query_vector = embed([query])[0]
+    # Only reuse cached question embeddings for the default embedder.
+    if embed_fn is None:
+        query_vector = _cached_query_embedding(query, embed)
+    else:
+        query_vector = embed([query])[0]
     scored: list[dict[str, Any]] = []
     for row in rows:
-        vector = parse_embedding(row.embedding_json)
-        if not vector:
-            continue
-        score = cosine_similarity(query_vector, vector)
+        score = cosine_similarity(query_vector, row["vector"])
         scored.append(
             {
-                "id": row.id,
-                "source_type": row.source_type,
-                "source_id": row.source_id,
-                "source_name": row.source_name,
-                "text": row.text,
-                "start_ms": row.start_ms,
-                "end_ms": row.end_ms,
+                "id": row["id"],
+                "source_type": row["source_type"],
+                "source_id": row["source_id"],
+                "source_name": row["source_name"],
+                "text": row["text"],
+                "start_ms": row["start_ms"],
+                "end_ms": row["end_ms"],
                 "score": round(float(score), 6),
             }
         )
@@ -833,17 +1028,25 @@ def ask(
     query = (question or "").strip()
     if not query:
         return {
-            "answer_markdown": "Ask a question about the ingested transcripts.",
+            "answer_markdown": "Ask a question about the library.",
             "segments": [],
             "highlights": [],
             "sources": [],
         }
+    # Only cache the production path (default embedder + answerer).
+    use_cache = embed_fn is None and answer_fn is None
+    fingerprint = index_fingerprint(db) if use_cache else ""
+    if use_cache:
+        cached = get_cached_answer(db, query, fingerprint)
+        if cached is not None:
+            return cached
+
     sources = retrieve(db, query, top_k=top_k, embed_fn=embed_fn)
     if not sources:
         return {
             "answer_markdown": (
-                "The transcript index is empty, or nothing relevant was found. "
-                "An admin needs to rebuild the index after uploading transcripts."
+                "The library index is empty, or nothing relevant was found. "
+                "An admin needs to rebuild the index after uploading source material."
             ),
             "segments": [],
             "highlights": [],
@@ -919,12 +1122,15 @@ def ask(
             }
         )
 
-    return {
+    payload = {
         "answer_markdown": answer,
         "segments": resolved_segments,
         "highlights": list(result.get("highlights") or []),
         "sources": enriched_sources,
     }
+    if use_cache:
+        store_cached_answer(db, query, fingerprint, payload)
+    return payload
 
 
 def main() -> None:

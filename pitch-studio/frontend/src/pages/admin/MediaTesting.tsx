@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../../api";
 import { AXES } from "../../axes";
 import { Button, EmptyState, ErrorBanner, Skeleton, Spinner, StatusBadge } from "../../components/ui";
@@ -146,7 +147,7 @@ export default function MediaTesting() {
     api
       .recipes()
       .then((data) => setRecipes(data as RecipeOption[]))
-      .catch(() => undefined);
+      .catch(() => setRecipes([]));
     reloadList()
       .then((data) => {
         const active = data.items.find((row) => isActiveJob(row));
@@ -246,7 +247,7 @@ export default function MediaTesting() {
 
   const feedback = (ref: string, verdict: "yes" | "no") => {
     if (!current) return;
-    run(`feedback-${ref}`, () => api.sendFeedback(current.id, ref, verdict));
+    run(`feedback-${ref}:${verdict}`, () => api.sendFeedback(current.id, ref, verdict));
   };
 
   const addUsecase = () => {
@@ -357,11 +358,13 @@ export default function MediaTesting() {
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <h2 className="font-display text-2xl">{current.asset_title}</h2>
-                    <p className="mt-1 text-sm capitalize text-muted">
-                      {current.media_kind} · {current.asset_file_status || "pending"}
+                    <p className="mt-1 flex flex-wrap items-center gap-2 text-sm capitalize text-muted">
+                      <span>
+                        {current.media_kind} · {current.asset_file_status || "pending"}
+                      </span>
+                      <StatusBadge status={displayStatus(current)} />
                     </p>
                   </div>
-                  <StatusBadge status={displayStatus(current)} />
                 </div>
                 <MediaPreview row={current} onSync={() => prepare(current.asset_id)} busy={preparing} />
                 {(current.media_kind === "video" &&
@@ -513,7 +516,8 @@ export default function MediaTesting() {
                   {current.recommendations.items.map((item) => {
                     const verdict = current.feedback.verdicts[item.recipe_ref]?.verdict;
                     const name = personaLabel(recipes, item.recipe_ref) || item.recipe_ref;
-                    const feedbackBusy = busy === `feedback-${item.recipe_ref}`;
+                    const yesBusy = busy === `feedback-${item.recipe_ref}:yes`;
+                    const noBusy = busy === `feedback-${item.recipe_ref}:no`;
                     return (
                       <div key={item.recipe_ref} className="rounded-xl border border-line p-4">
                         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -536,14 +540,16 @@ export default function MediaTesting() {
                         <div className="mt-3 flex gap-2">
                           <Button
                             variant={verdict === "yes" ? "accent" : "default"}
-                            loading={feedbackBusy && verdict !== "no"}
+                            loading={yesBusy}
+                            disabled={noBusy}
                             onClick={() => feedback(item.recipe_ref, "yes")}
                           >
                             Yes
                           </Button>
                           <Button
                             variant={verdict === "no" ? "accent" : "default"}
-                            loading={feedbackBusy && verdict !== "yes"}
+                            loading={noBusy}
+                            disabled={yesBusy}
                             onClick={() => feedback(item.recipe_ref, "no")}
                           >
                             No
@@ -555,8 +561,18 @@ export default function MediaTesting() {
                 </div>
                 <div className="border-t border-line pt-4">
                   <h4 className="text-sm font-medium">Add a missed usecase</h4>
+                  {recipes.length === 0 ? (
+                    <p className="mt-2 text-sm text-muted">
+                      Personas could not be loaded. Refresh the page, then try adding again.
+                    </p>
+                  ) : null}
                   <div className="mt-3 flex flex-wrap gap-3">
-                    <select className="field max-w-sm" value={addRef} onChange={(event) => setAddRef(event.target.value)}>
+                    <select
+                      className="field max-w-sm"
+                      value={addRef}
+                      disabled={recipes.length === 0}
+                      onChange={(event) => setAddRef(event.target.value)}
+                    >
                       <option value="">Choose a persona</option>
                       {recipes.map((recipe) => (
                         <option key={recipe.ref} value={recipe.ref}>
@@ -573,7 +589,7 @@ export default function MediaTesting() {
                     <Button
                       variant="accent"
                       loading={busy === "add"}
-                      disabled={!addRef}
+                      disabled={!addRef || recipes.length === 0}
                       title={!addRef ? "Select a persona to add" : undefined}
                       onClick={addUsecase}
                     >
@@ -775,6 +791,7 @@ function ImageThumb({
   const [open, setOpen] = useState(false);
   const [fullLoaded, setFullLoaded] = useState(false);
   const [fullFailed, setFullFailed] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
   const settledRef = useRef(false);
 
   const markSettled = () => {
@@ -785,11 +802,16 @@ function ImageThumb({
 
   useEffect(() => {
     if (!open) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     const close = (event: KeyboardEvent) => {
       if (event.key === "Escape") setOpen(false);
     };
     window.addEventListener("keydown", close);
-    return () => window.removeEventListener("keydown", close);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", close);
+    };
   }, [open]);
 
   return (
@@ -800,6 +822,7 @@ function ImageThumb({
         onClick={() => {
           setFullLoaded(false);
           setFullFailed(false);
+          setRetryKey((value) => value + 1);
           setOpen(true);
         }}
         aria-label={`View ${title}`}
@@ -808,12 +831,35 @@ function ImageThumb({
           <Skeleton className="absolute inset-0 z-0 h-full w-full rounded-none" />
         )}
         {failed && (
-          <span className="absolute inset-0 z-10 grid place-items-center px-3 text-xs text-muted">
+          <span className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 px-3 text-xs text-muted">
             Preview unavailable
+            <span
+              role="button"
+              tabIndex={0}
+              className="underline"
+              onClick={(event) => {
+                event.stopPropagation();
+                setFailed(false);
+                setLoaded(false);
+                setRetryKey((value) => value + 1);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setFailed(false);
+                  setLoaded(false);
+                  setRetryKey((value) => value + 1);
+                }
+              }}
+            >
+              Try again
+            </span>
           </span>
         )}
         <img
-          src={`/api/assets/${id}/thumbnail.jpg`}
+          key={retryKey}
+          src={`/api/assets/${id}/thumbnail.jpg?v=${retryKey}`}
           alt={title}
           loading="lazy"
           decoding="async"
@@ -830,41 +876,54 @@ function ImageThumb({
         />
       </button>
 
-      {open && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-ink/90 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-label={title}
-          onClick={() => setOpen(false)}
-        >
-          {!fullLoaded && !fullFailed && <Spinner className="absolute h-8 w-8 text-white" />}
-          {fullFailed && (
-            <div className="rounded-xl bg-surface px-6 py-5 text-center">
-              <p className="font-medium">Image preview unavailable</p>
-              <p className="mt-1 text-sm text-muted">Close this view and try again.</p>
-            </div>
-          )}
-          <img
-            src={`/api/assets/${id}/thumbnail.jpg`}
-            alt={title}
-            className={`max-h-[90vh] max-w-[94vw] object-contain ${fullFailed ? "hidden" : "block"}`}
-            onLoad={() => setFullLoaded(true)}
-            onError={() => {
-              setFullFailed(true);
-              setFullLoaded(false);
-            }}
-            onClick={(event) => event.stopPropagation()}
-          />
-          <button
-            type="button"
-            className="btn-ghost absolute right-4 top-4 border-white/30 bg-ink/70 text-white"
+      {open &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/92 p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-label={title}
             onClick={() => setOpen(false)}
           >
-            Close
-          </button>
-        </div>
-      )}
+            {!fullLoaded && !fullFailed && <Spinner className="absolute h-8 w-8 text-white" />}
+            {fullFailed && (
+              <div className="rounded-xl bg-surface px-6 py-5 text-center" onClick={(event) => event.stopPropagation()}>
+                <p className="font-medium">Image preview unavailable</p>
+                <p className="mt-1 text-sm text-muted">Close this view and try again.</p>
+                <Button
+                  className="mt-3"
+                  onClick={() => {
+                    setFullFailed(false);
+                    setFullLoaded(false);
+                    setRetryKey((value) => value + 1);
+                  }}
+                >
+                  Try again
+                </Button>
+              </div>
+            )}
+            <img
+              key={`full-${retryKey}`}
+              src={`/api/assets/${id}/thumbnail.jpg?v=${retryKey}`}
+              alt={title}
+              className={`max-h-[90vh] max-w-[94vw] object-contain ${fullFailed ? "hidden" : "block"}`}
+              onLoad={() => setFullLoaded(true)}
+              onError={() => {
+                setFullFailed(true);
+                setFullLoaded(false);
+              }}
+              onClick={(event) => event.stopPropagation()}
+            />
+            <button
+              type="button"
+              className="absolute right-4 top-4 z-[1] rounded-xl border border-white/20 bg-black px-4 py-2 text-sm font-medium text-white"
+              onClick={() => setOpen(false)}
+            >
+              Close
+            </button>
+          </div>,
+          document.body,
+        )}
     </>
   );
 }

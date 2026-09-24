@@ -202,7 +202,7 @@ function LibraryMenu({ isAdmin }: { isAdmin: boolean }) {
           }`}
           onClick={() => setOpen(false)}
         >
-          Ask the transcripts
+          Ask the library
         </Link>
         {isAdmin && (
           <>
@@ -375,7 +375,7 @@ export default function App() {
                 <Route path="/" element={<Landing />} />
                 <Route path="/generate" element={<Generate />} />
                 <Route path="/result/:id" element={<Result />} />
-                <Route path="/history" element={<History />} />
+                <Route path="/history" element={<History currentUser={user} />} />
                 <Route path="/script-testing" element={<ScriptTesting currentUser={user} />} />
                 <Route path="/script-testing/:id" element={<ScriptTesting currentUser={user} />} />
                 <Route path="/ask" element={<AskTranscripts />} />

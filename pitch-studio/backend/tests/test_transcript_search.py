@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
+from typing import Any
 from unittest import mock
 
 from backend.transcript_search import (
@@ -154,6 +155,7 @@ class AskFlowTests(unittest.TestCase):
             text="Median placement is twenty seven LPA.",
             start_ms=None,
             end_ms=None,
+            text_hash="abc",
             embedding_json="[1.0, 0.0]",
         )
 
@@ -197,6 +199,119 @@ class AskFlowTests(unittest.TestCase):
         text = "Speaker: hello world.\nSpeaker: median placement is strong.\nSpeaker: goodbye."
         hits = match_quote_line_indexes(text, "median placement is strong")
         self.assertEqual(hits, [1])
+
+    def test_answer_cache_hit_skips_answerer(self):
+        from backend.transcript_search import (
+            clear_ask_caches,
+            normalize_question,
+            question_cache_key,
+            store_cached_answer,
+        )
+
+        clear_ask_caches(None)
+        chunk = SimpleNamespace(
+            id=1,
+            source_type=SOURCE_STYLE,
+            source_id="1",
+            source_name="Parent call",
+            text="Campus is in Gurugram.",
+            start_ms=None,
+            end_ms=None,
+            text_hash="campus",
+            embedding_json="[1.0, 0.0]",
+        )
+        cached_payload = {
+            "answer_markdown": "Cached: campus is in **Gurugram**.",
+            "segments": [],
+            "highlights": ["Gurugram"],
+            "sources": [],
+        }
+        stored: dict[str, Any] = {}
+
+        class CacheRow:
+            def __init__(self, question_hash, index_fingerprint, response_json, question=""):
+                self.question_hash = question_hash
+                self.index_fingerprint = index_fingerprint
+                self.response_json = response_json
+                self.question = question
+
+        class CacheQuery:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def filter(self, *args, **kwargs):
+                return self
+
+            def first(self):
+                key = question_cache_key("Where is campus?")
+                for row in self._rows:
+                    if row.question_hash == key:
+                        return row
+                return None
+
+            def delete(self, synchronize_session=False):
+                self._rows.clear()
+                return 0
+
+            def all(self):
+                return list(self._rows)
+
+        class Db:
+            def __init__(self):
+                self.cache_rows: list[CacheRow] = []
+                self.added = []
+
+            def query(self, model):
+                name = getattr(model, "__name__", str(model))
+                if name == "AskAnswerCache":
+                    return CacheQuery(self.cache_rows)
+                return SimpleNamespace(all=lambda: [chunk])
+
+            def add(self, row):
+                self.added.append(row)
+                self.cache_rows.append(
+                    CacheRow(
+                        row.question_hash,
+                        row.index_fingerprint,
+                        row.response_json,
+                        row.question,
+                    )
+                )
+
+            def commit(self):
+                return None
+
+            def rollback(self):
+                return None
+
+        db = Db()
+        # Seed cache as if a prior ask stored it.
+        from backend.transcript_search import index_fingerprint
+
+        fp = index_fingerprint(db)
+        store_cached_answer(db, "Where is campus?", fp, cached_payload)
+
+        calls = {"answer": 0, "embed": 0}
+
+        def embed_fn(texts):
+            calls["embed"] += 1
+            return [[1.0, 0.0] for _ in texts]
+
+        def answer_fn(question, passages):
+            calls["answer"] += 1
+            return cached_payload
+
+        # Production path uses cache: no custom fns.
+        hit = ask(db, "  WHERE   is   campus?  ")
+        self.assertEqual(hit["answer_markdown"], cached_payload["answer_markdown"])
+        self.assertEqual(calls["answer"], 0)
+        self.assertEqual(normalize_question("  WHERE   is   campus?  "), "where is campus?")
+
+        # Custom answerer bypasses cache and still works.
+        miss = ask(db, "Where is campus?", embed_fn=embed_fn, answer_fn=answer_fn)
+        self.assertEqual(miss["answer_markdown"], cached_payload["answer_markdown"])
+        self.assertEqual(calls["answer"], 1)
+        self.assertEqual(calls["embed"], 1)
 
 
 class RebuildGuardTests(unittest.TestCase):

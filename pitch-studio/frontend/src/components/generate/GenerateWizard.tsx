@@ -438,7 +438,7 @@ export default function GenerateWizard({
   };
 
   return (
-    <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-4xl flex-col px-6 py-8 md:px-10">
+    <div className="mx-auto flex max-w-4xl flex-col px-6 py-8 md:px-10">
       <div className="mb-8 shrink-0">
         <div className="flex items-center justify-between gap-4 text-xs text-grey">
           <span>
@@ -455,7 +455,7 @@ export default function GenerateWizard({
         </div>
       </div>
 
-      <div className="relative flex-1">
+      <div className="relative">
         <AnimatePresence mode="wait" custom={direction}>
           <motion.div
             key={stepId}
@@ -595,94 +595,98 @@ export default function GenerateWizard({
                       />
                     </label>
 
-                    <div className="space-y-3 border-t border-black/8 pt-4">
-                      <div>
+                    {manualOpen && (
+                      <div className="space-y-2 border-t border-black/8 pt-4">
                         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-grey">
-                          Alternative
+                          Manual settings
                         </p>
-                        <button
-                          type="button"
-                          className="mt-2 text-sm font-medium text-black underline-offset-4 hover:underline"
-                          onClick={() => {
-                            setManualOpen((open) => {
-                              if (open) setOpenManualSection(null);
-                              return !open;
-                            });
-                          }}
-                        >
-                          {manualOpen ? "Hide manual settings" : "Adjust manually"}
-                        </button>
-                        <p className="mt-1 text-xs text-grey">
+                        <p className="text-xs text-grey">
                           Override audience, persona, duration, and other axes yourself.
                         </p>
-                      </div>
-                      {manualOpen && (
-                        <div className="space-y-2">
-                          {recipesLoading ? (
-                            <div className="grid gap-3 sm:grid-cols-2">
-                              {Array.from({ length: 4 }).map((_, index) => (
-                                <Skeleton key={index} className="h-28 w-full rounded-2xl" />
-                              ))}
-                            </div>
-                          ) : (
-                            <>
-                              <ManualSection id="audience" title="Audience">
-                                {renderAxisOptions(AXES.audience_clusters, audience, onManualAudience)}
-                              </ManualSection>
-                              <ManualSection id="persona" title="Persona">
-                                <div className="scrollbar-none grid max-h-[min(50vh,24rem)] w-full grid-cols-1 gap-2.5 overflow-y-auto sm:grid-cols-2">
+                        {recipesLoading ? (
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            {Array.from({ length: 4 }).map((_, index) => (
+                              <Skeleton key={index} className="h-28 w-full rounded-2xl" />
+                            ))}
+                          </div>
+                        ) : (
+                          <>
+                            <ManualSection id="audience" title="Audience">
+                              {renderAxisOptions(AXES.audience_clusters, audience, onManualAudience)}
+                            </ManualSection>
+                            <ManualSection id="persona" title="Persona">
+                              <div className="scrollbar-none grid max-h-[min(50vh,24rem)] w-full grid-cols-1 gap-2.5 overflow-y-auto sm:grid-cols-2">
+                                <OptionCard
+                                  compact
+                                  label="Skip persona"
+                                  description="Continue with axes only — generation will follow your selections."
+                                  selected={!selected}
+                                  onSelect={() => onManualPersona("")}
+                                />
+                                {personas.map((recipe) => (
                                   <OptionCard
+                                    key={recipe.ref}
                                     compact
-                                    label="Skip persona"
-                                    description="Continue with axes only — generation will follow your selections."
-                                    selected={!selected}
-                                    onSelect={() => onManualPersona("")}
+                                    label={personaOptionLabel(recipe, personas)}
+                                    description={
+                                      recipe.valid
+                                        ? `${axisLabel(AXES.durations, recipe.duration)} · ${axisLabel(AXES.channels, recipe.channel)} · ${axisLabel(AXES.intents, recipe.intent)}`
+                                        : "This persona’s recipe still needs a module sequence."
+                                    }
+                                    selected={selected === recipe.ref}
+                                    disabled={!recipe.valid}
+                                    onSelect={() => onManualPersona(recipe.ref)}
                                   />
-                                  {personas.map((recipe) => (
-                                    <OptionCard
-                                      key={recipe.ref}
-                                      compact
-                                      label={personaOptionLabel(recipe, personas)}
-                                      description={
-                                        recipe.valid
-                                          ? `${axisLabel(AXES.durations, recipe.duration)} · ${axisLabel(AXES.channels, recipe.channel)} · ${axisLabel(AXES.intents, recipe.intent)}`
-                                          : "This persona’s recipe still needs a module sequence."
-                                      }
-                                      selected={selected === recipe.ref}
-                                      disabled={!recipe.valid}
-                                      onSelect={() => onManualPersona(recipe.ref)}
-                                    />
-                                  ))}
-                                  {personas.length === 0 && (
-                                    <p className="text-sm text-grey sm:col-span-2">
-                                      No personas in this audience. You can continue without one.
-                                    </p>
-                                  )}
-                                </div>
-                              </ManualSection>
-                              <ManualSection id="duration" title="Duration">
-                                {renderAxisOptions(AXES.durations, duration, onManualDuration)}
-                              </ManualSection>
-                              <ManualSection id="channel" title="Channel">
-                                {renderAxisOptions(AXES.channels, channel, onManualChannel)}
-                              </ManualSection>
-                              <ManualSection id="intent" title="Intent">
-                                {renderAxisOptions(AXES.intents, intent, onManualIntent)}
-                              </ManualSection>
-                              <ManualSection id="temperature" title="Temperature">
-                                {renderAxisOptions(AXES.temperatures, temperature, setTemperature)}
-                              </ManualSection>
-                            </>
-                          )}
-                        </div>
-                      )}
-                    </div>
+                                ))}
+                                {personas.length === 0 && (
+                                  <p className="text-sm text-grey sm:col-span-2">
+                                    No personas in this audience. You can continue without one.
+                                  </p>
+                                )}
+                              </div>
+                            </ManualSection>
+                            <ManualSection id="duration" title="Duration">
+                              {renderAxisOptions(AXES.durations, duration, onManualDuration)}
+                            </ManualSection>
+                            <ManualSection id="channel" title="Channel">
+                              {renderAxisOptions(AXES.channels, channel, onManualChannel)}
+                            </ManualSection>
+                            <ManualSection id="intent" title="Intent">
+                              {renderAxisOptions(AXES.intents, intent, onManualIntent)}
+                            </ManualSection>
+                            <ManualSection id="temperature" title="Temperature">
+                              {renderAxisOptions(AXES.temperatures, temperature, setTemperature)}
+                            </ManualSection>
+                          </>
+                        )}
+                      </div>
+                    )}
 
                     <ErrorBanner message={error} />
-                    <div className="flex justify-end pt-2">
+                    <div className="flex flex-wrap items-center justify-end gap-3 pt-2">
+                      <Button
+                        type="button"
+                        disabled={isSubmitting || interpreting}
+                        onClick={() => {
+                          setManualOpen((open) => {
+                            if (open) setOpenManualSection(null);
+                            return !open;
+                          });
+                        }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
+                          <path
+                            d="M11.3 2.3a1 1 0 0 1 1.4 0l1 1a1 1 0 0 1 0 1.4l-8.2 8.2L3 13.5l.6-2.5 8.2-8.2Z"
+                            stroke="currentColor"
+                            strokeWidth="1.4"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                        {manualOpen ? "Hide manual settings" : "Adjust manually"}
+                      </Button>
                       <Button
                         variant="accent"
-                        className="w-full py-3 text-base sm:w-auto"
+                        className="py-3 text-base"
                         loading={isSubmitting}
                         disabled={!canAdvance(step) || interpreting}
                         onClick={submit}
@@ -698,7 +702,7 @@ export default function GenerateWizard({
         </AnimatePresence>
       </div>
 
-      <div className="mt-auto flex shrink-0 items-center justify-between gap-4 border-t border-black/8 pt-6">
+      <div className="mt-8 flex shrink-0 items-center justify-between gap-4 border-t border-black/8 pt-6">
         <Button
           variant={step === 0 ? "ghost" : "default"}
           disabled={step === 0 || isSubmitting || interpreting}

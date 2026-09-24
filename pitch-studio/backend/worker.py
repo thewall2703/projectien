@@ -16,7 +16,7 @@ from backend.qa_extraction import JOB_QA_EXTRACT, run_qa_extraction
 log = logging.getLogger("backend.worker")
 
 POLL_SECONDS = 2
-STALE_RUNNING_AFTER = timedelta(minutes=30)
+STALE_RUNNING_AFTER = timedelta(minutes=10)
 
 
 def _aware(value: datetime | None) -> datetime | None:
@@ -123,6 +123,13 @@ def _run_job(job_id: int) -> None:
         job.finished_at = utc_now()
         job.error = ""
         db.commit()
+        if job.job_type in (JOB_PREPARE, JOB_DESCRIBE, JOB_DECK_PREPARE):
+            try:
+                from backend.generation_cache import bump_content_version
+
+                bump_content_version()
+            except Exception:
+                log.exception("Content version bump after job %s failed", job_id)
     except Exception as exc:
         log.exception("Job %s failed", job_id)
         try:

@@ -555,9 +555,11 @@ def collect_image_bytes(
             if child.file_key:
                 key = child.file_key
             else:
-                from backend.thumbnails import thumbnail_key
+                from backend.thumbnails import resolve_thumbnail_key
 
-                key = thumbnail_key(child)
+                key = resolve_thumbnail_key(child)
+                if not key:
+                    continue
             data = _downscale_jpeg(read_file(key))
         except Exception:
             continue
@@ -1028,14 +1030,14 @@ def prepare_media(db: Session, asset_id: int, on_stage: StageCallback | None = N
         asset.file_status = "processed"
         asset.url = asset.source_url
     elif row.media_kind == "photo" and row.visual_description.strip():
-        from backend.thumbnails import thumbnail_key
+        from backend.thumbnails import resolve_thumbnail_key
 
         retained_keys: list[str] = []
         for image_asset in image_assets:
-            key = thumbnail_key(image_asset)
-            if not file_exists(key):
+            resolved = resolve_thumbnail_key(image_asset)
+            if resolved is None:
                 continue
-            retained_keys.append(key)
+            retained_keys.append(resolved)
             if image_asset.file_key:
                 delete_file(image_asset.file_key)
                 image_asset.file_key = ""

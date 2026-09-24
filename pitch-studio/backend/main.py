@@ -8,12 +8,42 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import OperationalError
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from backend.config import PITCH_STUDIO_ROOT, settings
 from backend.routers import admin_routes, ask_routes, auth_routes, generation_routes, script_testing_routes
 
 FRONTEND_DIST = PITCH_STUDIO_ROOT / "frontend" / "dist"
 logger = logging.getLogger(__name__)
+
+
+def _should_bump_content_version(request: Request, status_code: int) -> bool:
+    if status_code >= 400:
+        return False
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return False
+    path = request.url.path
+    if not path.startswith("/api/admin"):
+        return False
+    if path.startswith("/api/admin/users"):
+        return False
+    if path.endswith("/feedback"):
+        return False
+    return True
+
+
+class ContentVersionBumpMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        if _should_bump_content_version(request, response.status_code):
+            try:
+                from backend.generation_cache import bump_content_version
+
+                bump_content_version()
+            except Exception:
+                logger.exception("Content version bump after admin write failed")
+        return response
+
 
 app = FastAPI(title="Pitch Studio")
 app.add_middleware(
@@ -23,6 +53,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(ContentVersionBumpMiddleware)
 app.include_router(auth_routes.router)
 app.include_router(admin_routes.router)
 app.include_router(ask_routes.router)

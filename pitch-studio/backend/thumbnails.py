@@ -13,8 +13,27 @@ THUMBNAIL_QUALITY = 76
 
 
 def thumbnail_key(asset: Asset) -> str:
-    version = int(asset.synced_at.timestamp()) if asset.synced_at else 0
-    return f"thumbnails/assets/{asset.id}-{version}.jpg"
+    """Stable preview key. Versioned legacy keys are resolved at read time."""
+    return f"thumbnails/assets/{asset.id}.jpg"
+
+
+def legacy_thumbnail_keys(asset: Asset) -> list[str]:
+    """Older builds versioned thumbnails by synced_at; keep those readable."""
+    keys = [f"thumbnails/assets/{asset.id}-0.jpg"]
+    if asset.synced_at is not None:
+        version = int(asset.synced_at.timestamp())
+        keys.insert(0, f"thumbnails/assets/{asset.id}-{version}.jpg")
+    return keys
+
+
+def resolve_thumbnail_key(asset: Asset) -> str | None:
+    key = thumbnail_key(asset)
+    if file_exists(key):
+        return key
+    for legacy in legacy_thumbnail_keys(asset):
+        if file_exists(legacy):
+            return legacy
+    return None
 
 
 def thumbnail_jpeg(data: bytes) -> bytes:
@@ -34,8 +53,10 @@ def ensure_thumbnail(asset: Asset, force: bool = False) -> str:
     if not asset.file_key or not (asset.content_type or "").startswith("image/"):
         raise ValueError("Thumbnail source must be a stored image")
     key = thumbnail_key(asset)
-    if not force and file_exists(key):
-        return key
+    if not force:
+        existing = resolve_thumbnail_key(asset)
+        if existing:
+            return existing
     data = thumbnail_jpeg(read_file(asset.file_key))
     save_file(key, data, "image/jpeg")
     return key
@@ -50,11 +71,9 @@ def ensure_thumbnails(
     errors: list[tuple[int, str]] = []
     for index, asset in enumerate(rows, start=1):
         try:
-            key = thumbnail_key(asset)
-            existed = file_exists(key)
+            existed = resolve_thumbnail_key(asset) is not None
             if not existed:
                 ensure_thumbnail(asset, force=True)
-            if not existed:
                 created += 1
         except Exception as exc:  # one bad image must not fail the whole set
             errors.append((asset.id, str(exc)))

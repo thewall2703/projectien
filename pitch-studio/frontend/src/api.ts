@@ -53,7 +53,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw err;
   }
   if (response.status === 401) {
-    throw new Error("unauthorized");
+    throw new Error("Session expired. Please sign in again.");
   }
   if (!response.ok) {
     const raw = await response.text();
@@ -73,11 +73,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  authConfig: () =>
+    request<{ google_client_id: string; google_allowed_domain?: string }>("/api/auth/config"),
   login: (email: string, password: string) =>
     request("/api/auth/login", {
       method: "POST",
       headers: jsonHeaders,
       body: JSON.stringify({ email, password }),
+    }),
+  googleLogin: (credential: string) =>
+    request("/api/auth/google", {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ credential }),
     }),
   logout: () => {
     recipesCache = null;
@@ -255,11 +263,11 @@ export const api = {
   unfreezeDeckTopic: (id: number) =>
     request<DeckTopicRow>(`/api/admin/deck-topics/${id}/unfreeze`, { method: "POST" }),
   styleTranscriptList: () => request<StyleTranscriptRow[]>("/api/admin/style-transcripts"),
-  styleTranscriptCreate: (name: string, text: string) =>
+  styleTranscriptCreate: (name: string, text: string, sourceUrl = "") =>
     request<StyleTranscriptRow>("/api/admin/style-transcripts", {
       method: "POST",
       headers: jsonHeaders,
-      body: JSON.stringify({ name, text }),
+      body: JSON.stringify({ name, text, source_url: sourceUrl }),
     }),
   styleTranscriptIndex: (transcriptIds: number[], personaLabels: string[]) =>
     request<StyleTranscriptIndexResult>("/api/admin/style-transcripts/index", {

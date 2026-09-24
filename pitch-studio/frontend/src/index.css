@@ -101,6 +101,15 @@ mark {
     inset 0 -1px 0 rgba(43, 40, 35, 0.05);
 }
 
+/* Opaque admin tables — glass blur + page gradients were fading row text at the edges. */
+.admin-table-panel {
+  overflow-x: auto;
+  border-radius: 1.25rem;
+  border: 1px solid rgba(43, 40, 35, 0.1);
+  background: #faf8f3;
+  box-shadow: 0 16px 40px -28px rgba(43, 40, 35, 0.28);
+}
+
 .card {
   @apply rounded-2xl;
   background: linear-gradient(145deg, rgba(255, 255, 255, 0.67), rgba(229, 224, 215, 0.48));

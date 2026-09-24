@@ -764,6 +764,7 @@ def list_style_transcripts(db: Session = Depends(get_db)) -> list[StyleTranscrip
             status=row.status,
             created_at=row.created_at,
             text_length=len(row.raw_text or ""),
+            source_url=row.source_url or "",
             persona_labels=personas.get(row.id, []),
         )
         for row in rows
@@ -776,7 +777,7 @@ def create_style_transcript(
     db: Session = Depends(get_db),
 ) -> StyleTranscriptOut:
     try:
-        row = store_style_transcript(db, payload.name, payload.text)
+        row = store_style_transcript(db, payload.name, payload.text, payload.source_url)
     except DuplicateStyleTranscriptError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
@@ -787,6 +788,7 @@ def create_style_transcript(
         status=row.status,
         created_at=row.created_at,
         text_length=len(row.raw_text or ""),
+        source_url=row.source_url or "",
         persona_labels=[],
     )
 
@@ -866,6 +868,7 @@ def set_style_transcript_personas(
         status=row.status,
         created_at=row.created_at,
         text_length=len(row.raw_text or ""),
+        source_url=row.source_url or "",
         persona_labels=result["persona_labels"],
     )
 
@@ -1398,7 +1401,7 @@ def prepare_brand_deck_topics(
             for row in db.query(DeckTopic).all():
                 row.source_hash = ""
             db.commit()
-        enqueue_deck_prepare(db, asset.id)
+        enqueue_deck_prepare(db, asset.id, force=force)
     except DeckTopicError as exc:
         raise _deck_error(exc) from exc
     return list_deck_topics(db)

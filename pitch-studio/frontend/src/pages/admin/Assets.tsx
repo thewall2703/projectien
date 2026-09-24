@@ -5,6 +5,9 @@ export default function Assets() {
     <DataTable
       title="Assets"
       path="/api/admin/assets"
+      searchable
+      searchPlaceholder="Search by title, type, or file status…"
+      entityLabel="asset"
       fields={[
         { key: "type", label: "Type", type: "select", options: ["video", "photo", "report"] },
         { key: "title", label: "Title" },

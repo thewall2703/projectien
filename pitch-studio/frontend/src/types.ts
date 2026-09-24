@@ -210,6 +210,7 @@ export type ScriptSection = {
 export type Generation = {
   id: number;
   user_id: number;
+  user_email?: string | null;
   audience_cluster: string;
   duration: string;
   channel: string;
@@ -228,6 +229,8 @@ export type Generation = {
   report_asset_ids?: string;
   validation_report: string;
   error: string;
+  cache_key?: string;
+  cached_from_id?: number | null;
   created_at: string;
   script: { sections: ScriptSection[]; cta: string } | null;
   deck_spec?: DeckSpec | null;
@@ -468,6 +471,7 @@ export type StyleTranscriptRow = {
   status: string;
   created_at: string | null;
   text_length: number;
+  source_url: string;
   persona_labels: string[];
 };
 

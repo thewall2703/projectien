@@ -92,6 +92,8 @@ GENERATION_COLUMN_SQL = {
     "founder_quote_ids": "ALTER TABLE generations ADD COLUMN founder_quote_ids VARCHAR(255) DEFAULT ''",
     "report_asset_ids": "ALTER TABLE generations ADD COLUMN report_asset_ids VARCHAR(255) DEFAULT ''",
     "report_passages_json": "ALTER TABLE generations ADD COLUMN report_passages_json TEXT DEFAULT ''",
+    "cache_key": "ALTER TABLE generations ADD COLUMN cache_key VARCHAR(64) DEFAULT ''",
+    "cached_from_id": "ALTER TABLE generations ADD COLUMN cached_from_id INTEGER",
 }
 
 OBJECTION_COLUMN_SQL = {
@@ -110,6 +112,10 @@ VOICE_STYLE_GUIDE_COLUMN_SQL = {
     "persona_label": "ALTER TABLE voice_style_guides ADD COLUMN persona_label VARCHAR(255) DEFAULT ''",
 }
 
+STYLE_TRANSCRIPT_COLUMN_SQL = {
+    "source_url": "ALTER TABLE style_transcripts ADD COLUMN source_url VARCHAR(1000) DEFAULT ''",
+}
+
 
 def _add_missing_columns(table: str, statements: dict[str, str]) -> None:
     inspector = inspect(engine)
@@ -120,6 +126,23 @@ def _add_missing_columns(table: str, statements: dict[str, str]) -> None:
         for name, statement in statements.items():
             if name not in existing:
                 connection.execute(text(statement))
+
+
+def _ensure_generation_cache_key_index() -> None:
+    """CREATE INDEX for Generation.cache_key on DBs that only got ALTER TABLE."""
+    inspector = inspect(engine)
+    if "generations" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("generations")}
+    if "cache_key" not in columns:
+        return
+    for index in inspector.get_indexes("generations"):
+        if list(index.get("column_names") or []) == ["cache_key"]:
+            return
+    with engine.begin() as connection:
+        connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_generations_cache_key ON generations (cache_key)")
+        )
 
 
 def _backfill_founder_quote_style_provenance() -> None:
@@ -180,6 +203,8 @@ def ensure_schema() -> None:
     _add_missing_columns("objections", OBJECTION_COLUMN_SQL)
     _add_missing_columns("founder_quotes", FOUNDER_QUOTE_COLUMN_SQL)
     _add_missing_columns("voice_style_guides", VOICE_STYLE_GUIDE_COLUMN_SQL)
+    _add_missing_columns("style_transcripts", STYLE_TRANSCRIPT_COLUMN_SQL)
+    _ensure_generation_cache_key_index()
     _backfill_founder_quote_style_provenance()
     _SCHEMA_READY = True
 

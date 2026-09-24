@@ -145,9 +145,18 @@ class Generation(Base):
     report_passages_json: Mapped[str] = mapped_column(Text, default="")
     validation_report: Mapped[str] = mapped_column(Text, default="")
     error: Mapped[str] = mapped_column(Text, default="")
+    cache_key: Mapped[str] = mapped_column(String(64), default="", index=True)
+    cached_from_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     user: Mapped[User] = relationship(back_populates="generations")
+
+
+class AppState(Base):
+    __tablename__ = "app_state"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, default="")
 
 
 class GeneratedSlide(Base):
@@ -408,6 +417,7 @@ class StyleTranscript(Base):
     name: Mapped[str] = mapped_column(String(300))
     raw_text: Mapped[str] = mapped_column(Text)
     text_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    source_url: Mapped[str] = mapped_column(String(1000), default="")
     status: Mapped[str] = mapped_column(String(16), default="processed")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
@@ -487,7 +497,7 @@ class QaCandidate(Base):
 
 
 class TranscriptChunk(Base):
-    """One embedded passage in the Ask-the-transcripts semantic index.
+    """One embedded passage in the Ask-the-library semantic index.
 
     Sources are style transcripts, media STT, founder quotes, and Drive file
     bundles. Objections and AMA Q&A candidates are never indexed here.
@@ -513,4 +523,24 @@ class TranscriptChunk(Base):
     end_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     text_hash: Mapped[str] = mapped_column(String(64), default="", index=True)
     embedding_json: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class AskAnswerCache(Base):
+    """Cached Ask-the-library responses, keyed by question + index fingerprint."""
+
+    __tablename__ = "ask_answer_cache"
+    __table_args__ = (
+        UniqueConstraint(
+            "question_hash",
+            "index_fingerprint",
+            name="uq_ask_answer_question_index",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    question_hash: Mapped[str] = mapped_column(String(64), index=True)
+    question: Mapped[str] = mapped_column(Text, default="")
+    index_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    response_json: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

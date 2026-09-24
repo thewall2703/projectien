@@ -1,4 +1,4 @@
-"""Ask-the-transcripts API for every logged-in user."""
+"""Ask-the-library API for every logged-in user."""
 
 from __future__ import annotations
 

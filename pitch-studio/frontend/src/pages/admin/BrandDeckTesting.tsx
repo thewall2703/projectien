@@ -12,7 +12,7 @@ function isActiveJob(row?: Pick<DeckTopicList, "job_status"> | null) {
 
 function displayStatus(row: DeckTopicRow) {
   if (row.vision_frozen) return "frozen";
-  if (isActiveJob(row) || row.status === "processing") return "processing";
+  if (row.status === "processing") return "processing";
   if (row.stale) return "stale";
   return row.status || "draft";
 }
@@ -78,7 +78,15 @@ export default function BrandDeckTesting() {
         await new Promise((resolve) => window.setTimeout(resolve, 2000));
       }
     } catch (err) {
-      if (pollRef.current === token) setError(errMessage(err));
+      if (pollRef.current === token) {
+        setError(errMessage(err));
+        // Stop treating a dead poll as an active prepare so the UI can recover.
+        setList((prev) => ({
+          ...prev,
+          job_status: prev.job_status === "running" || prev.job_status === "queued" ? "" : prev.job_status,
+          job_stage: "",
+        }));
+      }
     } finally {
       if (pollRef.current === token) setBusy("");
     }
@@ -88,7 +96,7 @@ export default function BrandDeckTesting() {
     api
       .recipes()
       .then((data) => setRecipes(data as RecipeOption[]))
-      .catch(() => undefined);
+      .catch(() => setRecipes([]));
     reloadList()
       .then((data) => {
         if (data.items[0]) applyCurrent(data.items[0]);
@@ -155,7 +163,7 @@ export default function BrandDeckTesting() {
 
   const feedback = (ref: string, verdict: "yes" | "no") => {
     if (!current) return;
-    run(`feedback-${ref}`, () => api.sendDeckTopicFeedback(current.id, ref, verdict));
+    run(`feedback-${ref}:${verdict}`, () => api.sendDeckTopicFeedback(current.id, ref, verdict));
   };
 
   const addUsecase = () => {
@@ -189,7 +197,7 @@ export default function BrandDeckTesting() {
       <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
         <aside className="card scrollbar-none max-h-[80vh] overflow-y-auto p-3">
           <div className="mb-3 space-y-2 px-1">
-            <Button variant="accent" loading={preparing} onClick={() => prepare(list.items.length > 0)}>
+            <Button variant="accent" loading={preparing} onClick={() => prepare(true)}>
               {list.items.length ? "Regroup topics" : "Prepare topics"}
             </Button>
             {preparing && (
@@ -197,6 +205,11 @@ export default function BrandDeckTesting() {
                 <Spinner className="mt-0.5" />
                 {list.job_stage || "Grouping brand deck pages…"}
               </p>
+            )}
+            {error && !preparing && list.items.length > 0 && (
+              <Button className="w-full" onClick={() => prepare(true)}>
+                Retry prepare
+              </Button>
             )}
           </div>
           {loading && (
@@ -358,7 +371,8 @@ export default function BrandDeckTesting() {
                   {current.recommendations.items.map((item) => {
                     const verdict = current.feedback.verdicts[item.recipe_ref]?.verdict;
                     const name = personaLabel(recipes, item.recipe_ref) || item.recipe_ref;
-                    const feedbackBusy = busy === `feedback-${item.recipe_ref}`;
+                    const yesBusy = busy === `feedback-${item.recipe_ref}:yes`;
+                    const noBusy = busy === `feedback-${item.recipe_ref}:no`;
                     return (
                       <div key={item.recipe_ref} className="rounded-xl border border-line p-4">
                         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -376,14 +390,16 @@ export default function BrandDeckTesting() {
                         <div className="mt-3 flex gap-2">
                           <Button
                             variant={verdict === "yes" ? "accent" : "default"}
-                            loading={feedbackBusy && verdict !== "no"}
+                            loading={yesBusy}
+                            disabled={noBusy}
                             onClick={() => feedback(item.recipe_ref, "yes")}
                           >
                             Yes
                           </Button>
                           <Button
                             variant={verdict === "no" ? "accent" : "default"}
-                            loading={feedbackBusy && verdict !== "yes"}
+                            loading={noBusy}
+                            disabled={yesBusy}
                             onClick={() => feedback(item.recipe_ref, "no")}
                           >
                             No
@@ -395,8 +411,18 @@ export default function BrandDeckTesting() {
                 </div>
                 <div className="border-t border-line pt-4">
                   <h4 className="text-sm font-medium">Add a missed usecase</h4>
+                  {recipes.length === 0 ? (
+                    <p className="mt-2 text-sm text-muted">
+                      Personas could not be loaded. Refresh the page, then try adding again.
+                    </p>
+                  ) : null}
                   <div className="mt-3 flex flex-wrap gap-3">
-                    <select className="field max-w-sm" value={addRef} onChange={(event) => setAddRef(event.target.value)}>
+                    <select
+                      className="field max-w-sm"
+                      value={addRef}
+                      disabled={recipes.length === 0}
+                      onChange={(event) => setAddRef(event.target.value)}
+                    >
                       <option value="">Choose a persona</option>
                       {recipes.map((recipe) => (
                         <option key={recipe.ref} value={recipe.ref}>
@@ -410,7 +436,11 @@ export default function BrandDeckTesting() {
                       value={addNote}
                       onChange={(event) => setAddNote(event.target.value)}
                     />
-                    <Button loading={busy === "add"} disabled={!addRef} onClick={addUsecase}>
+                    <Button
+                      loading={busy === "add"}
+                      disabled={!addRef || recipes.length === 0}
+                      onClick={addUsecase}
+                    >
                       Add
                     </Button>
                   </div>

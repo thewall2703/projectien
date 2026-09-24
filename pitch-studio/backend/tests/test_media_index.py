@@ -383,15 +383,14 @@ class PrepareMediaTests(unittest.TestCase):
                                 return_value="Students gather on campus.",
                             ):
                                 with mock.patch(
-                                    "backend.thumbnails.thumbnail_key",
+                                    "backend.thumbnails.resolve_thumbnail_key",
                                     return_value="thumbnails/assets/11.jpg",
                                 ):
-                                    with mock.patch("backend.media_index.file_exists", return_value=True):
-                                        with mock.patch("backend.media_index.delete_file") as delete:
-                                            with mock.patch(
-                                                "backend.media_index.apply_recommendations"
-                                            ) as recommend:
-                                                prepare_media(db, 10)
+                                    with mock.patch("backend.media_index.delete_file") as delete:
+                                        with mock.patch(
+                                            "backend.media_index.apply_recommendations"
+                                        ) as recommend:
+                                            prepare_media(db, 10)
         recommend.assert_called_once_with(db, row)
         delete.assert_called_once_with("library/photos/campus.jpg")
         self.assertEqual(child.file_key, "")

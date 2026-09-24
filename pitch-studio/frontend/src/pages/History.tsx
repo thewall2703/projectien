@@ -3,9 +3,9 @@ import { Link } from "react-router-dom";
 import { api } from "../api";
 import { EmptyState, ErrorBanner, Skeleton, StatusBadge } from "../components/ui";
 import { generationAxisLabels, personaLabel } from "../labels";
-import type { Generation, RecipeOption } from "../types";
+import type { Generation, RecipeOption, User } from "../types";
 
-export default function History() {
+export default function History({ currentUser }: { currentUser: User }) {
   const [rows, setRows] = useState<Generation[]>([]);
   const [recipes, setRecipes] = useState<RecipeOption[]>([]);
   const [error, setError] = useState("");
@@ -59,6 +59,9 @@ export default function History() {
                         .filter(Boolean)
                         .join(" · ")}
                     </p>
+                    {currentUser.is_admin && row.user_email && (
+                      <p className="mt-1 text-xs text-grey">{row.user_email}</p>
+                    )}
                   </div>
                   <div className="flex items-center gap-3">
                     <StatusBadge status={row.status} />

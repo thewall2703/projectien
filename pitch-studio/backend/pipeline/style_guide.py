@@ -20,6 +20,7 @@ TRANSCRIPT_CHAR_BUDGET = 60_000
 TIMESTAMP_RE = re.compile(r"-->")
 CUE_NUMBER_RE = re.compile(r"^\d+$")
 SPEAKER_RE = re.compile(r"^([^:]{1,80}):\s*(.*)$")
+SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 
 DISTILL_SYSTEM = (
     "You are distilling how Pratham Mittal (founder, Masters' Union) structures and "
@@ -369,15 +370,17 @@ def _harvest_quotes(
     source_file_id: str,
     source_style_transcript_id: int,
     pratham_text: str,
+    source_url: str = "",
 ) -> dict[str, int]:
     kept = 0
     skipped = 0
     if not pratham_text.strip():
         return {"quotes_kept": 0, "quotes_skipped": 0}
     sentences = [
-        {"text": line, "start": 0.0, "end": 0.0}
+        {"text": sentence, "start": 0.0, "end": 0.0}
         for line in pratham_text.splitlines()
-        if line.strip()
+        for sentence in SENTENCE_SPLIT_RE.split(line)
+        if sentence.strip()
     ]
     chunks = chunk_sentences(sentences)
     for chunk in chunks:
@@ -404,7 +407,7 @@ def _harvest_quotes(
                     source_name=source_name,
                     source_file_id=source_file_id,
                     source_style_transcript_id=source_style_transcript_id,
-                    source_url="",
+                    source_url=source_url,
                     start_sec=float(chunk["start"]),
                     end_sec=float(chunk["end"]),
                     speaker="Pratham Mittal",
@@ -432,12 +435,16 @@ def store_style_transcript(
     db: Session,
     name: str,
     text: str,
+    source_url: str = "",
 ) -> StyleTranscript:
     """Store a transcript in the library without indexing it."""
     title = (name or "").strip()
     raw = text or ""
+    url = (source_url or "").strip()
     if not title or not raw.strip():
         raise ValueError("Name and transcript text are required")
+    if url and not url.lower().startswith(("http://", "https://")):
+        raise ValueError("Video link must start with http:// or https://")
     digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
     if db.query(StyleTranscript).filter(StyleTranscript.text_hash == digest).first():
         raise DuplicateStyleTranscriptError("This transcript has already been uploaded")
@@ -447,6 +454,7 @@ def store_style_transcript(
             name=title,
             raw_text=raw,
             text_hash=digest,
+            source_url=url,
             status="uploaded",
         )
         db.add(transcript)
@@ -511,6 +519,7 @@ def index_style_transcript(
             source_file_id=f"style-{transcript.id}",
             source_style_transcript_id=transcript.id,
             pratham_text=pratham_lines(lines),
+            source_url=getattr(transcript, "source_url", "") or "",
         )
         transcript.status = "processed"
         db.commit()
