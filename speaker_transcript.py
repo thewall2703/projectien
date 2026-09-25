@@ -792,6 +792,9 @@ def process(link: str, args) -> Path:
 
     speaker = args.speaker or "speaker"
     out_dir = Path(args.out) / f"{slugify(Path(name).stem)}_{slugify(speaker).lower()}"
+    existing = out_dir / "report.json"
+    if existing.exists() and extract_file_id(json.loads(existing.read_text()).get("link", "")) != fid:
+        out_dir = out_dir.with_name(f"{out_dir.name}_{fid[:8]}")
     out_dir.mkdir(parents=True, exist_ok=True)
     header = f"{name} — {speaker} only\nSource: {method}\nSpeaker match: {ident.how}\n\n"
     (out_dir / "transcript.en.txt").write_text(

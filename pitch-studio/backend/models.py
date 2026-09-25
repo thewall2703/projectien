@@ -357,6 +357,26 @@ class FounderQuote(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class PrathamMove(Base):
+    """A reusable delivery move (framework, analogy, story, ...) from Pratham's real speech."""
+
+    __tablename__ = "pratham_moves"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    style_transcript_id: Mapped[int] = mapped_column(Integer, index=True)
+    kind: Mapped[str] = mapped_column(String(32), default="framework")
+    label: Mapped[str] = mapped_column(String(200), default="")
+    excerpt: Mapped[str] = mapped_column(Text)
+    use_when: Mapped[str] = mapped_column(Text, default="")
+    personal: Mapped[bool] = mapped_column(Boolean, default=False)
+    module_ids: Mapped[str] = mapped_column(String(255), default="")
+    source_name: Mapped[str] = mapped_column(String(300), default="")
+    embedding_json: Mapped[str] = mapped_column(Text, default="")
+    text_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(16), default="approved")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class MediaIndex(Base):
     __tablename__ = "media_index"
 

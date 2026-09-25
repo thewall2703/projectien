@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from itertools import zip_longest
 from typing import Any, Callable, Protocol
@@ -59,6 +60,7 @@ from backend.schemas import ScriptPayload
 from backend.transcripts import pick_founder_quotes
 from backend.qa_extraction import rank_objections_for_pitch
 
+logger = logging.getLogger(__name__)
 
 def _vision_dsai_slides(
     db: Session,
@@ -205,6 +207,39 @@ def _select_founder_quotes(
     )
 
 
+def _pratham_reference(
+    db: Session,
+    *,
+    persona_label: str,
+    topic_flow: list[Any],
+    modules: list[Module],
+    context_note: str,
+) -> str:
+    """Persona playbook moves + Pratham passages matched to this script. Never fails the run."""
+    if not persona_label:
+        return ""
+    topics: list[str] = []
+    for topic in topic_flow or []:
+        payload = topic.to_prompt_dict() if hasattr(topic, "to_prompt_dict") else topic
+        if isinstance(payload, dict) and payload.get("title"):
+            topics.append(str(payload["title"]))
+    if not topics:
+        topics = [module.name for module in modules if module.name]
+    try:
+        from backend.pratham_playbook import build_pratham_reference
+
+        return build_pratham_reference(
+            db, persona_label=persona_label, topics=topics, context_note=context_note or ""
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Pratham reference lookup failed for %s", persona_label)
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        return ""
+
+
 def _select_objections(
     db: Session,
     intent: str,
@@ -265,6 +300,7 @@ def _rewrite_script_with_corrections(
     corrections: list[str],
     draft: dict[str, Any],
     plan: dict[str, Any] | None = None,
+    pratham_reference: str = "",
 ) -> tuple[dict[str, Any], list[str], dict[str, Any]]:
     """Rewrite → budget repair (one repair pass on rule violations) → voice review.
 
@@ -292,6 +328,7 @@ def _rewrite_script_with_corrections(
                 draft=script,
                 style_guide=style_guide,
                 plan=plan,
+                pratham_reference=pratham_reference,
             ),
             role="script_writer",
         )
@@ -351,6 +388,7 @@ def _run_quality_loop(
     plan: dict[str, Any] | None,
     plan_error: str,
     set_status: Callable[[str], None],
+    pratham_reference: str = "",
 ) -> dict[str, Any]:
     """Flow + listener quality loop. Never fails the parent run."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -508,6 +546,7 @@ def _run_quality_loop(
                 corrections=notes,
                 draft=current,
                 plan=plan,
+                pratham_reference=pratham_reference,
             )
         except Exception as exc:  # noqa: BLE001
             round_trace["rewrite"] = "error"
@@ -652,6 +691,13 @@ def generate_script_phase(
         target.error = "Approved Pratham Mittal transcript excerpts are required before generating a script"
         set_status("failed")
         return None
+    pratham_reference = _pratham_reference(
+        db,
+        persona_label=persona_label,
+        topic_flow=topic_flow,
+        modules=modules,
+        context_note=target.context_note,
+    )
 
     script_plan: dict[str, Any] | None = None
     plan_error = ""
@@ -682,6 +728,7 @@ def generate_script_phase(
                 topic_flow=topic_flow,
                 style_guide=style_guide,
                 listener_profile=listener_profile,
+                pratham_reference=pratham_reference,
             )
             if script_plan is None:
                 plan_error = "planner returned nothing usable"
@@ -711,6 +758,7 @@ def generate_script_phase(
         topic_flow=topic_flow,
         style_guide=style_guide,
         plan=script_plan,
+        pratham_reference=pratham_reference,
     )
     script = chat_json(messages, role="script_writer")
     script = align_script_to_topics(script, topic_flow, modules)
@@ -742,6 +790,7 @@ def generate_script_phase(
                 draft=script,
                 style_guide=style_guide,
                 plan=script_plan,
+                pratham_reference=pratham_reference,
             ),
             role="script_writer",
         )
@@ -791,6 +840,7 @@ def generate_script_phase(
                 draft=script,
                 style_guide=style_guide,
                 plan=script_plan,
+                pratham_reference=pratham_reference,
             ),
             role="script_writer",
         )
@@ -837,6 +887,7 @@ def generate_script_phase(
             plan=script_plan,
             plan_error=plan_error,
             set_status=set_status,
+            pratham_reference=pratham_reference,
         )
         target.script_json = json.dumps(script, ensure_ascii=False)
     elif hasattr(target, "quality_trace_json"):

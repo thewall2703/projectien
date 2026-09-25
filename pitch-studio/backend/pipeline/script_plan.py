@@ -23,6 +23,9 @@ PLAN_SYSTEM = (
     "Reuse founder excerpt phrasing when useful; convert Pratham-personal material to third person. "
     "Never plan a FORBIDDEN fact as proof, even if an excerpt states it. If an excerpt and "
     "LOCKED/REPORT disagree on a fact, plan the LOCKED/REPORT value. "
+    "When a PRATHAM PLAYBOOK is given, build at least one beat's story_device on a playbook move "
+    "(name the move in that beat's point or proof) where it fits the listener; never plan an "
+    "unverified number from the playbook or passages as proof. "
     "Return strict JSON only:\n"
     '{"throughline":"...","listener_start":"...","listener_end":"...","arc":"...",'
     '"beats":[{"topic_id":1,"role":"OPENING|BODY|CLOSE","point":"...","proof":"...",'
@@ -183,6 +186,7 @@ def plan_script(
     topic_flow: list[Any],
     style_guide: str = "",
     listener_profile: str = "",
+    pratham_reference: str = "",
 ) -> dict[str, Any] | None:
     locked, forbidden = _format_facts(facts, sequence)
     voice = "\n".join(format_founder_line(quote) for quote in founder_quotes) or "(none)"
@@ -205,7 +209,8 @@ def plan_script(
             else ""
         )
         + f"FOUNDER VOICE EXCERPTS:\n{voice}\n\n"
-        f"LOCKED:\n{locked}\n\n"
+        + (f"{pratham_reference}\n\n" if pratham_reference else "")
+        + f"LOCKED:\n{locked}\n\n"
         f"FORBIDDEN:\n{forbidden}\n\n"
         f"REPORT EVIDENCE:\n{reports}\n\n"
         "Plan one beat per topic_id above, in that order. approx_words must sum near the word budget."

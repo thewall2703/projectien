@@ -9,6 +9,16 @@ from backend.pipeline.validator import budget_range, count_script_words
 from backend.schemas import AUDIENCE_CLUSTERS, CHANNELS, DURATIONS, INTENTS, TEMPERATURES
 from backend.transcripts import format_founder_line
 
+PRATHAM_REFERENCE_RULES = (
+    "PRATHAM PLAYBOOK AND PASSAGES — more of Pratham's real speech, matched to this audience and topics:\n"
+    "- Build at least one beat on a PLAYBOOK move where it fits naturally: adapt the framework, analogy, "
+    "story shape, opener, or objection handling to this listener. Adapt the move; do not paste the whole excerpt.\n"
+    "- Use PASSAGES for rhythm, phrasing, and how he sequences an argument; borrow short phrases, not paragraphs.\n"
+    "- Same identity rules as FOUNDER VOICE: items marked personal are told in third person with attribution.\n"
+    "- These are raw transcripts, not verified facts. State a number or claim from them only if LOCKED or "
+    "REPORT EVIDENCE supports it; otherwise keep the move and drop the figure.\n\n"
+)
+
 UNIVERSITY_STATUS_LINE = (
     "Masters' Union is becoming a university, following approval from the Government of Haryana."
 )
@@ -165,6 +175,7 @@ def script_messages(
     draft: dict[str, Any] | None = None,
     style_guide: str = "",
     plan: dict[str, Any] | None = None,
+    pratham_reference: str = "",
 ) -> list[dict[str, str]]:
     locked, forbidden = _format_facts(facts, sequence)
     voice_lines = [format_founder_line(quote) for quote in (founder_quotes or [])]
@@ -222,6 +233,11 @@ def script_messages(
             "or Q&A mechanics into a pitch where they do not naturally fit.\n\n"
             if style_guide
             else "\n"
+        )
+        + (
+            PRATHAM_REFERENCE_RULES
+            if pratham_reference
+            else ""
         )
         + "IMPACT MUST BE PROPORTIONAL TO TIME:\n"
         "- 30–60 seconds: precise, specific, factual; one point and one proof.\n"
@@ -299,6 +315,7 @@ def script_messages(
             if style_guide
             else ""
         )
+        + (f"{pratham_reference}\n\n" if pratham_reference else "")
         + f"LOCKED — use verbatim where relevant:\n{locked}\n\n"
         f"FORBIDDEN — never state these:\n{forbidden}\n\n"
         f"REPORT EVIDENCE:\n{reports}"

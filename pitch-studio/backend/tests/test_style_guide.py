@@ -185,6 +185,19 @@ class IngestStyleTranscriptTests(unittest.TestCase):
         self.assertTrue(quotes)
         self.assertTrue(all(quote.source_url == url for quote in quotes))
 
+    def test_same_quote_from_overlapping_chunks_is_stored_once(self):
+        db = sessionmaker(bind=self.db.get_bind(), autoflush=False)()
+        line = "pratham mittal: I disagree with your data. " + "We keep building every single day. " * 60
+        stored = store_style_transcript(db, "Long session", f"{line}\n{line}")
+        with mock.patch("backend.pipeline.style_guide.chat_json", side_effect=self._fake_chat_json), mock.patch(
+            "backend.transcripts.chat_json", side_effect=self._fake_chat_json
+        ):
+            result = index_style_transcript(db, stored.id, ["International / NRI applicant"])
+        self.assertEqual(result["quotes_kept"], 1)
+        self.assertGreaterEqual(result["quotes_skipped"], 1)
+        self.assertEqual(db.query(FounderQuote).count(), 1)
+        db.close()
+
     def test_rejects_non_http_video_link(self):
         with self.assertRaises(ValueError):
             store_style_transcript(self.db, "Bad link", SAMPLE_VTT, "drive/file/abc")

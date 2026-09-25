@@ -383,6 +383,7 @@ def _harvest_quotes(
         if sentence.strip()
     ]
     chunks = chunk_sentences(sentences)
+    pending: set[str] = set()
     for chunk in chunks:
         try:
             snippets = curate_chunk(chunk["text"])
@@ -392,6 +393,10 @@ def _harvest_quotes(
             continue
         for snippet in snippets:
             digest = quote_hash(source_file_id, snippet["text"])
+            # Overlapping chunks can yield the same snippet before it is flushed.
+            if digest in pending:
+                skipped += 1
+                continue
             existing = db.query(FounderQuote).filter(FounderQuote.text_hash == digest).first()
             if existing:
                 if not getattr(existing, "source_style_transcript_id", 0):
@@ -415,6 +420,7 @@ def _harvest_quotes(
                     status="approved",
                 )
             )
+            pending.add(digest)
             kept += 1
     return {"quotes_kept": kept, "quotes_skipped": skipped}
 
