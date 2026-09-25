@@ -142,7 +142,16 @@ def _select_objections(
     audience_cluster: str = "",
     recipe_ref: str = "",
 ) -> list[Objection]:
-    approved = db.query(Objection).filter(Objection.status == "approved").all()
+    # Prefer approved AMA Q&As when available
+    ama_approved = (
+        db.query(Objection)
+        .filter(
+            Objection.status == "approved",
+            (Objection.source_candidate_id > 0) | (Objection.source_name != ""),
+        )
+        .all()
+    )
+    pool = ama_approved if ama_approved else db.query(Objection).filter(Objection.status == "approved").all()
     audience_label = ""
     if recipe_ref:
         from backend.models import Recipe
@@ -151,7 +160,7 @@ def _select_objections(
         if recipe is not None:
             audience_label = recipe.audience_label or ""
     return rank_objections_for_pitch(
-        approved,
+        pool,
         audience_cluster=audience_cluster,
         audience_label=audience_label,
         intent=intent,

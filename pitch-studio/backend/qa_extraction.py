@@ -732,12 +732,23 @@ def reject_candidate(db: Session, candidate_id: int, review_note: str = "") -> Q
 
 
 AUDIENCE_HINTS = {
-    "A": ("student", "parent", "ug", "pg", "aspirant", "school", "applicant", "family"),
-    "B": ("faculty", "hire", "employee", "candidate", "team", "cxo", "teacher"),
-    "C": ("investor", "vc", "bank", "lender", "donor", "fund", "capital"),
-    "D": ("recruiter", "corporate", "l&d", "partner", "vendor", "enterprise", "hire"),
-    "E": ("government", "regulator", "accreditation", "ranking", "university", "auditor"),
-    "F": ("journalist", "press", "alumni", "creator", "public", "media", "social"),
+    "A": (
+        "student", "students", "parent", "parents", "ug", "pg",
+        "aspirant", "aspirants", "school", "applicant", "applicants",
+        "family", "admission", "admissions", "faculty", "degree",
+        "vision", "brand", "eligibility",
+    ),
+    "B": ("faculty", "hire", "employee", "candidate", "team", "cxo", "teacher", "academic"),
+    "C": ("investor", "vc", "bank", "lender", "donor", "fund", "capital", "vision", "governance"),
+    "D": ("recruiter", "corporate", "l&d", "partner", "vendor", "enterprise", "hire", "placement", "skills"),
+    "E": ("government", "regulator", "accreditation", "ranking", "university", "auditor", "degree", "psu"),
+    "F": ("journalist", "press", "alumni", "creator", "public", "media", "social", "vision", "story"),
+}
+
+_STOPWORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
+    "has", "he", "in", "into", "is", "it", "its", "of", "on", "or",
+    "that", "the", "to", "was", "were", "will", "with", "one", "two", "many",
 }
 
 
@@ -753,13 +764,18 @@ def rank_objections_for_pitch(
         return []
     cluster = (audience_cluster or "").strip().upper()
     hints = set(AUDIENCE_HINTS.get(cluster, ()))
-    label_tokens = set(normalize_question(audience_label).split()) if audience_label else set()
+    raw_label_tokens = set(normalize_question(audience_label).split()) if audience_label else set()
+    label_tokens = {t for t in raw_label_tokens if t not in _STOPWORDS and len(t) > 2}
     defend = intent == "I3"
 
     def score(row: Objection) -> tuple[int, int, int]:
         haystack = normalize_question(f"{row.who_asks} {row.question} {row.move}")
         tokens = set(haystack.split())
-        hint_hits = sum(1 for hint in hints if hint in haystack)
+        hint_hits = sum(
+            1
+            for hint in hints
+            if (hint in tokens if len(hint) <= 3 else (hint in tokens or hint in haystack))
+        )
         label_hits = len(tokens & label_tokens)
         defend_boost = 1 if defend and any(word in haystack for word in ("object", "concern", "doubt", "why not", "roi")) else 0
         return (hint_hits + label_hits + defend_boost, label_hits, -row.id)

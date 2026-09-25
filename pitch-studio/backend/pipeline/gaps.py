@@ -1227,7 +1227,19 @@ def _ranked_objections(db: Any, intent: str, audience_cluster: str, recipe_ref: 
     from backend.qa_extraction import rank_objections_for_pitch
 
     try:
-        approved = _safe_all(db.query(Objection).filter(Objection.status == "approved").all())
+        ama_approved = _safe_all(
+            db.query(Objection)
+            .filter(
+                Objection.status == "approved",
+                (Objection.source_candidate_id > 0) | (Objection.source_name != ""),
+            )
+            .all()
+        )
+        approved = (
+            ama_approved
+            if ama_approved
+            else _safe_all(db.query(Objection).filter(Objection.status == "approved").all())
+        )
     except Exception:  # noqa: BLE001
         return []
     if not approved:

@@ -180,6 +180,24 @@ class RankTests(unittest.TestCase):
         ranked = rank_objections_for_pitch(rows, audience_cluster="A", audience_label="Parent of UG aspirant", limit=2)
         self.assertEqual(ranked[0].id, 2)
 
+    def test_select_objections_prefers_ama_approved(self):
+        from unittest.mock import MagicMock
+        from backend.pipeline.runner import _select_objections
+
+        db = MagicMock()
+        seed_obj = Objection(id=5, question="Seed?", who_asks="Parent", status="approved", source_candidate_id=0, source_name="")
+        ama_obj = Objection(id=20, question="AMA Brand?", who_asks="Prospective applicant", status="approved", source_candidate_id=29, source_name="AMA")
+
+        # Mocking db query
+        def filter_mock(*args, **kwargs):
+            query_mock = MagicMock()
+            query_mock.all.return_value = [ama_obj]
+            return query_mock
+
+        db.query.return_value.filter.side_effect = filter_mock
+        selected = _select_objections(db, intent="I1", audience_cluster="A", recipe_ref="")
+        self.assertTrue(any(item.id == 20 for item in selected))
+
 
 class ExtractionFlowTests(unittest.TestCase):
     def test_extract_pairs_from_transcript_with_stub_curate(self):
