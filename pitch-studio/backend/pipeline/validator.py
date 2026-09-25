@@ -23,7 +23,7 @@ OPENING_CAMPUS_RE = re.compile(r"\b(?:Gurugram|Cyberpark|campus)\b", re.IGNORECA
 # positive forces a rewrite and can fail the generation after retries.
 DANGLING_END_WORDS = frozenset(
     {
-        "a", "an", "the", "and", "or", "but", "nor", "of", "if", "because", "although",
+        "a", "an", "the", "and", "or", "but", "nor", "if", "because", "although",
         "whether", "than", "my", "your", "our", "their", "its", "very",
         "i'm", "you're", "we're", "they're", "it's", "that's", "there's", "here's",
         "what's", "who's", "he's", "she's", "let's",

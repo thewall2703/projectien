@@ -204,6 +204,7 @@ class ValidatorTests(unittest.TestCase):
     def test_complete_sentences_are_not_flagged(self):
         text = (
             "People ask what this place is really about. That's what it's about. "
+            "Now look at the wider bodies we're part of. "
             "You can see the work, meet the people and decide for yourself what's true."
         )
         self.assertEqual(self._integrity(text), [])

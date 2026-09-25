@@ -203,10 +203,22 @@ def flow_notes(result: dict[str, Any], limit: int = 8) -> list[str]:
         scored.append(
             (int(natural.get("score") or 3), f"Naturalness: {natural.get('issue')}")
         )
-    for phrase in result.get("repetition") or []:
-        text = normalize_whitespace(str(phrase or ""))
-        if text:
-            scored.append((2, f"Repetition: cut or vary «{text}»."))
+    # One combined note that sorts first: separate repetition notes were crowded out
+    # of the capped list by grammar notes, so repeats never reached the writer.
+    repeats = [
+        text
+        for text in (normalize_whitespace(str(phrase or "")) for phrase in result.get("repetition") or [])
+        if text
+    ]
+    if repeats:
+        scored.append(
+            (
+                0,
+                "Repetition — each of these is said more than once. Say it once, in the section "
+                "where it lands best, and cut or replace the repeat: "
+                + "; ".join(f"({index}) {text}" for index, text in enumerate(repeats[:10], 1)),
+            )
+        )
     for item in result.get("grammar") or []:
         if not isinstance(item, dict):
             continue

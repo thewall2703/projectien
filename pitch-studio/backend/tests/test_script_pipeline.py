@@ -102,6 +102,19 @@ class FlowCheckUnitTests(unittest.TestCase):
         self.assertTrue(any("list of claims" in note for note in notes))
         self.assertTrue(any("grammar" in note for note in notes))
 
+    def test_repetition_is_one_note_that_survives_the_cap(self):
+        result = normalize_flow_result(
+            {
+                "grammar": [{"topic_id": n, "quote": f"We is {n}", "fix": "We are"} for n in range(12)],
+                "repetition": ["Faculty mix in 7 and 8", "152 immersions in 7 and 18"],
+            }
+        )
+        notes = flow_notes(result, limit=8)
+        self.assertTrue(notes[0].startswith("Repetition"))
+        self.assertIn("Faculty mix in 7 and 8", notes[0])
+        self.assertIn("152 immersions in 7 and 18", notes[0])
+        self.assertEqual(sum(note.startswith("Repetition") for note in notes), 1)
+
     def test_flow_passed_thresholds(self):
         good = normalize_flow_result(
             {
@@ -511,6 +524,53 @@ class QualityLoopTests(unittest.TestCase):
         self.assertEqual(result.script["sections"][0]["text"], "Original script text here.")
         trace = json.loads(target.quality_trace_json)
         self.assertEqual(trace["rounds"][0]["rewrite"], "rejected")
+
+    def test_rewrite_with_rule_violation_gets_one_repair_pass(self):
+        target = self._target()
+
+        def script_with(text):
+            return {
+                "sections": [
+                    {"topic_id": 1, "topic_title": "Open", "pages": [1], "heading": "Open", "text": text}
+                ],
+                "cta": "Come Saturday.",
+            }
+
+        replies = [
+            script_with("Original script text here."),
+            script_with("Rewrite with a slip."),
+            script_with("Repaired rewrite text."),
+        ]
+        chat_messages: list = []
+
+        def chat_side_effect(messages, *_a, **_k):
+            chat_messages.append(messages)
+            return replies[len(chat_messages) - 1]
+
+        validations = iter([[], ["Section 1 has a sentence cut off mid-thought"], []])
+        with mock.patch("backend.audience.latest_listener_profile", return_value=""), mock.patch(
+            "backend.audience.listener_examples_for_persona", return_value=[]
+        ), mock.patch(
+            "backend.pipeline.runner.check_flow",
+            side_effect=[self._fail_flow(), self._pass_flow()],
+        ), mock.patch(
+            "backend.pipeline.runner.simulate_audience",
+            side_effect=[self._fail_listener(), self._pass_listener()],
+        ), mock.patch(
+            "backend.pipeline.runner.validate_script",
+            side_effect=lambda *_a, **_k: next(validations),
+        ):
+            result = self._run_phase(
+                target,
+                script=replies[0],
+                reviews=[{"passed": True, "score": 0.9, "violations": []}] * 4,
+                chat_side_effect=chat_side_effect,
+            )
+        self.assertEqual(result.script["sections"][0]["text"], "Repaired rewrite text.")
+        self.assertIn("cut off mid-thought", chat_messages[2][-1]["content"])
+        trace = json.loads(target.quality_trace_json)
+        self.assertEqual(trace["rounds"][0]["rewrite"], "accepted")
+        self.assertEqual(trace["kept_round"], 2)
 
     def test_judge_exception_does_not_fail_run(self):
         target = self._target()

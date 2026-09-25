@@ -266,34 +266,42 @@ def _rewrite_script_with_corrections(
     draft: dict[str, Any],
     plan: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[str], dict[str, Any]]:
-    """Rewrite → budget repair → voice review. Returns (script, violations, review)."""
-    script = chat_json(
-        script_messages(
-            audience_cluster=target.audience_cluster,
-            duration=target.duration,
-            channel=target.channel,
-            intent=target.intent,
-            temperature=target.temperature,
-            context_note=target.context_note,
-            modules=modules,
-            sequence=sequence,
-            facts=facts,
-            word_budget=word_budget,
-            founder_quotes=founder_quotes,
-            report_passages=report_passages,
-            topic_flow=topic_flow,
-            corrections=corrections,
-            draft=draft,
-            style_guide=style_guide,
-            plan=plan,
-        ),
-        role="script_writer",
-    )
-    script = align_script_to_topics(script, topic_flow, modules)
-    ScriptPayload.model_validate(script)
-    script, violations = _validate_and_repair_budget(
-        script, facts, sequence, word_budget, topic_flow
-    )
+    """Rewrite → budget repair (one repair pass on rule violations) → voice review.
+
+    Returns (script, violations, review).
+    """
+    script = draft
+    violations: list[str] = []
+    for _attempt in range(2):
+        script = chat_json(
+            script_messages(
+                audience_cluster=target.audience_cluster,
+                duration=target.duration,
+                channel=target.channel,
+                intent=target.intent,
+                temperature=target.temperature,
+                context_note=target.context_note,
+                modules=modules,
+                sequence=sequence,
+                facts=facts,
+                word_budget=word_budget,
+                founder_quotes=founder_quotes,
+                report_passages=report_passages,
+                topic_flow=topic_flow,
+                corrections=violations or corrections,
+                draft=script,
+                style_guide=style_guide,
+                plan=plan,
+            ),
+            role="script_writer",
+        )
+        script = align_script_to_topics(script, topic_flow, modules)
+        ScriptPayload.model_validate(script)
+        script, violations = _validate_and_repair_budget(
+            script, facts, sequence, word_budget, topic_flow
+        )
+        if not violations:
+            break
     if violations:
         return script, violations, {"passed": False, "violations": violations, "score": 0.0}
     review = review_pratham_voice(
