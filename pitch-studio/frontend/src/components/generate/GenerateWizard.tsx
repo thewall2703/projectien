@@ -62,6 +62,28 @@ const DECK_USE_CASES: { code: string; label: string }[] = [
   { code: "parents_decided", label: "Parents, decided" },
 ];
 
+function useCaseForPersona(label: string, temperature: string): string {
+  const text = label.trim().toLowerCase();
+  if (!text || text.startsWith("universal")) return "";
+  if (text.includes("dsai") || text.includes("data science")) return "ug_dsai";
+  if (text.includes("pgp smg") || text.includes("sports management")) return "pgp_smg";
+  if (text.includes("tbm") && (/\bug\b/.test(text) || text.includes("school") || text.includes("class 11"))) {
+    return "ug_tbm";
+  }
+  if (text.includes("parent")) return temperature === "X4" || temperature === "X5" ? "parents_decided" : "parents_undecided";
+  if (text.includes("school student") || text.includes("school assembly") || text.includes("class 11")) {
+    return "school_fair";
+  }
+  if (
+    ["final-year", "final year", "working professional", "mid-career", "family business", "pg switch", "pg aspirant"].some(
+      (token) => text.includes(token),
+    )
+  ) {
+    return "pg_exec_fair";
+  }
+  return "";
+}
+
 function personaOptionLabel(recipe: RecipeOption, siblings: RecipeOption[]): string {
   const clash = siblings.filter((row) => row.audience_label === recipe.audience_label).length > 1;
   const name = recipe.audience_label || "Untitled persona";
@@ -233,6 +255,12 @@ export default function GenerateWizard({
   }, []);
 
   const currentBriefKey = briefKey(audienceText, settingText, goalText);
+
+  useEffect(() => {
+    const recipe = recipes.find((row) => row.ref === selected);
+    if (!selected || !recipe) return;
+    setDeckUseCase(useCaseForPersona(recipe.audience_label, temperature));
+  }, [selected, temperature, recipes]);
 
   useEffect(() => {
     if (STEPS[step] !== "review") return;

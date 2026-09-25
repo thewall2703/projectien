@@ -49,6 +49,36 @@ class NormalizeInterpretTests(unittest.TestCase):
         self.assertIn("prospective parents", result.summary.lower())
         self.assertEqual(result.notes, "Emphasise campus visit next.")
 
+    def test_use_case_follows_selected_persona(self):
+        result = normalize_interpret_payload(
+            valid_raw(deck_use_case="ug_dsai", temperature="X1"),
+            {"A1-1"},
+            {"A1-1": "School student, Class 11–12 (UG)"},
+        )
+        self.assertEqual(result.deck_use_case, "school_fair")
+        parent = normalize_interpret_payload(
+            valid_raw(
+                recipe_ref="A2-1",
+                temperature="X5",
+                deck_use_case="",
+                persona_candidates=[{"recipe_ref": "A2-1", "confidence": 0.9, "rationale": ""}],
+            ),
+            {"A2-1"},
+            {"A2-1": "Parent of UG aspirant"},
+        )
+        self.assertEqual(parent.deck_use_case, "parents_decided")
+        recruiter = normalize_interpret_payload(
+            valid_raw(
+                recipe_ref="D1-1",
+                temperature="X1",
+                deck_use_case="school_fair",
+                persona_candidates=[{"recipe_ref": "D1-1", "confidence": 0.9, "rationale": ""}],
+            ),
+            {"D1-1"},
+            {"D1-1": "Recruiter — first call"},
+        )
+        self.assertEqual(recruiter.deck_use_case, "")
+
     def test_deck_use_case_normalized_and_parent_temperature_nudge(self):
         result = normalize_interpret_payload(
             valid_raw(deck_use_case="parents_undecided", temperature="X4"),

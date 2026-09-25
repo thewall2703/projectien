@@ -19,7 +19,7 @@ from backend.schemas import (
     InterpretRequest,
     InterpretResult,
 )
-from backend.pipeline.vision_deck import USE_CASES, USE_CASE_KEYS, normalize_use_case
+from backend.pipeline.vision_deck import USE_CASES, USE_CASE_KEYS, normalize_use_case, use_case_for_persona
 
 # Auto-select the highest-confidence persona when it is at least this strong.
 PERSONA_AUTO_MIN_CONFIDENCE = 0.7
@@ -172,7 +172,11 @@ def _pick_recipe_ref(recipe_ref: str, candidates: list[InterpretPersonaCandidate
     return ""
 
 
-def normalize_interpret_payload(raw: dict[str, Any], known_refs: set[str]) -> InterpretResult:
+def normalize_interpret_payload(
+    raw: dict[str, Any],
+    known_refs: set[str],
+    persona_labels: dict[str, str] | None = None,
+) -> InterpretResult:
     audience = str(raw.get("audience_cluster") or "").strip()
     duration = str(raw.get("duration") or "").strip()
     channel = str(raw.get("channel") or "").strip()
@@ -197,11 +201,6 @@ def normalize_interpret_payload(raw: dict[str, Any], known_refs: set[str]) -> In
     if invalid:
         raise InterpretError(f"Interpreter returned invalid axis codes: {', '.join(invalid)}")
 
-    # Parent temperature nudge when the model left the use case blank but
-    # clearly picked a parent persona.
-    if temperature in {"X4", "X5"} and deck_use_case == "parents_undecided":
-        deck_use_case = "parents_decided"
-
     candidates = _normalize_persona_candidates(raw.get("persona_candidates"), known_refs)
     if recipe_ref and recipe_ref in known_refs and not any(c.recipe_ref == recipe_ref for c in candidates):
         # Preserve an explicit clear match even if the model omitted the score array.
@@ -210,6 +209,13 @@ def normalize_interpret_payload(raw: dict[str, Any], known_refs: set[str]) -> In
             *candidates,
         ][:PERSONA_CANDIDATE_LIMIT]
     recipe_ref = _pick_recipe_ref(recipe_ref, candidates, known_refs)
+    if persona_labels is not None and recipe_ref:
+        deck_use_case = use_case_for_persona(
+            persona_labels.get(recipe_ref, ""),
+            temperature=temperature,
+        )
+    elif temperature in {"X4", "X5"} and deck_use_case == "parents_undecided":
+        deck_use_case = "parents_decided"
 
     return InterpretResult(
         audience_cluster=audience,
@@ -248,4 +254,8 @@ def interpret_brief(db: Session, payload: InterpretRequest) -> InterpretResult:
     if not isinstance(raw, dict):
         raise InterpretError("Interpreter did not return a JSON object")
     known_refs = {recipe.ref for recipe in recipes}
-    return normalize_interpret_payload(raw, known_refs)
+    return normalize_interpret_payload(
+        raw,
+        known_refs,
+        {recipe.ref: recipe.audience_label or "" for recipe in recipes},
+    )

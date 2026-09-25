@@ -97,6 +97,41 @@ _USE_CASE_ALIASES.update(
 )
 
 
+def use_case_for_persona(label: str, *, temperature: str = "") -> str:
+    """Deck use case implied by a persona label, or ``""`` when none applies.
+
+    Parents at X4/X5 are ``parents_decided``; cooler parent pitches stay
+    ``parents_undecided``.
+    """
+    text = _normalize_use_case_text(label)
+    if not text or text.startswith("universal"):
+        return ""
+    if "dsai" in text or "data science" in text:
+        return "ug_dsai"
+    if "pgp smg" in text or "sports management" in text:
+        return "pgp_smg"
+    if "tbm" in text and re.search(r"\bug\b|school|class 11", text):
+        return "ug_tbm"
+    if "parent" in text:
+        return "parents_decided" if temperature in {"X4", "X5"} else "parents_undecided"
+    if "school student" in text or "school assembly" in text or "class 11" in text:
+        return "school_fair"
+    if any(
+        token in text
+        for token in (
+            "final-year",
+            "final year",
+            "working professional",
+            "mid-career",
+            "family business",
+            "pg switch",
+            "pg aspirant",
+        )
+    ):
+        return "pg_exec_fair"
+    return ""
+
+
 def normalize_use_case(value: str | None) -> str:
     """Map a free-text or key use case to a stable key, or ``""`` if unknown."""
     raw = (value or "").strip()
