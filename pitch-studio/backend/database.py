@@ -94,6 +94,7 @@ GENERATION_COLUMN_SQL = {
     "report_passages_json": "ALTER TABLE generations ADD COLUMN report_passages_json TEXT DEFAULT ''",
     "cache_key": "ALTER TABLE generations ADD COLUMN cache_key VARCHAR(64) DEFAULT ''",
     "cached_from_id": "ALTER TABLE generations ADD COLUMN cached_from_id INTEGER",
+    "deck_use_case": "ALTER TABLE generations ADD COLUMN deck_use_case VARCHAR(64) DEFAULT ''",
 }
 
 OBJECTION_COLUMN_SQL = {
@@ -114,6 +115,10 @@ VOICE_STYLE_GUIDE_COLUMN_SQL = {
 
 STYLE_TRANSCRIPT_COLUMN_SQL = {
     "source_url": "ALTER TABLE style_transcripts ADD COLUMN source_url VARCHAR(1000) DEFAULT ''",
+}
+
+SCRIPT_TEST_RUN_COLUMN_SQL = {
+    "deck_use_case": "ALTER TABLE script_test_runs ADD COLUMN deck_use_case VARCHAR(64) DEFAULT ''",
 }
 
 DECK_TOPIC_COLUMN_SQL = {
@@ -209,6 +214,7 @@ def ensure_schema() -> None:
     _add_missing_columns("voice_style_guides", VOICE_STYLE_GUIDE_COLUMN_SQL)
     _add_missing_columns("style_transcripts", STYLE_TRANSCRIPT_COLUMN_SQL)
     _add_missing_columns("deck_topics", DECK_TOPIC_COLUMN_SQL)
+    _add_missing_columns("script_test_runs", SCRIPT_TEST_RUN_COLUMN_SQL)
     _ensure_generation_cache_key_index()
     _backfill_founder_quote_style_provenance()
     _SCHEMA_READY = True

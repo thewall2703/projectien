@@ -19,6 +19,7 @@ from backend.schemas import (
     InterpretRequest,
     InterpretResult,
 )
+from backend.pipeline.vision_deck import USE_CASES, USE_CASE_KEYS, normalize_use_case
 
 # Auto-select the highest-confidence persona when it is at least this strong.
 PERSONA_AUTO_MIN_CONFIDENCE = 0.7
@@ -29,6 +30,7 @@ VALID_DURATION = {item.code for item in DURATIONS}
 VALID_CHANNEL = {item.code for item in CHANNELS}
 VALID_INTENT = {item.code for item in INTENTS}
 VALID_TEMPERATURE = {item.code for item in TEMPERATURES}
+VALID_DECK_USE_CASE = set(USE_CASE_KEYS)
 
 
 class InterpretError(RuntimeError):
@@ -39,6 +41,17 @@ def _format_catalog(title: str, options: list[AxisOption]) -> str:
     lines = [f"{title}:"]
     for option in options:
         lines.append(f"- {option.code}: {option.label} — {option.description}")
+    return "\n".join(lines)
+
+
+def _format_deck_use_cases() -> str:
+    lines = [
+        "Deck use cases (only for admissions / career-fair / parent pitches that map "
+        "to the Brand Deck vision sheet; empty string for recruiters, investors, faculty, etc.):"
+    ]
+    for key, label in USE_CASES:
+        lines.append(f"- {key}: {label}")
+    lines.append("- (empty string): no vision mapping — use the legacy module recipe")
     return "\n".join(lines)
 
 
@@ -67,17 +80,24 @@ def build_interpret_messages(
             _format_catalog("Channels", CHANNELS),
             _format_catalog("Intents", INTENTS),
             _format_catalog("Temperatures", TEMPERATURES),
+            _format_deck_use_cases(),
             _format_recipes(recipes),
         ]
     )
     system = (
         "You map plain-language pitch briefs to internal axis codes for Masters' Union Pitch Studio. "
         "Return strict JSON only with these keys: audience_cluster, duration, channel, intent, "
-        "temperature, recipe_ref, persona_candidates, summary, notes. "
+        "temperature, recipe_ref, deck_use_case, persona_candidates, summary, notes. "
         "Choose codes only from the catalogs provided. "
         "Duration and channel MUST follow the Setting text first. Pick the nearest existing duration "
         "code only: T0=30s, T1=2m, T2=5m, T3=10m, T4=30m, T5=90m. There is no 60-minute code — "
         "map 'about an hour' / 45-75 minutes to T5 (90 minutes), never invent a length. "
+        "deck_use_case must be one of the listed keys when the audience is school students at a "
+        "career fair, PG/Exec aspirants at a fair, PGP SMG, UG TBM, UG DSAI, or parents "
+        "(undecided vs decided). Temperature X4 or X5 for parents leans toward parents_decided; "
+        "X1–X3 for parents leans toward parents_undecided. "
+        "For recruiters, investors, faculty, employees, press, government, or any audience that "
+        "is not one of those seven, set deck_use_case to an empty string. "
         "persona_candidates must be an array of the 1-2 closest personas from the recipe catalog, "
         "each as {recipe_ref, confidence, rationale}. confidence is a number from 0 to 1 for how "
         "well that persona matches Who they are pitching to (audience fit only — ignore that the "
@@ -159,6 +179,7 @@ def normalize_interpret_payload(raw: dict[str, Any], known_refs: set[str]) -> In
     intent = str(raw.get("intent") or "").strip()
     temperature = str(raw.get("temperature") or "").strip()
     recipe_ref = str(raw.get("recipe_ref") or "").strip()
+    deck_use_case = normalize_use_case(str(raw.get("deck_use_case") or "").strip())
     summary = str(raw.get("summary") or "").strip()
     notes = str(raw.get("notes") or "").strip()
 
@@ -176,6 +197,11 @@ def normalize_interpret_payload(raw: dict[str, Any], known_refs: set[str]) -> In
     if invalid:
         raise InterpretError(f"Interpreter returned invalid axis codes: {', '.join(invalid)}")
 
+    # Parent temperature nudge when the model left the use case blank but
+    # clearly picked a parent persona.
+    if temperature in {"X4", "X5"} and deck_use_case == "parents_undecided":
+        deck_use_case = "parents_decided"
+
     candidates = _normalize_persona_candidates(raw.get("persona_candidates"), known_refs)
     if recipe_ref and recipe_ref in known_refs and not any(c.recipe_ref == recipe_ref for c in candidates):
         # Preserve an explicit clear match even if the model omitted the score array.
@@ -192,6 +218,7 @@ def normalize_interpret_payload(raw: dict[str, Any], known_refs: set[str]) -> In
         intent=intent,
         temperature=temperature,
         recipe_ref=recipe_ref,
+        deck_use_case=deck_use_case if deck_use_case in VALID_DECK_USE_CASE else "",
         persona_candidates=candidates,
         summary=summary,
         notes=notes,

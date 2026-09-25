@@ -22,7 +22,7 @@ from backend.pipeline.dsai_deck import (
     is_dsai_request,
     load_dsai_slides,
 )
-from backend.pipeline.gaps import plan_with_generated_slides
+from backend.pipeline.gaps import plan_with_generated_slides, vision_candidates_from_instructions
 from backend.pipeline.slide_fill import realize_generated_slides
 from backend.pipeline.llm import chat_json
 from backend.pipeline.prompts import review_pratham_voice, script_messages
@@ -35,9 +35,60 @@ from backend.pipeline.script_flow import (
     reconcile_realized_slide_mapping,
 )
 from backend.pipeline.validator import align_script_to_topics, trim_script_to_budget, validate_script
+from backend.pipeline.vision_deck import (
+    VisionSectionPlan,
+    insert_at_section,
+    load_vision_sections,
+    module_sequence_from_pages,
+    module_sequence_from_slides,
+    normalize_use_case,
+    plan_vision_pages,
+)
 from backend.schemas import ScriptPayload
 from backend.transcripts import pick_founder_quotes
 from backend.qa_extraction import rank_objections_for_pitch
+
+
+def _vision_dsai_slides(
+    db: Session,
+    recipe_ref: str,
+    blank_sections: list[VisionSectionPlan],
+    ceiling: int,
+) -> list[Any]:
+    """DS & AI pages for the sections a ug_dsai vision row leaves blank.
+
+    Topics whose modules overlap those sections' brand modules are preferred;
+    with no overlap every eligible topic is considered.
+    """
+    from backend.models import DeckTopic
+    from backend.pipeline import dsai_deck
+
+    asset = dsai_deck.find_dsai_asset(db)
+    if asset is None:
+        return []
+    wanted: list[str] = []
+    for section in blank_sections:
+        for module_id in module_sequence_from_pages(section.section_pages):
+            if module_id != "M14" and module_id not in wanted:
+                wanted.append(module_id)
+    topics = (
+        db.query(DeckTopic)
+        .filter(DeckTopic.deck == dsai_deck.DECK_KEY)
+        .order_by(DeckTopic.sort_order, DeckTopic.id)
+        .all()
+    )
+    overlapping = [
+        topic
+        for topic in topics
+        if set(wanted) & {part.strip() for part in (topic.module_ids or "").split(",")}
+    ]
+    return dsai_deck.select_dsai_slides(
+        overlapping or topics,
+        recipe_ref=recipe_ref,
+        sequence=wanted,
+        budget=dsai_slide_budget(ceiling),
+        labels=dsai_deck.page_labels(asset),
+    )
 
 
 class ScriptTarget(Protocol):
@@ -48,6 +99,7 @@ class ScriptTarget(Protocol):
     temperature: str
     context_note: str
     recipe_ref: str
+    deck_use_case: str
     module_sequence: str
     script_json: str
     validation_report: str
@@ -228,22 +280,64 @@ def generate_script_phase(
     style_guide = latest_style_guide(db, persona_label=persona_label)
     report_passages = pick_report_passages(db.query(Asset).all(), resolved.module_sequence)
     ceiling = slide_ceiling_for(target.duration)
-    dsai_slides = (
-        load_dsai_slides(
-            db,
-            recipe_ref=target.recipe_ref,
-            sequence=resolved.module_sequence,
-            budget=dsai_slide_budget(ceiling),
+    deck_use_case = normalize_use_case(getattr(target, "deck_use_case", "") or "")
+    vision_sections = load_vision_sections(db, deck_use_case) if deck_use_case else []
+
+    vision_instructions: list[Any] = []
+    if vision_sections:
+        # Vision spine: sheet pages in authored order, trimmed to the ceiling.
+        # For ug_dsai, DS & AI pages stand in for the sections left blank.
+        blank = [section for section in vision_sections if not section.pages]
+        dsai_slides = (
+            _vision_dsai_slides(db, target.recipe_ref, blank, ceiling)
+            if deck_use_case == "ug_dsai" and blank
+            else []
         )
-        if is_dsai_request(target.context_note)
-        else []
-    )
-    brand_ceiling = ceiling - len(dsai_slides)
-    plan = plan_pages(resolved.module_sequence, brand_ceiling)
-    # Stage 3: fill true gaps the brand deck cannot answer. Prefers swapping in a
-    # real unused brand page (RULE ZERO); only otherwise plants a generated
-    # placeholder for Stage 4 to fill/render. Returns the plan unchanged when
-    # there is no true gap (or at T0). Rendering is not touched here.
+        vision_result = plan_vision_pages(
+            vision_sections,
+            target.duration,
+            use_case=deck_use_case,
+            ceiling=ceiling - len(dsai_slides),
+        )
+        plan = insert_at_section(
+            vision_result.slides,
+            dsai_slides,
+            vision_result,
+            blank[0].section_order if blank else 0,
+        )
+        gap_ceiling = ceiling
+        vision_instructions = list(vision_result.instructions)
+        # Script / validator follow the modules the deck actually carries.
+        resolved = ResolvedRecipe(
+            ref=resolved.ref,
+            module_sequence=module_sequence_from_slides(plan),
+            word_budget=resolved.word_budget,
+        )
+        target.module_sequence = ">".join(resolved.module_sequence)
+        db.commit()
+        modules = db.query(Module).filter(Module.id.in_(resolved.module_sequence)).all()
+        report_passages = pick_report_passages(db.query(Asset).all(), resolved.module_sequence)
+        founder_quotes = _select_founder_quotes(
+            db,
+            resolved.module_sequence,
+            persona_label=persona_label,
+        )
+    else:
+        # Legacy path: module round-robin, plus optional DSAI from context text.
+        dsai_slides = (
+            load_dsai_slides(
+                db,
+                recipe_ref=target.recipe_ref,
+                sequence=resolved.module_sequence,
+                budget=dsai_slide_budget(ceiling),
+            )
+            if is_dsai_request(target.context_note)
+            else []
+        )
+        gap_ceiling = ceiling - len(dsai_slides)
+        plan = plan_pages(resolved.module_sequence, gap_ceiling)
+
+    # Stage 3: vision loglines first (when mapped), then heuristic gaps.
     plan = plan_with_generated_slides(
         db,
         plan,
@@ -254,9 +348,11 @@ def generate_script_phase(
         audience_cluster=target.audience_cluster,
         recipe_ref=target.recipe_ref,
         modules=modules,
-        ceiling=brand_ceiling,
+        ceiling=gap_ceiling,
+        vision_candidates=vision_candidates_from_instructions(vision_instructions),
     )
-    plan = insert_before_closing(plan, dsai_slides)
+    if not vision_sections:
+        plan = insert_before_closing(plan, dsai_slides)
     try:
         topic_flow = load_script_topics(db, plan, resolved.module_sequence)
     except ScriptFlowError as exc:

@@ -73,13 +73,15 @@ class BrandSlide:
     Satisfies the :class:`~backend.pipeline.deck.PlannedSlide` interface, so it
     can be rendered or serialised without the caller knowing it is a brand
     page. ``occurrence`` is 1-based and only ever exceeds 1 when the same page
-    is intentionally placed twice in one plan.
+    is intentionally placed twice in one plan. ``section`` is the vision-mapping
+    section title when the slide came from that planner; empty otherwise.
     """
 
     page: int
     module_id: str
     label: str
     occurrence: int = 1
+    section: str = ""
 
     @property
     def image_url(self) -> str:

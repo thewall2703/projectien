@@ -312,6 +312,7 @@ class GenerationCreate(BaseModel):
     temperature: str
     context_note: str = ""
     recipe_ref: str = ""
+    deck_use_case: str = ""
 
 
 class InterpretRequest(BaseModel):
@@ -333,6 +334,7 @@ class InterpretResult(BaseModel):
     intent: str
     temperature: str
     recipe_ref: str = ""
+    deck_use_case: str = ""
     persona_candidates: list[InterpretPersonaCandidate] = Field(default_factory=list)
     summary: str = ""
     notes: str = ""
@@ -364,6 +366,7 @@ class GenerationOut(BaseModel):
     temperature: str
     context_note: str
     recipe_ref: str
+    deck_use_case: str = ""
     module_sequence: str
     status: str
     script_json: str
@@ -399,6 +402,7 @@ class ScriptTestCreate(BaseModel):
     temperature: str
     context_note: str = ""
     recipe_ref: str = ""
+    deck_use_case: str = ""
 
 
 class ScriptTestSentenceOut(BaseModel):
@@ -508,6 +512,7 @@ class ScriptTestRunListItem(BaseModel):
     temperature: str
     context_note: str = ""
     recipe_ref: str
+    deck_use_case: str = ""
     module_sequence: str = ""
     status: str
     validation_report: str = ""
@@ -529,6 +534,7 @@ class ScriptTestRunOut(BaseModel):
     temperature: str
     context_note: str
     recipe_ref: str
+    deck_use_case: str = ""
     module_sequence: str
     status: str
     script_json: str = ""
@@ -556,6 +562,7 @@ class SeedCounts(BaseModel):
     recipes: int
     objections: int
     assets: int
+    vision_rows: int = 0
 
 
 class SyncCounts(BaseModel):

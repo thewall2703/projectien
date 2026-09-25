@@ -133,6 +133,7 @@ class Generation(Base):
     temperature: Mapped[str] = mapped_column(String(8))
     context_note: Mapped[str] = mapped_column(Text, default="")
     recipe_ref: Mapped[str] = mapped_column(String(32), default="")
+    deck_use_case: Mapped[str] = mapped_column(String(64), default="")
     module_sequence: Mapped[str] = mapped_column(String(500), default="")
     status: Mapped[str] = mapped_column(String(32), default="queued")
     script_json: Mapped[str] = mapped_column(Text, default="")
@@ -150,6 +151,27 @@ class Generation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     user: Mapped[User] = relationship(back_populates="generations")
+
+
+class DeckVisionRow(Base):
+    """One section × use-case row from the Deck - Vision Mapping sheet."""
+
+    __tablename__ = "deck_vision_rows"
+    __table_args__ = (
+        UniqueConstraint("use_case", "section_order", name="uq_deck_vision_use_case_section"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    section: Mapped[str] = mapped_column(String(255), default="")
+    section_order: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    use_case: Mapped[str] = mapped_column(String(64), index=True)
+    pages_json: Mapped[str] = mapped_column(Text, default="[]")
+    section_pages_json: Mapped[str] = mapped_column(Text, default="[]")
+    needs_more: Mapped[bool] = mapped_column(Boolean, default=False)
+    logline: Mapped[str] = mapped_column(Text, default="")
+    instructions_json: Mapped[str] = mapped_column(Text, default="[]")
+    design_status: Mapped[str] = mapped_column(String(255), default="")
+    slide_status: Mapped[str] = mapped_column(String(255), default="")
 
 
 class AppState(Base):
@@ -251,6 +273,7 @@ class ScriptTestRun(Base):
     temperature: Mapped[str] = mapped_column(String(8))
     context_note: Mapped[str] = mapped_column(Text, default="")
     recipe_ref: Mapped[str] = mapped_column(String(32), default="")
+    deck_use_case: Mapped[str] = mapped_column(String(64), default="")
     module_sequence: Mapped[str] = mapped_column(String(500), default="")
     status: Mapped[str] = mapped_column(String(32), default="queued")
     script_json: Mapped[str] = mapped_column(Text, default="")

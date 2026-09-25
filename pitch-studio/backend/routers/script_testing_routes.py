@@ -9,6 +9,7 @@ from backend.auth import get_current_user, require_admin
 from backend.database import get_db
 from backend.models import Recipe, ScriptTestFeedback, ScriptTestRating, ScriptTestRun, User, utc_now
 from backend.pipeline.resolver import is_valid_sequence, parse_sequence
+from backend.pipeline.vision_deck import normalize_use_case
 from backend.schemas import (
     ScriptTestCreate,
     ScriptTestFeedbackCreate,
@@ -197,6 +198,7 @@ def create_script_test(
         temperature=payload.temperature,
         context_note=payload.context_note,
         recipe_ref=recipe_ref,
+        deck_use_case=normalize_use_case(payload.deck_use_case),
         status="queued",
     )
     db.add(run)

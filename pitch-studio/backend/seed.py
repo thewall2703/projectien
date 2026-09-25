@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 from pathlib import Path
 
@@ -10,7 +11,7 @@ from sqlalchemy.orm import Session
 from backend.asset_map import infer_matrix_ref, infer_module_ids
 from backend.config import DEFAULT_XLSX
 from backend.database import SessionLocal, engine, ensure_schema
-from backend.models import Asset, Base, LockedFact, Module, Objection, Recipe
+from backend.models import Asset, Base, DeckVisionRow, LockedFact, Module, Objection, Recipe
 from backend.schemas import SeedCounts
 
 OWNER_ROW_MARKERS = ("devansh", "ayushi")
@@ -289,7 +290,95 @@ def _asset_sheet_rows(path: Path) -> list[list[tuple[str, str]]]:
         workbook.close()
 
 
-def run_seed(xlsx_path: Path | None = None, db: Session | None = None) -> SeedCounts:
+def seed_deck_vision(
+    db: Session,
+    rows: list[tuple],
+    *,
+    classify_with_llm: bool = False,
+) -> int:
+    """Seed ``DeckVisionRow`` from the Deck - Vision Mapping sheet."""
+    from backend.pipeline.vision_deck import (
+        classify_logline,
+        classify_logline_with_llm,
+        instructions_to_json,
+        parse_instructions_json,
+        parse_vision_sheet_rows,
+    )
+
+    parsed = parse_vision_sheet_rows(rows)
+    if not parsed:
+        return 0
+
+    seen_keys: set[tuple[str, int]] = set()
+    count = 0
+    for row in parsed:
+        key = (row.use_case, row.section_order)
+        seen_keys.add(key)
+        existing = (
+            db.query(DeckVisionRow)
+            .filter(
+                DeckVisionRow.use_case == row.use_case,
+                DeckVisionRow.section_order == row.section_order,
+            )
+            .first()
+        )
+        # LLM classifications are cached per logline; rule-based ones are cheap
+        # and always recomputed so classifier fixes take effect on reseed.
+        cached = (
+            parse_instructions_json(existing.instructions_json or "")
+            if existing is not None and (existing.logline or "") == row.logline
+            else []
+        )
+        if cached and any(item.source == "llm" for item in cached):
+            instructions_json = existing.instructions_json
+        elif row.logline:
+            classifier = classify_logline_with_llm if classify_with_llm else classify_logline
+            instructions_json = instructions_to_json(classifier(row.logline))
+        else:
+            instructions_json = "[]"
+
+        payload = {
+            "section": row.section,
+            "section_order": row.section_order,
+            "use_case": row.use_case,
+            "pages_json": json.dumps(row.pages, ensure_ascii=False),
+            "section_pages_json": json.dumps(row.section_pages, ensure_ascii=False),
+            "needs_more": row.needs_more,
+            "logline": row.logline,
+            "instructions_json": instructions_json,
+            "design_status": row.design_status,
+            "slide_status": row.slide_status,
+        }
+        if existing:
+            for field_name, value in payload.items():
+                setattr(existing, field_name, value)
+        else:
+            db.add(DeckVisionRow(**payload))
+        count += 1
+
+    for stale in db.query(DeckVisionRow).all():
+        if (stale.use_case, stale.section_order) not in seen_keys:
+            db.delete(stale)
+    return count
+
+
+def _vision_sheet_rows(workbook) -> list[tuple]:
+    from backend.pipeline.vision_deck import VISION_SHEET_NAME
+
+    if VISION_SHEET_NAME in workbook.sheetnames:
+        return _sheet_rows(workbook, VISION_SHEET_NAME)
+    for name in workbook.sheetnames:
+        if name.strip() == VISION_SHEET_NAME.strip():
+            return _sheet_rows(workbook, name)
+    return []
+
+
+def run_seed(
+    xlsx_path: Path | None = None,
+    db: Session | None = None,
+    *,
+    classify_vision_with_llm: bool = False,
+) -> SeedCounts:
     path = Path(xlsx_path or DEFAULT_XLSX)
     if not path.exists():
         raise FileNotFoundError(f"Workbook not found: {path}")
@@ -307,6 +396,11 @@ def run_seed(xlsx_path: Path | None = None, db: Session | None = None) -> SeedCo
             recipes=seed_recipes(db, _sheet_rows(workbook, "03 Script Matrix")),
             objections=seed_objections(db, _sheet_rows(workbook, "09 Objection Pack")),
             assets=seed_assets(db, _asset_sheet_rows(path)),
+            vision_rows=seed_deck_vision(
+                db,
+                _vision_sheet_rows(workbook),
+                classify_with_llm=classify_vision_with_llm,
+            ),
         )
         db.commit()
         return counts
@@ -322,11 +416,17 @@ def run_seed(xlsx_path: Path | None = None, db: Session | None = None) -> SeedCo
 def main() -> None:
     parser = argparse.ArgumentParser(description="Seed Pitch Studio from the One Story workbook")
     parser.add_argument("--xlsx", default=str(DEFAULT_XLSX))
+    parser.add_argument(
+        "--classify-vision-llm",
+        action="store_true",
+        help="Use the LLM to classify vision-mapping loglines (default: deterministic rules)",
+    )
     args = parser.parse_args()
-    counts = run_seed(Path(args.xlsx))
+    counts = run_seed(Path(args.xlsx), classify_vision_with_llm=args.classify_vision_llm)
     print(
         f"Seeded {counts.modules} modules, {counts.facts} facts, "
-        f"{counts.recipes} recipes, {counts.objections} objections, {counts.assets} assets"
+        f"{counts.recipes} recipes, {counts.objections} objections, "
+        f"{counts.assets} assets, {counts.vision_rows} vision rows"
     )
 
 

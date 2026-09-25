@@ -103,12 +103,27 @@ def allowed_template_ids(allow_photo_templates: bool) -> tuple[str, ...]:
     return SUPPORTED_TEMPLATE_IDS if allow_photo_templates else NO_PHOTO_TEMPLATE_IDS
 
 # How many *generated* slides a deck may carry, by duration. Zero at T0 (a
-# 30-second pitch is left exactly as planned).
-def generated_slide_budget(duration: str) -> int:
-    """Max generated slides for ``duration`` — ``slide_count // 8``, 0 at T0."""
+# 30-second pitch is left exactly as planned). Vision-mapped decks raise the
+# budget so sheet loglines can all land.
+def generated_slide_budget(
+    duration: str,
+    *,
+    vision_count: int = 0,
+    ceiling: int | None = None,
+) -> int:
+    """Max generated slides for ``duration`` — ``slide_count // 8``, 0 at T0.
+
+    When ``vision_count`` is set (vision-mapping loglines), the budget is at
+    least that count, capped at a quarter of the deck ceiling.
+    """
     if duration == "T0":
         return 0
-    return slide_count_for(duration) // 8
+    base = slide_count_for(duration) // 8
+    if vision_count <= 0:
+        return base
+    deck_ceiling = ceiling if ceiling is not None else slide_ceiling_for(duration)
+    cap = max(base, deck_ceiling // 4)
+    return min(cap, max(base, vision_count))
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +290,10 @@ class GapCandidate:
     source_fact_ids: tuple[int, ...] = ()
     source_asset_ids: tuple[int, ...] = ()
     source_objection_ids: tuple[int, ...] = ()
+    # Vision-mapping extras (kind == "vision").
+    target_page: int | None = None
+    section: str = ""
+    vision_action: str = ""  # add | replace
 
 
 @dataclass
@@ -286,14 +305,10 @@ class GapPlanResult:
     swapped_pages: list[int] = field(default_factory=list)
 
 
-# ---------------------------------------------------------------------------
-# Detection
-# ---------------------------------------------------------------------------
-
-# Kind priority: lower fills first. Recipe-module coverage is the most
-# structural, then live objections, then verified facts, then the softer
-# context-note claims.
-_KIND_PRIORITY = {"module": 0, "objection": 1, "fact": 2, "context": 3}
+# Kind priority: lower fills first. Vision loglines from the sheet outrank
+# heuristic gaps. Recipe-module coverage is next, then live objections, then
+# verified facts, then the softer context-note claims.
+_KIND_PRIORITY = {"vision": -1, "module": 0, "objection": 1, "fact": 2, "context": 3}
 
 
 def _selected_label_tokens(plan: Sequence[Any]) -> list[frozenset[str]]:
@@ -674,6 +689,184 @@ def _default_model_match(payload: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _insert_index_for_section(
+    plan: Sequence[Any],
+    section: str,
+) -> int:
+    """Index after the last body slide of ``section``, else before the closing."""
+    closing_index = max(len(plan) - 1, 0)
+    if not section:
+        return closing_index
+    last: int | None = None
+    for index, slide in enumerate(plan[:closing_index]):
+        if getattr(slide, "section", "") == section:
+            last = index
+    if last is not None:
+        return last + 1
+    return closing_index
+
+
+def _page_index(plan: Sequence[Any], page: int) -> int | None:
+    for index, slide in enumerate(plan):
+        if _is_brand(slide) and slide.page == page:
+            return index
+    return None
+
+
+def vision_candidates_from_instructions(
+    instructions: Sequence[Any],
+) -> list[GapCandidate]:
+    """Turn vision-mapping add/replace instructions into gap candidates."""
+    candidates: list[GapCandidate] = []
+    for index, item in enumerate(instructions):
+        action = str(getattr(item, "action", "") or (item.get("action") if isinstance(item, dict) else "")).strip().lower()
+        if action not in {"add", "replace"}:
+            continue
+        brief = str(getattr(item, "brief", "") or (item.get("brief") if isinstance(item, dict) else "") or "").strip()
+        if not brief:
+            continue
+        target = getattr(item, "target_page", None)
+        if target is None and isinstance(item, dict):
+            target = item.get("target_page")
+        try:
+            target_page = int(target) if target not in (None, "") else None
+        except (TypeError, ValueError):
+            target_page = None
+        if action == "replace" and not target_page:
+            continue
+        section = str(getattr(item, "section", "") or (item.get("section") if isinstance(item, dict) else "") or "")
+        module_id = PAGE_MODULES.get(target_page or 0, "") if target_page else ""
+        key = f"vision:{action}:{target_page or index}:{_slug(brief)[:40]}"
+        candidates.append(
+            GapCandidate(
+                kind="vision",
+                key=key,
+                claim=brief,
+                title=_short_title(brief),
+                keywords=_salient_tokens(brief),
+                priority=(_KIND_PRIORITY["vision"], index),
+                modules=(module_id,) if module_id else (),
+                target_page=target_page,
+                section=section,
+                vision_action=action,
+            )
+        )
+    return candidates
+
+
+def unique_vision_candidates(
+    candidates: Sequence[GapCandidate],
+    plan: Sequence[Any],
+) -> list[GapCandidate]:
+    """One candidate per brief, in authored order.
+
+    A brief fanned out over several pages ("tweak slides 3-8") becomes a single
+    slide; it replaces the first of those pages still in the plan, else adds.
+    """
+    in_plan = {slide.page for slide in plan if _is_brand(slide)}
+    chosen: dict[str, GapCandidate] = {}
+    for candidate in candidates:
+        brief_key = candidate.claim.strip().lower()
+        current = chosen.get(brief_key)
+        if current is None:
+            chosen[brief_key] = candidate
+        elif current.target_page not in in_plan and candidate.target_page in in_plan:
+            chosen[brief_key] = candidate
+    return list(chosen.values())
+
+
+def _place_vision_candidate(
+    result_plan: list[PlannedSlide],
+    candidate: GapCandidate,
+    *,
+    existing_keys: set[str],
+    protected_keys: set[str],
+    sequence_set: set[str],
+    deck_ceiling: int,
+    template_id: str,
+) -> GeneratedSlidePlaceholder | None:
+    """Plant a vision placeholder (replace target page, or add at section end).
+
+    A replaced page stays in the caller's ``used_pages`` so later gap filling
+    never re-plants the slide the author asked to redo.
+    """
+    placeholder = _make_placeholder(candidate, template_id, existing_keys)
+
+    if candidate.vision_action == "replace" and candidate.target_page:
+        index = _page_index(result_plan, candidate.target_page)
+        if index is not None:
+            displaced = result_plan[index]
+            placeholder = replace(
+                placeholder,
+                replaced_page=getattr(displaced, "page", None),
+                replaced_module_id=getattr(displaced, "module_id", "") or "",
+                replaced_label=getattr(displaced, "title", "")
+                or getattr(displaced, "label", "")
+                or "",
+                module_id=placeholder.module_id
+                or getattr(displaced, "module_id", "")
+                or "",
+            )
+            result_plan[index] = placeholder
+            protected_keys.add(placeholder.slide_key)
+            return placeholder
+        # Target not in the (possibly trimmed) plan — fall through to add.
+
+    if len(result_plan) < deck_ceiling:
+        insert_at = _insert_index_for_section(result_plan, candidate.section)
+        if not placeholder.module_id and 0 < insert_at <= len(result_plan) - 1:
+            neighbour = result_plan[insert_at - 1]
+            if getattr(neighbour, "section", "") == candidate.section:
+                placeholder = replace(
+                    placeholder, module_id=getattr(neighbour, "module_id", "") or ""
+                )
+        result_plan.insert(insert_at, placeholder)
+        protected_keys.add(placeholder.slide_key)
+        return placeholder
+
+    # At ceiling: replace the section's last brand page, but never its only one.
+    section_brand = [
+        index
+        for index, slide in enumerate(result_plan[1:-1], start=1)
+        if candidate.section
+        and getattr(slide, "section", "") == candidate.section
+        and _is_brand(slide)
+    ]
+    replaceable = [
+        index
+        for index in section_brand
+        if getattr(result_plan[index], "slide_key", "") not in protected_keys
+    ]
+    if len(section_brand) > 1 and replaceable:
+        index = replaceable[-1]
+    else:
+        section_counts: dict[str, int] = {}
+        for slide in result_plan[1:-1]:
+            if _is_brand(slide) and getattr(slide, "section", ""):
+                section_counts[slide.section] = section_counts.get(slide.section, 0) + 1
+        sole_carriers = {
+            getattr(slide, "slide_key", "")
+            for slide in result_plan[1:-1]
+            if _is_brand(slide) and section_counts.get(getattr(slide, "section", ""), 0) == 1
+        }
+        index = weakest_body_index(result_plan, sequence_set, protected_keys | sole_carriers)
+        if index is None:
+            return None
+    displaced = result_plan[index]
+    placeholder = replace(
+        placeholder,
+        replaced_page=getattr(displaced, "page", None),
+        replaced_module_id=getattr(displaced, "module_id", "") or "",
+        replaced_label=getattr(displaced, "title", "")
+        or getattr(displaced, "label", "")
+        or "",
+        module_id=placeholder.module_id or getattr(displaced, "module_id", "") or "",
+    )
+    result_plan[index] = placeholder
+    protected_keys.add(placeholder.slide_key)
+    return placeholder
+
+
 def _insert_index_for_modules(
     plan: Sequence[Any],
     modules: tuple[str, ...],
@@ -722,13 +915,6 @@ def _place_real_page(
     protected_keys.add(real.slide_key)
     swapped_pages.append(page)
     return True
-
-
-def _page_index(plan: Sequence[Any], page: int) -> int | None:
-    for index, slide in enumerate(plan):
-        if _is_brand(slide) and slide.page == page:
-            return index
-    return None
 
 
 def _can_move_evidence(
@@ -1019,6 +1205,7 @@ def build_gap_plan(
     objections: Sequence[Any] | None = None,
     facts: Sequence[Any] | None = None,
     modules: Sequence[Any] | None = None,
+    vision_candidates: Sequence[GapCandidate] | None = None,
     rank_fn: RankFn | None = None,
     match_fn: MatchFn | None = None,
     allow_photo_templates: bool = True,
@@ -1028,18 +1215,22 @@ def build_gap_plan(
 
     Pure and database-free so it can be unit-tested directly. When there is no
     true gap — or at T0 — the original plan is returned unchanged.
-    ``allow_photo_templates`` gates the photo-required templates: when the
-    recipe has no approved recommended picture it is ``False`` and the planner
-    only plants photo-free placeholders. ``match_fn`` defaults to ``None`` so
-    pure tests stay offline (keyword answer/evidence fallback). ``ceiling``
-    defaults to :func:`slide_ceiling_for` for ``duration``.
+    ``vision_candidates`` (from the Deck - Vision Mapping loglines) are planted
+    first and raise the generated-slide budget. ``allow_photo_templates`` gates
+    the photo-required templates. ``ceiling`` defaults to
+    :func:`slide_ceiling_for` for ``duration``.
     """
     original = list(plan)
-    budget = generated_slide_budget(duration)
+    vision_list = [item for item in (vision_candidates or []) if item.kind == "vision"]
+    deck_ceiling = slide_ceiling_for(duration) if ceiling is None else max(3, ceiling)
+    budget = generated_slide_budget(
+        duration,
+        vision_count=len(unique_vision_candidates(vision_list, original)),
+        ceiling=deck_ceiling,
+    )
     if budget <= 0:
         return GapPlanResult(plan=original)
 
-    deck_ceiling = slide_ceiling_for(duration) if ceiling is None else max(3, ceiling)
     sequence_order = list(dict.fromkeys(sequence))
     sequence_set = set(sequence_order)
     module_info = {
@@ -1048,23 +1239,56 @@ def build_gap_plan(
         if getattr(module, "id", None)
     }
 
-    candidates = detect_gaps(
-        original,
-        sequence_order,
-        context_note=context_note or "",
-        objections=objections or [],
-        facts=facts or [],
-        module_info=module_info,
-    )
-    if not candidates:
-        return GapPlanResult(plan=original)
-
     result_plan: list[PlannedSlide] = list(original)
     used_pages = {slide.page for slide in result_plan if _is_brand(slide)}
     protected_keys: set[str] = set()
     swapped_pages: list[int] = []
     surviving: list[GapCandidate] = []
     evidence_by_key: dict[str, int | None] = {}
+    generated: list[GeneratedSlidePlaceholder] = []
+    existing_keys = {
+        getattr(slide, "slide_key", "") for slide in result_plan if getattr(slide, "slide_key", "")
+    }
+
+    # Vision loglines first — they are authored requirements, not heuristics.
+    # A brief fanned out over several pages ("tweak slides 3-8") becomes one
+    # slide. The ranker only picks templates here; authored order is kept.
+    unique_vision = unique_vision_candidates(vision_list, result_plan)
+    templates = {
+        candidate.key: template_id
+        for candidate, template_id in rank_and_template(
+            unique_vision,
+            len(unique_vision),
+            rank_fn,
+            allow_photo_templates=allow_photo_templates,
+        )
+    }
+    for candidate in unique_vision:
+        if len(generated) >= budget:
+            break
+        placeholder = _place_vision_candidate(
+            result_plan,
+            candidate,
+            existing_keys=existing_keys,
+            protected_keys=protected_keys,
+            sequence_set=sequence_set,
+            deck_ceiling=deck_ceiling,
+            template_id=templates.get(candidate.key, DEFAULT_TEMPLATE_ID),
+        )
+        if placeholder is not None:
+            generated.append(placeholder)
+
+    remaining_budget = max(0, budget - len(generated))
+    candidates = detect_gaps(
+        result_plan,
+        sequence_order,
+        context_note=context_note or "",
+        objections=objections or [],
+        facts=facts or [],
+        module_info=module_info,
+    )
+    if not candidates and not generated:
+        return GapPlanResult(plan=original)
 
     # Module gaps: RULE ZERO with insert-under-ceiling / replace-at-ceiling.
     module_candidates = [candidate for candidate in candidates if candidate.kind == "module"]
@@ -1111,13 +1335,9 @@ def build_gap_plan(
         surviving.append(candidate)
         evidence_by_key[candidate.key] = matched.evidence_page
 
-    # Generation for the gaps the brand deck cannot cover, capped by budget.
-    existing_keys = {
-        getattr(slide, "slide_key", "") for slide in result_plan if getattr(slide, "slide_key", "")
-    }
-    generated: list[GeneratedSlidePlaceholder] = []
+    # Generation for the gaps the brand deck cannot cover, capped by remaining budget.
     for candidate, template_id in rank_and_template(
-        surviving, budget, rank_fn, allow_photo_templates=allow_photo_templates
+        surviving, remaining_budget, rank_fn, allow_photo_templates=allow_photo_templates
     ):
         matched = AnswerMatch(None, evidence_by_key.get(candidate.key))
         evidence = _resolve_evidence_page(
@@ -1273,18 +1493,22 @@ def plan_with_generated_slides(
     audience_cluster: str = "",
     recipe_ref: str = "",
     modules: Sequence[Any] | None = None,
+    vision_candidates: Sequence[GapCandidate] | None = None,
     rank_fn: Any = _MISSING,
     match_fn: Any = _MISSING,
     ceiling: int | None = None,
 ) -> list[PlannedSlide]:
     """Runner entry point: detect gaps and return the (possibly) augmented plan.
 
-    Slots between :func:`~backend.pipeline.brand_deck.plan_pages` and
+    Slots between :func:`~backend.pipeline.brand_deck.plan_pages` /
+    :func:`~backend.pipeline.vision_deck.plan_vision_pages` and
     :func:`~backend.pipeline.script_flow.load_script_topics`. Returns the plan
     unchanged whenever there is no true gap or the generated budget is zero.
     """
     sequence = list(getattr(resolved, "module_sequence", []) or [])
-    if generated_slide_budget(duration) <= 0:
+    vision_list = list(vision_candidates or [])
+    deck_ceiling = slide_ceiling_for(duration) if ceiling is None else ceiling
+    if duration == "T0":
         return list(plan)
 
     from backend.models import LockedFact, Module
@@ -1307,10 +1531,11 @@ def plan_with_generated_slides(
         objections=objections,
         facts=facts,
         modules=modules,
+        vision_candidates=vision_list,
         rank_fn=resolved_rank_fn,
         match_fn=resolved_match_fn,
         allow_photo_templates=_recipe_has_approved_photos(db, recipe_ref),
-        ceiling=slide_ceiling_for(duration) if ceiling is None else ceiling,
+        ceiling=deck_ceiling,
     )
     return result.plan
 

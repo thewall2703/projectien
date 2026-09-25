@@ -136,6 +136,8 @@ def compute_cache_key(
     context_note: str,
     recipe_ref: str,
     db: Session,
+    *,
+    deck_use_case: str = "",
 ) -> str:
     payload = {
         "axes": {
@@ -147,6 +149,7 @@ def compute_cache_key(
         "temperature": temperature or "",
         "context_note": normalize_context_note(context_note),
         "recipe_ref": recipe_ref or "",
+        "deck_use_case": deck_use_case or "",
         "openrouter_model": settings.openrouter_model,
         "openrouter_slide_model": settings.openrouter_slide_model,
         "deploy_version": deploy_version(),

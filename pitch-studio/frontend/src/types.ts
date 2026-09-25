@@ -76,6 +76,7 @@ export type InterpretResult = {
   intent: string;
   temperature: string;
   recipe_ref: string;
+  deck_use_case?: string;
   persona_candidates: InterpretPersonaCandidate[];
   summary: string;
   notes: string;
@@ -218,6 +219,7 @@ export type Generation = {
   temperature: string;
   context_note: string;
   recipe_ref: string;
+  deck_use_case?: string;
   module_sequence: string;
   status: string;
   script_json: string;

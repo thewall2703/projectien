@@ -22,6 +22,7 @@ from backend.pipeline.brand_deck import (
 )
 from backend.pipeline import dsai_deck
 from backend.pipeline.interpret import InterpretError, interpret_brief
+from backend.pipeline.vision_deck import normalize_use_case
 from backend.pipeline.resolver import is_valid_sequence, parse_sequence
 from backend.pipeline.runner import run as run_generation
 from backend.recipe_cache import list_recipe_options
@@ -127,6 +128,7 @@ def _list_item(generation: Generation, user_email: str | None = None) -> Generat
         temperature=generation.temperature,
         context_note=generation.context_note,
         recipe_ref=generation.recipe_ref,
+        deck_use_case=getattr(generation, "deck_use_case", "") or "",
         module_sequence=generation.module_sequence,
         status=generation.status,
         script_json="",
@@ -185,6 +187,7 @@ def create_generation(
     user: User = Depends(get_current_user),
 ) -> GenerationOut:
     recipe_ref = payload.recipe_ref or ""
+    deck_use_case = normalize_use_case(payload.deck_use_case)
     axes = {
         "audience_cluster": payload.audience_cluster,
         "duration": payload.duration,
@@ -214,6 +217,7 @@ def create_generation(
         payload.context_note,
         recipe_ref,
         db,
+        deck_use_case=deck_use_case,
     )
     cached = (
         db.query(Generation)
@@ -228,6 +232,7 @@ def create_generation(
             temperature=payload.temperature,
             context_note=payload.context_note,
             recipe_ref=recipe_ref,
+            deck_use_case=deck_use_case,
             module_sequence=cached.module_sequence,
             status="done",
             script_json=cached.script_json,
@@ -253,6 +258,7 @@ def create_generation(
         temperature=payload.temperature,
         context_note=payload.context_note,
         recipe_ref=recipe_ref,
+        deck_use_case=deck_use_case,
         status="queued",
         cache_key=cache_key,
     )
@@ -282,6 +288,7 @@ def list_generations(
             Generation.temperature,
             Generation.context_note,
             Generation.recipe_ref,
+            Generation.deck_use_case,
             Generation.module_sequence,
             Generation.status,
             Generation.pptx_path,

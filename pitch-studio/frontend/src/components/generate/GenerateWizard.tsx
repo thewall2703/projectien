@@ -48,7 +48,19 @@ export type GenerateWizardPayload = {
   temperature: string;
   context_note: string;
   recipe_ref?: string;
+  deck_use_case?: string;
 };
+
+const DECK_USE_CASES: { code: string; label: string }[] = [
+  { code: "", label: "None (legacy recipe)" },
+  { code: "school_fair", label: "School students at career fair" },
+  { code: "pg_exec_fair", label: "PG / Exec aspirants at career fair" },
+  { code: "pgp_smg", label: "PGP SMG aspirant" },
+  { code: "ug_tbm", label: "UG TBM aspirant" },
+  { code: "ug_dsai", label: "UG DSAI aspirant" },
+  { code: "parents_undecided", label: "Parents, undecided" },
+  { code: "parents_decided", label: "Parents, decided" },
+];
 
 function personaOptionLabel(recipe: RecipeOption, siblings: RecipeOption[]): string {
   const clash = siblings.filter((row) => row.audience_label === recipe.audience_label).length > 1;
@@ -161,6 +173,7 @@ export default function GenerateWizard({
   const [channel, setChannel] = useState("");
   const [intent, setIntent] = useState("");
   const [temperature, setTemperature] = useState("");
+  const [deckUseCase, setDeckUseCase] = useState("");
   const [context, setContext] = useState("");
   const [interpretSummary, setInterpretSummary] = useState("");
   const [interpretNotes, setInterpretNotes] = useState("");
@@ -190,6 +203,7 @@ export default function GenerateWizard({
     setIntent(result.intent);
     setTemperature(result.temperature);
     setSelected(result.recipe_ref || "");
+    setDeckUseCase(result.deck_use_case || "");
     setInterpretSummary(result.summary);
     setInterpretNotes(result.notes || "");
     setPersonaCandidates(result.persona_candidates || []);
@@ -202,6 +216,7 @@ export default function GenerateWizard({
     setChannel("");
     setIntent("");
     setTemperature("");
+    setDeckUseCase("");
     setInterpretSummary("");
     setInterpretNotes("");
     setPersonaCandidates([]);
@@ -345,6 +360,7 @@ export default function GenerateWizard({
         temperature,
         context_note,
         ...(selected ? { recipe_ref: selected } : {}),
+        ...(deckUseCase ? { deck_use_case: deckUseCase } : {}),
       };
       await onSubmit(body);
     } catch (err) {
@@ -545,6 +561,21 @@ export default function GenerateWizard({
                         ))}
                       </dl>
                     )}
+
+                    <label className="block">
+                      <span className="kicker">Deck use case</span>
+                      <select
+                        className="field mt-3"
+                        value={deckUseCase}
+                        onChange={(e) => setDeckUseCase(e.target.value)}
+                      >
+                        {DECK_USE_CASES.map((row) => (
+                          <option key={row.code || "none"} value={row.code}>
+                            {row.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
 
                     {!interpretFailed && candidateRows.length > 0 && (
                       <div>

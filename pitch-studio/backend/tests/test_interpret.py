@@ -49,6 +49,23 @@ class NormalizeInterpretTests(unittest.TestCase):
         self.assertIn("prospective parents", result.summary.lower())
         self.assertEqual(result.notes, "Emphasise campus visit next.")
 
+    def test_deck_use_case_normalized_and_parent_temperature_nudge(self):
+        result = normalize_interpret_payload(
+            valid_raw(deck_use_case="parents_undecided", temperature="X4"),
+            {"A2-1"},
+        )
+        self.assertEqual(result.deck_use_case, "parents_decided")
+        result = normalize_interpret_payload(
+            valid_raw(deck_use_case="UG DSAI aspirant", temperature="X1"),
+            {"A1-1"},
+        )
+        self.assertEqual(result.deck_use_case, "ug_dsai")
+        result = normalize_interpret_payload(
+            valid_raw(deck_use_case="recruiter", temperature="X1"),
+            {"A1-1"},
+        )
+        self.assertEqual(result.deck_use_case, "")
+
     def test_invalid_code_raises(self):
         with self.assertRaises(InterpretError) as ctx:
             normalize_interpret_payload(valid_raw(duration="T99"), {"A1-1"})
@@ -137,6 +154,9 @@ class BuildMessagesTests(unittest.TestCase):
         self.assertIn("Prospective parents", user)
         self.assertIn("30-minute Zoom", user)
         self.assertIn("persona_candidates", messages[0]["content"])
+        self.assertIn("deck_use_case", messages[0]["content"])
+        self.assertIn("school_fair", user)
+        self.assertIn("Deck use cases", user)
 
 
 class InterpretBriefTests(unittest.TestCase):
