@@ -42,6 +42,7 @@ from backend.media_index import (
     require_editable,
     serialize,
     set_image_excluded,
+    set_image_recommended,
     sha256_text,
     touch,
 )
@@ -96,6 +97,7 @@ from backend.schemas import (
     DeckTopicListOut,
     DeckTopicOut,
     ExcludeImageIn,
+    RecommendImageIn,
     ExtractResultOut,
     FactIn,
     FactOut,
@@ -1344,6 +1346,20 @@ def exclude_media_image(
     item = _get_media_index(db, media_id)
     try:
         feedback = set_image_excluded(db, item, payload.asset_id, payload.excluded)
+    except MediaIndexError as exc:
+        raise _media_error(exc) from exc
+    return _save_feedback(db, item, feedback)
+
+
+@router.post("/media-index/{media_id}/recommend-image", response_model=MediaIndexOut)
+def recommend_media_image(
+    media_id: int,
+    payload: RecommendImageIn,
+    db: Session = Depends(get_db),
+) -> MediaIndexOut:
+    item = _get_media_index(db, media_id)
+    try:
+        feedback = set_image_recommended(db, item, payload.asset_id, payload.recommended)
     except MediaIndexError as exc:
         raise _media_error(exc) from exc
     return _save_feedback(db, item, feedback)

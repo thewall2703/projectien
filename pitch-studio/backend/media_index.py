@@ -108,10 +108,10 @@ def normalize_transcript(text: str) -> str:
 
 
 def empty_feedback() -> dict[str, Any]:
-    return {"verdicts": {}, "added": [], "excluded_image_ids": []}
+    return {"verdicts": {}, "added": [], "recommended_image_ids": [], "excluded_image_ids": []}
 
 
-def parse_excluded_image_ids(raw: Any) -> list[int]:
+def parse_id_list(raw: Any) -> list[int]:
     if not isinstance(raw, list):
         return []
     ids: list[int] = []
@@ -126,6 +126,10 @@ def parse_excluded_image_ids(raw: Any) -> list[int]:
         seen.add(image_id)
         ids.append(image_id)
     return ids
+
+
+def parse_excluded_image_ids(raw: Any) -> list[int]:
+    return parse_id_list(raw)
 
 
 def parse_feedback(raw: str) -> dict[str, Any]:
@@ -143,11 +147,19 @@ def parse_feedback(raw: str) -> dict[str, Any]:
         verdicts = {}
     if not isinstance(added, list):
         added = []
+    recommended_ids = parse_id_list(
+        payload.get("recommended_image_ids") or payload.get("selected_image_ids")
+    )
     return {
         "verdicts": verdicts,
         "added": added,
-        "excluded_image_ids": parse_excluded_image_ids(payload.get("excluded_image_ids")),
+        "recommended_image_ids": recommended_ids,
+        "excluded_image_ids": parse_id_list(payload.get("excluded_image_ids")),
     }
+
+
+def recommended_image_ids_for(row: MediaIndex) -> set[int]:
+    return set(parse_feedback(row.feedback_json)["recommended_image_ids"])
 
 
 def excluded_image_ids_for(row: MediaIndex) -> set[int]:
@@ -486,16 +498,16 @@ def pick_recommended_media(
         if item is None or item.get("rejected"):
             continue
         key = _recommendation_sort_key(item, temperature)
-        photo_sets.append((key, asset, item, excluded_image_ids_for(row)))
+        photo_sets.append((key, asset, item, recommended_image_ids_for(row)))
     photo_sets.sort(key=lambda entry: entry[0])
     pictures: list[RecommendedMediaOut] = []
     queues = [
         deque(
             child
             for child in list_image_assets(db, asset)
-            if child.id not in excluded
+            if child.id in recommended_ids
         )
-        for _key, asset, _item, excluded in photo_sets
+        for _key, asset, _item, recommended_ids in photo_sets
     ]
     items_by_queue = [item for _key, _asset, item, _excluded in photo_sets]
     parents = [asset for _key, asset, _item, _excluded in photo_sets]
@@ -761,26 +773,31 @@ def recommend(db: Session, row: MediaIndex) -> dict[str, Any]:
     }
 
 
-def _image_outs(db: Session, asset: Asset | None, excluded_ids: set[int] | None = None) -> list[MediaImageOut]:
+def _image_outs(
+    db: Session,
+    asset: Asset | None,
+    recommended_ids: set[int] | None = None,
+) -> list[MediaImageOut]:
     if asset is None:
         return []
-    blocked = excluded_ids or set()
+    active = recommended_ids or set()
     return [
         MediaImageOut(
             id=child.id,
             title=child.title,
             file_status=child.file_status,
             content_type=child.content_type,
-            excluded=child.id in blocked,
+            recommended=child.id in active,
+            excluded=child.id not in active,
         )
         for child in list_image_assets(db, asset)
     ]
 
 
-def set_image_excluded(db: Session, row: MediaIndex, image_asset_id: int, excluded: bool) -> dict[str, Any]:
-    """Toggle whether an image in this photo set may be recommended during generation."""
+def set_image_recommended(db: Session, row: MediaIndex, image_asset_id: int, recommended: bool) -> dict[str, Any]:
+    """Toggle whether an image in this photo set is selected to be recommended during generation."""
     if row.media_kind != "photo":
-        raise MediaIndexError("Only photo sets can exclude individual images")
+        raise MediaIndexError("Only photo sets can select recommended images")
     parent = db.get(Asset, row.asset_id)
     if parent is None:
         raise MediaIndexError("Photo set asset not found")
@@ -788,20 +805,25 @@ def set_image_excluded(db: Session, row: MediaIndex, image_asset_id: int, exclud
     if not any(child.id == image_asset_id for child in children):
         raise MediaIndexError("Image does not belong to this photo set")
     feedback = parse_feedback(row.feedback_json)
-    current = set(feedback["excluded_image_ids"])
-    if excluded:
+    current = set(feedback["recommended_image_ids"])
+    if recommended:
         current.add(image_asset_id)
     else:
         current.discard(image_asset_id)
-    feedback["excluded_image_ids"] = sorted(current)
+    feedback["recommended_image_ids"] = sorted(current)
     return feedback
+
+
+def set_image_excluded(db: Session, row: MediaIndex, image_asset_id: int, excluded: bool) -> dict[str, Any]:
+    """Legacy helper: excluding an image is equivalent to un-recommending it."""
+    return set_image_recommended(db, row, image_asset_id, recommended=not excluded)
 
 
 def serialize(row: MediaIndex, db: Session, job: Job | None = None) -> MediaIndexOut:
     asset = db.get(Asset, row.asset_id)
     rec = parse_recommendations(row.recommendations_json)
     fb = parse_feedback(row.feedback_json)
-    excluded_ids = set(fb["excluded_image_ids"])
+    recommended_ids = set(fb["recommended_image_ids"])
     if job is None:
         job = latest_job_for(db, row.id)
     return MediaIndexOut(
@@ -858,9 +880,10 @@ def serialize(row: MediaIndex, db: Session, job: Job | None = None) -> MediaInde
                 for item in fb["added"]
                 if isinstance(item, dict)
             ],
+            recommended_image_ids=list(fb["recommended_image_ids"]),
             excluded_image_ids=list(fb["excluded_image_ids"]),
         ),
-        image_assets=_image_outs(db, asset, excluded_ids),
+        image_assets=_image_outs(db, asset, recommended_ids),
     )
 
 

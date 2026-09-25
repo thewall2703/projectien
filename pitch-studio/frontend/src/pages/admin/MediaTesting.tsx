@@ -265,9 +265,9 @@ export default function MediaTesting() {
     run("freeze", () => (current.vision_frozen ? api.unfreezeMedia(current.id) : api.freezeMedia(current.id)));
   };
 
-  const toggleImageExcluded = (imageId: number, excluded: boolean) => {
+  const toggleImageRecommended = (imageId: number, recommended: boolean) => {
     if (!current) return;
-    run(`exclude-${imageId}`, () => api.excludeMediaImage(current.id, imageId, excluded));
+    run(`recommend-${imageId}`, () => api.recommendMediaImage(current.id, imageId, recommended));
   };
 
   const preparing = busy === "prepare" || (isActiveJob(current) && current?.job_type !== "media_describe");
@@ -375,8 +375,8 @@ export default function MediaTesting() {
                   row={current}
                   onSync={() => prepare(current.asset_id)}
                   busy={preparing}
-                  onToggleExcluded={toggleImageExcluded}
-                  excludingId={busy.startsWith("exclude-") ? Number(busy.replace("exclude-", "")) : null}
+                  onToggleRecommended={toggleImageRecommended}
+                  recommendingId={busy.startsWith("recommend-") ? Number(busy.replace("recommend-", "")) : null}
                 />
                 {(current.media_kind === "video" &&
                   (!current.transcript.trim() || !current.visual_description.trim())) ||
@@ -663,14 +663,14 @@ function MediaPreview({
   row,
   onSync,
   busy,
-  onToggleExcluded,
-  excludingId,
+  onToggleRecommended,
+  recommendingId,
 }: {
   row: MediaIndexRow;
   onSync: () => void;
   busy: boolean;
-  onToggleExcluded?: (imageId: number, excluded: boolean) => void;
-  excludingId?: number | null;
+  onToggleRecommended?: (imageId: number, recommended: boolean) => void;
+  recommendingId?: number | null;
 }) {
   if (row.media_kind === "video") {
     const drive = driveEmbed(row.asset_source_url);
@@ -734,19 +734,24 @@ function MediaPreview({
       />
     );
   }
-  const excludedCount = row.image_assets.filter((image) => image.excluded).length;
+  const recommendedCount = row.image_assets.filter((image) => image.recommended).length;
   return (
     <div className="space-y-3">
-      {excludedCount > 0 && (
+      {recommendedCount > 0 ? (
+        <p className="flex items-center gap-2 text-xs font-medium text-success">
+          <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
+          {recommendedCount} of {row.image_assets.length} photo{recommendedCount === 1 ? "" : "s"} selected for generation recommendations
+        </p>
+      ) : (
         <p className="text-xs text-muted">
-          {excludedCount} image{excludedCount === 1 ? "" : "s"} hidden from generation recommendations
+          No photos selected yet. Only photos you mark with <span className="font-semibold text-foreground">“Recommend”</span> will be recommended during pitch generation.
         </p>
       )}
       <PhotoGallery
         key={row.asset_id}
         images={row.image_assets}
-        onToggleExcluded={onToggleExcluded}
-        excludingId={excludingId}
+        onToggleRecommended={onToggleRecommended}
+        recommendingId={recommendingId}
       />
     </div>
   );
@@ -754,12 +759,12 @@ function MediaPreview({
 
 function PhotoGallery({
   images,
-  onToggleExcluded,
-  excludingId,
+  onToggleRecommended,
+  recommendingId,
 }: {
   images: MediaIndexRow["image_assets"];
-  onToggleExcluded?: (imageId: number, excluded: boolean) => void;
-  excludingId?: number | null;
+  onToggleRecommended?: (imageId: number, recommended: boolean) => void;
+  recommendingId?: number | null;
 }) {
   const PAGE_SIZE = 18;
   const CONCURRENT_LOADS = 3;
@@ -788,9 +793,9 @@ function PhotoGallery({
             key={image.id}
             id={image.id}
             title={image.title}
-            excluded={Boolean(image.excluded)}
-            excluding={excludingId === image.id}
-            onToggleExcluded={onToggleExcluded}
+            recommended={Boolean(image.recommended)}
+            recommending={recommendingId === image.id}
+            onToggleRecommended={onToggleRecommended}
             onSettled={thumbnailSettled}
           />
         ))}
@@ -817,16 +822,16 @@ function PhotoGallery({
 function ImageThumb({
   id,
   title,
-  excluded,
-  excluding,
-  onToggleExcluded,
+  recommended,
+  recommending,
+  onToggleRecommended,
   onSettled,
 }: {
   id: number;
   title: string;
-  excluded: boolean;
-  excluding?: boolean;
-  onToggleExcluded?: (imageId: number, excluded: boolean) => void;
+  recommended: boolean;
+  recommending?: boolean;
+  onToggleRecommended?: (imageId: number, recommended: boolean) => void;
   onSettled: () => void;
 }) {
   const [loaded, setLoaded] = useState(false);
@@ -862,8 +867,10 @@ function ImageThumb({
       <div className="space-y-2">
         <button
           type="button"
-          className={`relative aspect-[4/3] w-full overflow-hidden rounded-lg border border-line bg-paper ${
-            excluded ? "opacity-45" : ""
+          className={`relative aspect-[4/3] w-full overflow-hidden rounded-lg border transition-all ${
+            recommended
+              ? "border-emerald-500 ring-2 ring-emerald-500/30 bg-paper"
+              : "border-line bg-paper opacity-75 hover:opacity-100"
           }`}
           onClick={() => {
             setFullLoaded(false);
@@ -903,9 +910,9 @@ function ImageThumb({
               </span>
             </span>
           )}
-          {excluded && (
-            <span className="absolute left-2 top-2 z-20 rounded bg-ink/80 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-white">
-              Hidden
+          {recommended && (
+            <span className="absolute left-2 top-2 z-20 flex items-center gap-1 rounded bg-emerald-600 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white shadow-sm">
+              ✓ Recommended
             </span>
           )}
           <img
@@ -926,14 +933,14 @@ function ImageThumb({
             }}
           />
         </button>
-        {onToggleExcluded && (
+        {onToggleRecommended && (
           <Button
-            variant="ghost"
+            variant={recommended ? "ghost" : "accent"}
             className="w-full text-xs"
-            loading={excluding}
-            onClick={() => onToggleExcluded(id, !excluded)}
+            loading={recommending}
+            onClick={() => onToggleRecommended(id, !recommended)}
           >
-            {excluded ? "Allow in generation" : "Don't recommend"}
+            {recommended ? "Don't recommend" : "Recommend"}
           </Button>
         )}
       </div>
@@ -977,16 +984,20 @@ function ImageThumb({
               onClick={(event) => event.stopPropagation()}
             />
             <div className="absolute bottom-4 left-1/2 z-[1] flex -translate-x-1/2 gap-2">
-              {onToggleExcluded && (
+              {onToggleRecommended && (
                 <Button
-                  className="border border-white/20 bg-black text-white"
-                  loading={excluding}
+                  className={`border ${
+                    recommended
+                      ? "border-emerald-500/50 bg-emerald-700/80 text-white"
+                      : "border-white/20 bg-black text-white"
+                  }`}
+                  loading={recommending}
                   onClick={(event) => {
                     event.stopPropagation();
-                    onToggleExcluded(id, !excluded);
+                    onToggleRecommended(id, !recommended);
                   }}
                 >
-                  {excluded ? "Allow in generation" : "Don't recommend"}
+                  {recommended ? "✓ Recommended (click to remove)" : "Recommend photo"}
                 </Button>
               )}
               <button

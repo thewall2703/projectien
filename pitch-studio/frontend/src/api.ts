@@ -225,6 +225,12 @@ export const api = {
       headers: jsonHeaders,
       body: JSON.stringify({ asset_id: assetId, excluded }),
     }),
+  recommendMediaImage: (id: number, assetId: number, recommended: boolean) =>
+    request<MediaIndexRow>(`/api/admin/media-index/${id}/recommend-image`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ asset_id: assetId, recommended }),
+    }),
   freezeMedia: (id: number) =>
     request<MediaIndexRow>(`/api/admin/media-index/${id}/freeze`, { method: "POST" }),
   unfreezeMedia: (id: number) =>

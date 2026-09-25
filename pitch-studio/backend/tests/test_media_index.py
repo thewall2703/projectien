@@ -405,6 +405,7 @@ def _rec_row(
     items: list[dict],
     verdicts: dict | None = None,
     added: list | None = None,
+    recommended_image_ids: list[int] | None = None,
     excluded_image_ids: list[int] | None = None,
 ):
     return SimpleNamespace(
@@ -415,6 +416,7 @@ def _rec_row(
             {
                 "verdicts": verdicts or {},
                 "added": added or [],
+                "recommended_image_ids": recommended_image_ids or [],
                 "excluded_image_ids": excluded_image_ids or [],
             }
         ),
@@ -504,8 +506,18 @@ class RecommendedMediaPickTests(unittest.TestCase):
 
     def test_expands_photo_sets_round_robin_and_caps(self):
         rows = [
-            _rec_row(10, "photo", [{"recipe_ref": "A1-1", "temperatures": ["X2"], "confidence": 0.8, "rationale": "a"}]),
-            _rec_row(20, "photo", [{"recipe_ref": "A1-1", "temperatures": ["X2"], "confidence": 0.7, "rationale": "b"}]),
+            _rec_row(
+                10,
+                "photo",
+                [{"recipe_ref": "A1-1", "temperatures": ["X2"], "confidence": 0.8, "rationale": "a"}],
+                recommended_image_ids=[11, 12],
+            ),
+            _rec_row(
+                20,
+                "photo",
+                [{"recipe_ref": "A1-1", "temperatures": ["X2"], "confidence": 0.7, "rationale": "b"}],
+                recommended_image_ids=[21, 22, 23, 24, 25],
+            ),
         ]
         parents = [
             _asset(10, "Campus", "https://drive.google.com/file/d/p1/view", "photo"),
@@ -559,18 +571,19 @@ class RecommendedMediaPickTests(unittest.TestCase):
         self.assertTrue(pictures[0].preview_url.endswith("id=c1"))
         self.assertEqual(pictures[0].thumbnail_url, "/api/assets/11/thumbnail.jpg")
 
-    def test_excluded_images_are_skipped_during_generation(self):
+    def test_only_selected_images_are_recommended_during_generation(self):
         rows = [
             _rec_row(
                 10,
                 "photo",
                 [{"recipe_ref": "A1-1", "temperatures": ["X2"], "confidence": 0.8, "rationale": "a"}],
-                excluded_image_ids=[11, 12],
+                recommended_image_ids=[13],  # only 13 is selected, 11 and 12 are not
             ),
             _rec_row(
                 20,
                 "photo",
                 [{"recipe_ref": "A1-1", "temperatures": ["X2"], "confidence": 0.7, "rationale": "b"}],
+                recommended_image_ids=[21, 22],
             ),
         ]
         parents = [
