@@ -379,6 +379,8 @@ class GenerationOut(BaseModel):
     report_passages_json: str = ""
     validation_report: str
     error: str
+    script_plan_json: str = ""
+    quality_trace_json: str = ""
     cache_key: str = ""
     cached_from_id: int | None = None
     created_at: datetime
@@ -544,6 +546,8 @@ class ScriptTestRunOut(BaseModel):
     founder_quote_ids: str = ""
     report_asset_ids: str = ""
     report_passages_json: str = ""
+    script_plan_json: str = ""
+    quality_trace_json: str = ""
     created_at: datetime
     finished_at: datetime | None = None
     script: dict[str, Any] | None = None
@@ -633,6 +637,45 @@ class StyleGuideOut(BaseModel):
     guide_text: str = ""
     persona_label: str = ""
     source_transcript_ids: str = ""
+
+
+class ListenerTurnOut(BaseModel):
+    id: int
+    style_transcript_id: int
+    self_description: str = ""
+    concern: str = ""
+    question_verbatim: str = ""
+    reaction_after_answer: str = ""
+    outcome: str = "unclear"
+    answer_summary: str = ""
+    confidence: float = 0.0
+    created_at: datetime
+    persona_labels: list[str] = Field(default_factory=list)
+
+    model_config = {"from_attributes": True}
+
+
+class ListenerExtractOut(BaseModel):
+    style_transcript_id: int
+    turn_count: int
+    turns: list[ListenerTurnOut] = Field(default_factory=list)
+
+
+class ListenerProfileOut(BaseModel):
+    version: int = 0
+    persona_label: str = ""
+    profile_text: str = ""
+    source_transcript_ids: str = ""
+
+
+class AudienceCalibrateOut(BaseModel):
+    persona_label: str
+    total: int = 0
+    correct: int = 0
+    accuracy: float = 0.0
+    confusion_matrix: dict[str, int] = Field(default_factory=dict)
+    details: list[dict[str, Any]] = Field(default_factory=list)
+    grounded: bool = False
 
 
 class ExtractResultOut(BaseModel):

@@ -19,6 +19,18 @@ OPENING_CONTINUATION_RE = re.compile(
     re.IGNORECASE,
 )
 OPENING_CAMPUS_RE = re.compile(r"\b(?:Gurugram|Cyberpark|campus)\b", re.IGNORECASE)
+# Words that can never end an English sentence. Kept deliberately narrow: a false
+# positive forces a rewrite and can fail the generation after retries.
+DANGLING_END_WORDS = frozenset(
+    {
+        "a", "an", "the", "and", "or", "but", "nor", "of", "if", "because", "although",
+        "whether", "than", "my", "your", "our", "their", "its", "very",
+        "i'm", "you're", "we're", "they're", "it's", "that's", "there's", "here's",
+        "what's", "who's", "he's", "she's", "let's",
+    }
+)
+SENTENCE_END_RE = re.compile(r"[.!?…][\"'”’)\]]*$")
+MIN_SECTION_WORDS = 12
 
 
 def _words(text: str) -> list[str]:
@@ -90,40 +102,59 @@ def budget_range(word_budget: int) -> tuple[int, int]:
     return int(word_budget * 0.85), word_budget
 
 
+def _section_paragraphs(text: str) -> list[list[str]]:
+    return [
+        split_spoken_sentences(re.sub(r"\s+", " ", part))
+        for part in re.split(r"\n\s*\n", (text or "").strip())
+        if part.strip()
+    ]
+
+
 def trim_script_to_budget(script: dict[str, Any], word_budget: int) -> dict[str, Any]:
-    """Deterministically remove an overage without changing section structure."""
-    _low, high = budget_range(word_budget)
+    """Remove whole sentences to meet the budget, without changing section structure.
+
+    Only a section's middle sentences are removable: its first sentence carries the
+    beat's setup and its last lands the point or bridges to the next beat. When whole
+    sentences cannot close the gap, the script stays over budget so validation sends it
+    back to the writer rather than cutting a sentence in half.
+    """
+    low, high = budget_range(word_budget)
     excess = count_script_words(script) - high
     if excess <= 0:
         return paragraphize_script(script)
 
     trimmed = deepcopy(script)
     cta = (trimmed.get("cta") or "").strip()
+    parsed = {
+        index: _section_paragraphs(section.get("text") or "")
+        for index, section in enumerate(trimmed.get("sections") or [])
+        if (section.get("text") or "").strip() and (not cta or cta not in section.get("text", ""))
+    }
+    slack = high - low
+
+    while excess > 0:
+        candidates: list[tuple[int, int, int, int, int]] = []
+        for index, paragraphs in parsed.items():
+            flat = [(p, s) for p, sentences in enumerate(paragraphs) for s in range(len(sentences))]
+            section_words = sum(len(_words(sentence)) for sentences in paragraphs for sentence in sentences)
+            for p, s in flat[1:-1]:
+                candidates.append((section_words, len(_words(paragraphs[p][s])), index, p, s))
+        fitting = [item for item in candidates if excess <= item[1] <= excess + slack]
+        if fitting:
+            choice = max(fitting, key=lambda item: (item[0], -item[1]))
+        else:
+            smaller = [item for item in candidates if 0 < item[1] < excess]
+            if not smaller:
+                break
+            choice = max(smaller, key=lambda item: (item[0], item[1]))
+        _section_words, removed, index, p, s = choice
+        del parsed[index][p][s]
+        parsed[index] = [sentences for sentences in parsed[index] if sentences]
+        excess -= removed
+
     sections = trimmed.get("sections") or []
-    candidates = [
-        section
-        for section in sections
-        if (section.get("text") or "").strip()
-        and (not cta or cta not in section.get("text", ""))
-    ]
-    candidates.sort(key=lambda item: len(_words(item.get("text", ""))), reverse=True)
-
-    for section in candidates:
-        if excess <= 0:
-            break
-        text = section.get("text", "").strip()
-        matches = list(re.finditer(r"[A-Za-z0-9₹.%]+", text))
-        removable = max(0, len(matches) - 8)
-        remove = min(excess, removable)
-        if not remove:
-            continue
-        cut_at = matches[-remove].start()
-        shortened = text[:cut_at].rstrip(" \t,;:–—-")
-        if shortened and shortened[-1] not in ".!?":
-            shortened += "."
-        section["text"] = shortened
-        excess -= remove
-
+    for index, paragraphs in parsed.items():
+        sections[index]["text"] = "\n\n".join(" ".join(sentences) for sentences in paragraphs)
     return paragraphize_script(trimmed)
 
 
@@ -243,6 +274,49 @@ def align_script_to_recipe(
     return paragraphize_script({"sections": aligned, "cta": script.get("cta") or ""})
 
 
+def _last_word(sentence: str) -> str:
+    words = sentence.replace("’", "'").split()
+    return words[-1].strip("\"'“”‘’()[].,!?…;:–—-").lower() if words else ""
+
+
+def _quote(text: str, limit: int = 60) -> str:
+    text = re.sub(r"\s+", " ", text).strip()
+    return text if len(text) <= limit else "…" + text[-limit:]
+
+
+def sentence_integrity_violations(script: dict[str, Any], word_budget: int) -> list[str]:
+    """Flag broken sentences: dangling endings, unfinished sections and stub sections."""
+    violations: list[str] = []
+    sections = script.get("sections") or []
+    # Short scripts spread over many slides legitimately have short sections.
+    min_words = min(MIN_SECTION_WORDS, max(4, word_budget // (2 * max(1, len(sections)))))
+    for number, section in enumerate(sections, start=1):
+        text = (section.get("text") or "").strip()
+        if not text:
+            continue
+        label = f"Section {number} ({section.get('topic_title') or section.get('heading') or section.get('module_id') or 'untitled'})"
+        if not SENTENCE_END_RE.search(text):
+            violations.append(
+                f"{label} ends without a complete sentence: \"{_quote(text)}\". "
+                "Finish the thought or remove the fragment"
+            )
+        for sentence in split_spoken_sentences(re.sub(r"\s+", " ", text)):
+            if _last_word(sentence) in DANGLING_END_WORDS:
+                violations.append(
+                    f"{label} has a sentence cut off mid-thought: \"{_quote(sentence)}\". "
+                    "Complete the sentence or remove it"
+                )
+        if len(_words(text)) < min_words:
+            violations.append(
+                f"{label} is only {len(_words(text))} words: \"{_quote(text)}\". "
+                "Give this beat a complete spoken point or fold it into a neighbouring beat's idea"
+            )
+    cta = (script.get("cta") or "").strip()
+    if cta and _last_word(cta) in DANGLING_END_WORDS:
+        violations.append(f"The final ask is cut off mid-thought: \"{_quote(cta)}\". Complete it")
+    return violations
+
+
 def validate_script(
     script: dict[str, Any],
     facts: list[LockedFact],
@@ -297,6 +371,7 @@ def validate_script(
 
     if not (script.get("cta") or "").strip():
         violations.append("Script is missing one final ask")
+    violations.extend(sentence_integrity_violations(script, word_budget))
 
     full = script_text(script)
     word_count = count_script_words(script)

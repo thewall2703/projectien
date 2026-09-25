@@ -312,7 +312,11 @@ class ScriptMessageStyleGuideTests(unittest.TestCase):
         self.assertIn("Masters' Union EMPLOYEE", system)
         self.assertIn("not Pratham Mittal", system)
         self.assertIn("third-person reference to Pratham is correct", system)
-        self.assertIn("Do not quote or closely paraphrase", system)
+        self.assertIn("Excerpt sentences and phrasing may be reused", system)
+        self.assertIn("Never first-person founder biography", system)
+        self.assertNotIn("Do not quote or closely paraphrase", system)
+        self.assertIn("Masters' Union EMPLOYEE", system)
+        self.assertIn("not Pratham Mittal", system)
 
     def test_omits_guide_block_when_empty(self):
         messages = self._messages("")
@@ -347,7 +351,9 @@ class ScriptMessageStyleGuideTests(unittest.TestCase):
         self.assertIn("Third-person references to Pratham are correct", system)
         self.assertIn("NEVER fail", system)
         self.assertIn("absence of Hindi", system)
-        self.assertIn("style samples, not an authoritative", system)
+        self.assertIn("attributed quotes and anecdotes", system)
+        self.assertNotIn("copies or closely paraphrases transcript sentences", system)
+        self.assertNotIn("style samples, not an authoritative", system)
         self.assertIn("Duration: T1", user)
         self.assertIn("Channel: CH3", user)
         self.assertIn("Intent: I2", user)

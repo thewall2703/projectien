@@ -146,6 +146,8 @@ class Generation(Base):
     report_passages_json: Mapped[str] = mapped_column(Text, default="")
     validation_report: Mapped[str] = mapped_column(Text, default="")
     error: Mapped[str] = mapped_column(Text, default="")
+    script_plan_json: Mapped[str] = mapped_column(Text, default="")
+    quality_trace_json: Mapped[str] = mapped_column(Text, default="")
     cache_key: Mapped[str] = mapped_column(String(64), default="", index=True)
     cached_from_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
@@ -283,6 +285,8 @@ class ScriptTestRun(Base):
     founder_quote_ids: Mapped[str] = mapped_column(String(255), default="")
     report_asset_ids: Mapped[str] = mapped_column(String(255), default="")
     report_passages_json: Mapped[str] = mapped_column(Text, default="")
+    script_plan_json: Mapped[str] = mapped_column(Text, default="")
+    quality_trace_json: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -469,6 +473,39 @@ class VoiceStyleGuide(Base):
     version: Mapped[int] = mapped_column(Integer)
     persona_label: Mapped[str] = mapped_column(String(255), default="", index=True)
     guide_text: Mapped[str] = mapped_column(Text)
+    source_transcript_ids: Mapped[str] = mapped_column(String(500), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class ListenerTurn(Base):
+    """One audience-member turn extracted from an AMA style transcript.
+
+    Never used as factual evidence for scripts — attitudes and calibration only.
+    """
+
+    __tablename__ = "listener_turns"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    style_transcript_id: Mapped[int] = mapped_column(Integer, index=True)
+    self_description: Mapped[str] = mapped_column(Text, default="")
+    concern: Mapped[str] = mapped_column(Text, default="")
+    question_verbatim: Mapped[str] = mapped_column(Text, default="")
+    reaction_after_answer: Mapped[str] = mapped_column(Text, default="")
+    outcome: Mapped[str] = mapped_column(String(16), default="unclear", index=True)
+    answer_summary: Mapped[str] = mapped_column(Text, default="")
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class ListenerProfile(Base):
+    """Versioned per-persona aggregate of real listener attitudes."""
+
+    __tablename__ = "listener_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    version: Mapped[int] = mapped_column(Integer)
+    persona_label: Mapped[str] = mapped_column(String(255), default="", index=True)
+    profile_text: Mapped[str] = mapped_column(Text)
     source_transcript_ids: Mapped[str] = mapped_column(String(500), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 

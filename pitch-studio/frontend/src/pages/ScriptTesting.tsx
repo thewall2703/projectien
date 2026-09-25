@@ -11,10 +11,14 @@ function statusMessage(status: string): string {
   switch (status) {
     case "queued":
       return "Queued — waiting to start…";
+    case "planning":
+      return "Planning the story…";
     case "generating_script":
       return "Writing the script…";
     case "validating":
       return "Validating facts and structure…";
+    case "reviewing_flow":
+      return "Checking flow with a test listener…";
     case "failed":
       return "Script test failed";
     case "done":

@@ -164,6 +164,7 @@ def script_messages(
     corrections: list[str] | None = None,
     draft: dict[str, Any] | None = None,
     style_guide: str = "",
+    plan: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
     locked, forbidden = _format_facts(facts, sequence)
     voice_lines = [format_founder_line(quote) for quote in (founder_quotes or [])]
@@ -198,18 +199,22 @@ def script_messages(
         "not Pratham Mittal and must never impersonate him.\n"
         "- The employee may say 'we', 'our', and 'at Masters\\' Union' for institutional actions and beliefs. "
         "For anything specific to the founder's life, memories, education, relationships, or achievements, "
-        "refer to Pratham in the third person and only when that content is independently supported by "
-        "LOCKED facts or REPORT EVIDENCE.\n"
+        "refer to Pratham in the third person with attribution — never as the employee's own first-person story.\n"
         "- Never write founder-biography claims in the employee's first person: no 'I started Masters\\' Union', "
         "'when I was at Wharton', 'I met every parent', 'I lived in the hostel', or equivalent identity borrowing.\n"
         "- A third-person reference to Pratham is correct employee narration, not a voice failure.\n\n"
-        "STYLE SOURCE:\n"
-        "- The FOUNDER VOICE block is Pratham Mittal actually speaking, transcribed from real talks. "
-        "It is a STYLE REFERENCE ONLY. Transfer his rhythm, plain word choice, directness, specificity, "
-        "story-first movement, and lack of corporate gloss into an employee's voice.\n"
-        "- Borrow communication patterns, never sentences, identity, memories, anecdotes, numbers, or claims. "
-        "Do not quote or closely paraphrase the transcript, even with attribution. Transcript content is not "
-        "evidence; facts come from LOCKED and REPORT EVIDENCE only.\n"
+        "FOUNDER EXCERPTS — reuse allowed, identity is not:\n"
+        "- The FOUNDER VOICE block is Pratham Mittal speaking in real talks. Excerpt sentences and phrasing "
+        "may be reused, verbatim or adapted, when they fit the beat.\n"
+        "- Generic lines (beliefs, philosophy, how Masters' Union works) can be said in the employee's "
+        "own voice with 'we' / 'at Masters\\' Union'.\n"
+        "- Anything personal to Pratham — his memories, education, decisions, relationships, achievements, "
+        "first-person anecdotes — must be converted to third person and attributed "
+        "('Pratham likes to say…', 'When Pratham started Masters\\' Union, he…'). Never first-person "
+        "founder biography from the employee.\n"
+        "- Facts and numbers from the excerpts may be used. If the same fact appears in LOCKED or REPORT "
+        "EVIDENCE with a different value, LOCKED/REPORT wins. FORBIDDEN facts are never stated, even if "
+        "an excerpt says them.\n"
         + (
             "- The PRATHAM STYLE AND STRUCTURE GUIDE complements FOUNDER VOICE: the guide is rules for "
             "transferable structure and register; the voice block is register examples. Treat observed devices "
@@ -285,8 +290,8 @@ def script_messages(
         f"Word limit: {word_budget} words at 120 spoken words per minute. "
         f"Write {low}-{high} words and never exceed {high}.\n"
         f"{flow_block}\n\n"
-        f"FOUNDER VOICE STYLE SAMPLES — style reference only; the employee is the speaker. "
-        f"Do not reuse their facts, anecdotes, or wording:\n{voice}\n\n"
+        f"FOUNDER VOICE EXCERPTS — employee is the speaker; reuse phrasing/facts per the rules above:\n"
+        f"{voice}\n\n"
         + (
             "PRATHAM-DERIVED EMPLOYEE STYLE GUIDE — use only the transferable, context-appropriate "
             "structural moves and register:\n"
@@ -298,6 +303,28 @@ def script_messages(
         f"FORBIDDEN — never state these:\n{forbidden}\n\n"
         f"REPORT EVIDENCE:\n{reports}"
     )
+    if plan:
+        beat_lines: list[str] = []
+        for beat in plan.get("beats") or []:
+            if not isinstance(beat, dict):
+                continue
+            beat_lines.append(
+                f"- topic_id={beat.get('topic_id')} ({beat.get('role')}): "
+                f"point={beat.get('point')}; proof={beat.get('proof')} "
+                f"[{beat.get('proof_source')}]; story_device={beat.get('story_device')}; "
+                f"bridge_in={beat.get('bridge_in') or '(opening)'}; "
+                f"approx_words={beat.get('approx_words')}"
+            )
+        user += (
+            "\n\nSTORY PLAN — follow this spine; each section's text must deliver its beat's "
+            "point, use its proof, and open with its bridge_in:\n"
+            f"Throughline: {plan.get('throughline') or ''}\n"
+            f"Listener start → end: {plan.get('listener_start') or ''} → "
+            f"{plan.get('listener_end') or ''}\n"
+            f"Arc: {plan.get('arc') or ''}\n"
+            f"Ask: {plan.get('ask') or ''}\n"
+            f"Beats:\n{chr(10).join(beat_lines) or '(none)'}"
+        )
     if draft:
         current = count_script_words(draft)
         order_rule = (
@@ -333,13 +360,11 @@ def voice_review_messages(
         "Pratham Mittal is the style source, NOT the speaker. The goal is an employee who communicates "
         "with Pratham's directness, conversational rhythm, specificity, and plain language without "
         "impersonating him. Pass if the draft is mostly direct, conversational, concrete-to-point, and plain. "
-        "Third-person references to Pratham are correct when discussing founder-specific material; NEVER fail "
-        "a draft merely because it refers to him in the third person. Fail identity only when the employee "
-        "claims Pratham's personal biography, memories, or actions as their own first-person experience. "
-        "Fail if the draft copies or closely paraphrases transcript sentences (even as an attributed quote), "
-        "uses transcript anecdotes or numbers as factual evidence, or sounds like a brochure more than a person talking. "
-        "Do not use transcript excerpts to fact-check the draft: they are style samples, not an authoritative "
-        "source of current facts. "
+        "Third-person references to Pratham are correct when discussing founder-specific material "
+        "(including attributed quotes and anecdotes); NEVER fail a draft merely because it refers to him "
+        "in the third person or reuses excerpt phrasing with attribution. Fail identity only when the "
+        "employee claims Pratham's personal biography, memories, or actions as their own first-person "
+        "experience. Fail if the draft sounds like a brochure more than a person talking. "
         "Do not fail locked institutional wording that must stay exact: university-status language, "
         "CTC figures, membership names, or other verified facts. Those can sound formal. "
         "Do not fail a heading label. Judge the spoken text only. "
@@ -357,7 +382,8 @@ def voice_review_messages(
     user = (
         f"PITCH CONTEXT:\nDuration: {duration or '(unknown)'}\nChannel: {channel or '(unknown)'}\n"
         f"Intent: {intent or '(unknown)'}\nContext note: {context_note or '(none)'}\n\n"
-        f"PRATHAM TRANSCRIPT STYLE SAMPLES — not facts and not speaker identity:\n{voice}\n\n"
+        f"PRATHAM TRANSCRIPT EXCERPTS — the script may reuse their phrasing and facts; they are "
+        f"not the speaker's identity:\n{voice}\n\n"
         + (
             f"PRATHAM-DERIVED EMPLOYEE STYLE GUIDE:\n{style_guide}\n\n"
             if style_guide
@@ -394,7 +420,8 @@ def review_pratham_voice(
             channel=channel,
             intent=intent,
             context_note=context_note,
-        )
+        ),
+        role="voice_judge",
     )
     violations = [
         str(item).strip()

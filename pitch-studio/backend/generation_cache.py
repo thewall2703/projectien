@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 CONTENT_VERSION_KEY = "content_version"
 BACKEND_ROOT = PITCH_STUDIO_ROOT / "backend"
+SCRIPT_PIPELINE_VERSION = "2"
 
 _deploy_version_cache: str | None = None
 
@@ -152,6 +153,19 @@ def compute_cache_key(
         "deck_use_case": deck_use_case or "",
         "openrouter_model": settings.openrouter_model,
         "openrouter_slide_model": settings.openrouter_slide_model,
+        "script_pipeline_version": SCRIPT_PIPELINE_VERSION,
+        "script_planner_model": settings.script_planner_model,
+        "script_planner_reasoning_effort": settings.script_planner_reasoning_effort,
+        "script_planner_verbosity": settings.script_planner_verbosity,
+        "script_writer_model": settings.script_writer_model,
+        "script_writer_reasoning_effort": settings.script_writer_reasoning_effort,
+        "script_writer_verbosity": settings.script_writer_verbosity,
+        "voice_judge_model": settings.voice_judge_model,
+        "flow_judge_model": settings.flow_judge_model,
+        "listener_model": settings.listener_model,
+        "script_plan_enabled": bool(settings.script_plan_enabled),
+        "flow_check_enabled": bool(settings.flow_check_enabled),
+        "listener_enabled": bool(settings.listener_enabled),
         "deploy_version": deploy_version(),
         "content_version": get_content_version(db),
     }

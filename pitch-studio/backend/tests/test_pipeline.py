@@ -25,8 +25,11 @@ from backend.pipeline.script_flow import (
 from backend.pipeline.validator import (
     align_script_to_recipe,
     align_script_to_topics,
+    budget_range,
     count_script_words,
     paragraphize_spoken_text,
+    sentence_integrity_violations,
+    split_spoken_sentences,
     trim_script_to_budget,
     validate_script,
 )
@@ -123,7 +126,44 @@ class ValidatorTests(unittest.TestCase):
         self.assertEqual(payload.sections[0].topic_id, 0)
         self.assertEqual(payload.sections[0].pages, [])
 
-    def test_over_budget_script_is_trimmed_to_the_hard_limit(self):
+    @staticmethod
+    def _sentences(count: int, words: int = 10) -> list[str]:
+        return [
+            " ".join(f"s{index}w{position}" for position in range(words)) + "."
+            for index in range(count)
+        ]
+
+    def _over_budget_script(self) -> dict:
+        return {
+            "sections": [
+                {
+                    "topic_id": 7,
+                    "topic_title": "Student builders",
+                    "pages": [13, 14],
+                    "heading": "Build for real",
+                    "text": " ".join(self._sentences(24)),
+                }
+            ],
+            "cta": "Come sit in class Saturday.",
+        }
+
+    def test_over_budget_script_is_trimmed_by_whole_sentences(self):
+        script = self._over_budget_script()
+        sentences = self._sentences(24)
+        trimmed = trim_script_to_budget(script, 240)
+        self.assertEqual(count_script_words(script), 245)
+        low, high = budget_range(240)
+        self.assertTrue(low <= count_script_words(trimmed) <= high)
+        kept = split_spoken_sentences(" ".join(trimmed["sections"][0]["text"].split()))
+        self.assertEqual(len(kept), 23)
+        self.assertTrue(set(kept) <= set(sentences))
+        self.assertEqual(kept[0], sentences[0])
+        self.assertEqual(kept[-1], sentences[-1])
+        self.assertEqual(trimmed["sections"][0]["topic_id"], 7)
+        self.assertEqual(trimmed["sections"][0]["pages"], [13, 14])
+        self.assertEqual(trimmed["cta"], script["cta"])
+
+    def test_trim_never_cuts_inside_a_sentence(self):
         script = {
             "sections": [
                 {
@@ -137,29 +177,51 @@ class ValidatorTests(unittest.TestCase):
             "cta": "Come sit in class Saturday.",
         }
         trimmed = trim_script_to_budget(script, 240)
-        self.assertEqual(count_script_words(script), 243)
-        self.assertEqual(count_script_words(trimmed), 240)
-        self.assertEqual(trimmed["sections"][0]["topic_id"], 7)
-        self.assertEqual(trimmed["sections"][0]["pages"], [13, 14])
-        self.assertEqual(trimmed["cta"], script["cta"])
+        self.assertEqual(trimmed["sections"][0]["text"], script["sections"][0]["text"])
+        violations = validate_script(trimmed, [], ["M01"], 240)
+        self.assertTrue(any(item.startswith("Word count ") for item in violations))
 
     def test_runner_repairs_a_word_only_validation_failure(self):
         topic = ScriptTopic(topic_id=7, title="Student builders", pages=[13, 14])
-        script = {
-            "sections": [
-                {
-                    "topic_id": 7,
-                    "topic_title": topic.title,
-                    "pages": [13, 14],
-                    "heading": "Build for real",
-                    "text": " ".join(f"word{index}" for index in range(238)) + ".",
-                }
-            ],
-            "cta": "Come sit in class Saturday.",
-        }
+        script = self._over_budget_script()
         repaired, violations = _validate_and_repair_budget(script, [], ["M01"], 240, [topic])
         self.assertEqual(violations, [])
-        self.assertEqual(count_script_words(repaired), 240)
+        self.assertEqual(count_script_words(repaired), 235)
+
+    def _integrity(self, text: str, budget: int = 400, cta: str = "Book one campus visit this week.") -> list[str]:
+        script = {"sections": [{"topic_title": "Recognition", "text": text}], "cta": cta}
+        return sentence_integrity_violations(script, budget)
+
+    def test_dangling_sentence_endings_are_flagged(self):
+        for text in (
+            "Recognition matters to every parent we meet. Now, an obvious parent question: is this an.",
+            "There are several programmes, each built for a different stage. So which route is yours? If you’re.",
+            "Placement data is published every year in full. We read it closely, and.",
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(any("cut off mid-thought" in item for item in self._integrity(text)))
+
+    def test_complete_sentences_are_not_flagged(self):
+        text = (
+            "People ask what this place is really about. That's what it's about. "
+            "You can see the work, meet the people and decide for yourself what's true."
+        )
+        self.assertEqual(self._integrity(text), [])
+
+    def test_section_without_a_final_sentence_is_flagged(self):
+        violations = self._integrity("We spent a year building the lab, testing it with students, and then")
+        self.assertTrue(any("ends without a complete sentence" in item for item in violations))
+
+    def test_stub_section_is_flagged(self):
+        violations = self._integrity("Pratham Mittal's role on Shark Tank India.")
+        self.assertTrue(any("is only 8 words" in item for item in violations))
+
+    def test_short_sections_allowed_in_tiny_scripts(self):
+        script = {
+            "sections": [{"topic_title": f"Beat {i}", "text": "We train operators on live work."} for i in range(4)],
+            "cta": "Visit campus.",
+        }
+        self.assertEqual(sentence_integrity_violations(script, 48), [])
 
     def test_topic_opening_cannot_start_like_a_continuation(self):
         topic = ScriptTopic(topic_id=1, title="Origin", pages=[1, 2])
@@ -791,6 +853,16 @@ class VoiceReviewTests(unittest.TestCase):
 
 
 class RunnerGateTests(unittest.TestCase):
+    def setUp(self):
+        for name in ("script_plan_enabled", "flow_check_enabled", "listener_enabled"):
+            patcher = mock.patch.object(
+                __import__("backend.pipeline.runner", fromlist=["settings"]).settings,
+                name,
+                False,
+            )
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     def _generation(self):
         return SimpleNamespace(
             id=1,
@@ -801,6 +873,7 @@ class RunnerGateTests(unittest.TestCase):
             temperature="X2",
             context_note="",
             recipe_ref="A2-1",
+            deck_use_case="",
             module_sequence="",
             status="queued",
             script_json="",
@@ -813,6 +886,8 @@ class RunnerGateTests(unittest.TestCase):
             founder_quote_ids="",
             report_asset_ids="",
             report_passages_json="",
+            script_plan_json="",
+            quality_trace_json="",
         )
 
     def _db(self, generation):
@@ -993,6 +1068,47 @@ class LLMRequestTests(unittest.TestCase):
         self.assertEqual(payload["model"], "anthropic/claude-opus-4.6")
         self.assertEqual(payload["reasoning"], {"enabled": True})
         self.assertEqual(payload["verbosity"], "medium")
+
+    def test_role_payloads_use_effort_and_conditional_verbosity(self):
+        cases = {
+            "script_planner": ("openai/gpt-5.6-sol", "max", "high"),
+            "script_writer": ("openai/gpt-5.6-sol", "max", "high"),
+            "voice_judge": ("z-ai/glm-5.3-flash", "high", ""),
+            "flow_judge": ("deepseek/deepseek-v4.1-flash", "high", ""),
+            "listener": ("moonshotai/kimi-k3", "medium", ""),
+        }
+        for role, (model, effort, verbosity) in cases.items():
+            with self.subTest(role=role):
+                payload = _request_payload(
+                    [{"role": "user", "content": "x"}],
+                    role=role,
+                )
+                self.assertEqual(payload["model"], model)
+                self.assertEqual(payload["reasoning"], {"effort": effort})
+                self.assertNotIn("enabled", payload["reasoning"])
+                if verbosity:
+                    self.assertEqual(payload["verbosity"], verbosity)
+                else:
+                    self.assertNotIn("verbosity", payload)
+                self.assertNotIn("max_tokens", payload)
+
+    def test_role_model_override_and_max_tokens_only_when_passed(self):
+        payload = _request_payload(
+            [{"role": "user", "content": "x"}],
+            role="script_writer",
+            model="openai/custom",
+            max_tokens=500,
+        )
+        self.assertEqual(payload["model"], "openai/custom")
+        self.assertEqual(payload["max_tokens"], 500)
+
+    def test_role_none_unchanged_from_legacy(self):
+        legacy = _request_payload([{"role": "user", "content": "Write the pitch."}])
+        with_none = _request_payload(
+            [{"role": "user", "content": "Write the pitch."}],
+            role=None,
+        )
+        self.assertEqual(legacy, with_none)
 
     def test_multimodal_payload_sends_image_parts_without_json_format(self):
         payload = _multimodal_payload("Describe these images.", [b"abc", b"xyz"])

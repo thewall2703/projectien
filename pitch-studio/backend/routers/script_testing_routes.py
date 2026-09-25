@@ -138,6 +138,8 @@ def _enrich(db: Session, run: ScriptTestRun) -> ScriptTestRunOut:
         founder_quote_ids=run.founder_quote_ids,
         report_asset_ids=run.report_asset_ids,
         report_passages_json=run.report_passages_json,
+        script_plan_json=getattr(run, "script_plan_json", "") or "",
+        quality_trace_json=getattr(run, "quality_trace_json", "") or "",
         created_at=run.created_at,
         finished_at=run.finished_at,
         feedback=[_feedback_out(row, emails.get(row.reviewer_user_id, "")) for row in feedback_rows],

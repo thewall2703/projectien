@@ -53,6 +53,7 @@ from backend.models import (
     FounderQuote,
     GeneratedSlide,
     GeneratedSlideAttempt,
+    ListenerTurn,
     LockedFact,
     MediaIndex,
     Module,
@@ -90,11 +91,19 @@ from backend.qa_extraction import (
     enqueue_qa_extraction,
     reject_candidate,
 )
+from backend.audience import (
+    build_listener_profile,
+    calibrate_simulator,
+    extract_listener_turns,
+    latest_listener_profile_row,
+    list_listener_turns,
+)
 from backend.recipe_cache import invalidate_recipe_cache, list_recipe_options
 from backend.schemas import (
     AddUsecaseIn,
     AssetIn,
     AssetOut,
+    AudienceCalibrateOut,
     DeckTopicListOut,
     DeckTopicOut,
     ExcludeImageIn,
@@ -109,6 +118,9 @@ from backend.schemas import (
     GeneratedSlideAttemptReview,
     GeneratedSlideOut,
     GeneratedSlideUpdate,
+    ListenerExtractOut,
+    ListenerProfileOut,
+    ListenerTurnOut,
     MediaIndexCreate,
     MediaIndexListOut,
     MediaIndexOut,
@@ -909,6 +921,122 @@ def update_style_guide(payload: StyleGuideIn, db: Session = Depends(get_db)) -> 
         persona_label=item.persona_label or "",
         source_transcript_ids=item.source_transcript_ids or "",
     )
+
+
+def _serialize_listener_turn(row: ListenerTurn, persona_labels: list[str] | None = None) -> ListenerTurnOut:
+    return ListenerTurnOut(
+        id=row.id,
+        style_transcript_id=row.style_transcript_id,
+        self_description=row.self_description or "",
+        concern=row.concern or "",
+        question_verbatim=row.question_verbatim or "",
+        reaction_after_answer=row.reaction_after_answer or "",
+        outcome=row.outcome or "unclear",
+        answer_summary=row.answer_summary or "",
+        confidence=float(row.confidence or 0.0),
+        created_at=row.created_at,
+        persona_labels=list(persona_labels or []),
+    )
+
+
+@router.post(
+    "/style-transcripts/{transcript_id}/extract-listeners",
+    response_model=ListenerExtractOut,
+)
+def extract_listeners_for_transcript(
+    transcript_id: int,
+    db: Session = Depends(get_db),
+) -> ListenerExtractOut:
+    transcript = db.get(StyleTranscript, transcript_id)
+    if transcript is None:
+        raise HTTPException(status_code=404, detail="Style transcript not found")
+    try:
+        turns = extract_listener_turns(db, transcript_id)
+    except (LLMError, ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    persona_map = personas_for_transcripts(db, [transcript_id])
+    labels = persona_map.get(transcript_id, [])
+    return ListenerExtractOut(
+        style_transcript_id=transcript_id,
+        turn_count=len(turns),
+        turns=[_serialize_listener_turn(row, labels) for row in turns],
+    )
+
+
+@router.get("/listener-turns", response_model=list[ListenerTurnOut])
+def get_listener_turns(
+    transcript_id: int | None = Query(None),
+    persona_label: str = Query(""),
+    limit: int = Query(200, ge=1, le=1000),
+    db: Session = Depends(get_db),
+) -> list[ListenerTurnOut]:
+    rows = list_listener_turns(
+        db,
+        style_transcript_id=transcript_id,
+        persona_label=persona_label,
+        limit=limit,
+    )
+    transcript_ids = sorted({row.style_transcript_id for row in rows})
+    persona_map = personas_for_transcripts(db, transcript_ids)
+    return [
+        _serialize_listener_turn(row, persona_map.get(row.style_transcript_id, []))
+        for row in rows
+    ]
+
+
+@router.get("/listener-profile", response_model=ListenerProfileOut)
+def get_listener_profile(
+    persona_label: str = Query(""),
+    db: Session = Depends(get_db),
+) -> ListenerProfileOut:
+    label = (persona_label or "").strip()
+    if not label:
+        return ListenerProfileOut()
+    row = latest_listener_profile_row(db, label)
+    if row is None:
+        return ListenerProfileOut(persona_label=label)
+    return ListenerProfileOut(
+        version=row.version,
+        persona_label=row.persona_label or label,
+        profile_text=row.profile_text or "",
+        source_transcript_ids=row.source_transcript_ids or "",
+    )
+
+
+@router.post("/listener-profile/rebuild", response_model=ListenerProfileOut)
+def rebuild_listener_profile(
+    persona_label: str = Query(...),
+    db: Session = Depends(get_db),
+) -> ListenerProfileOut:
+    label = (persona_label or "").strip()
+    if not label:
+        raise HTTPException(status_code=400, detail="persona_label is required")
+    try:
+        row = build_listener_profile(db, label)
+    except (LLMError, ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ListenerProfileOut(
+        version=row.version,
+        persona_label=row.persona_label or label,
+        profile_text=row.profile_text or "",
+        source_transcript_ids=row.source_transcript_ids or "",
+    )
+
+
+@router.post("/audience-sim/calibrate", response_model=AudienceCalibrateOut)
+def run_audience_calibration(
+    persona_label: str = Query(...),
+    limit: int = Query(30, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> AudienceCalibrateOut:
+    label = (persona_label or "").strip()
+    if not label:
+        raise HTTPException(status_code=400, detail="persona_label is required")
+    try:
+        result = calibrate_simulator(db, label, limit=limit)
+    except (LLMError, ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return AudienceCalibrateOut(**result)
 
 
 def _transcript_names(db: Session, ids: set[int]) -> dict[int, str]:

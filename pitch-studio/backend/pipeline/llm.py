@@ -13,6 +13,15 @@ from backend.config import settings
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 
+# Role → settings attribute stems (model / reasoning_effort / verbosity / timeout).
+_ROLE_ATTRS = {
+    "script_planner": "script_planner",
+    "script_writer": "script_writer",
+    "voice_judge": "voice_judge",
+    "flow_judge": "flow_judge",
+    "listener": "listener",
+}
+
 
 class LLMError(RuntimeError):
     pass
@@ -52,24 +61,52 @@ def _error_message(response: httpx.Response) -> str:
     return f"{response.status_code} {response.reason_phrase}: {response.text[:500]}"
 
 
+def role_defaults(role: str) -> dict[str, Any]:
+    stem = _ROLE_ATTRS.get(role)
+    if stem is None:
+        raise ValueError(f"Unknown chat_json role: {role}")
+    return {
+        "model": getattr(settings, f"{stem}_model"),
+        "effort": getattr(settings, f"{stem}_reasoning_effort"),
+        "verbosity": getattr(settings, f"{stem}_verbosity") or "",
+        "timeout": float(getattr(settings, f"{stem}_timeout")),
+    }
+
+
 def _request_payload(
     messages: list[dict[str, str]],
     *,
     model: str | None = None,
     reasoning: bool = True,
     max_tokens: int | None = None,
+    role: str | None = None,
 ) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "model": model or settings.openrouter_model,
+    if role is None:
+        payload: dict[str, Any] = {
+            "model": model or settings.openrouter_model,
+            "messages": messages,
+            "response_format": {"type": "json_object"},
+            "reasoning": {"enabled": reasoning},
+        }
+        if reasoning:
+            # Claude 4.6 uses adaptive thinking. OpenRouter maps ``verbosity`` to
+            # Anthropic's output_config.effort; medium balances script quality,
+            # latency, and token cost.
+            payload["verbosity"] = settings.openrouter_verbosity
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+        return payload
+
+    defaults = role_defaults(role)
+    payload = {
+        "model": model or defaults["model"],
         "messages": messages,
         "response_format": {"type": "json_object"},
-        "reasoning": {"enabled": reasoning},
+        "reasoning": {"effort": defaults["effort"]},
     }
-    if reasoning:
-        # Claude 4.6 uses adaptive thinking. OpenRouter maps ``verbosity`` to
-        # Anthropic's output_config.effort; medium balances script quality,
-        # latency, and token cost.
-        payload["verbosity"] = settings.openrouter_verbosity
+    verbosity = defaults["verbosity"]
+    if verbosity:
+        payload["verbosity"] = verbosity
     if max_tokens is not None:
         payload["max_tokens"] = max_tokens
     return payload
@@ -141,19 +178,26 @@ def _multimodal_payload(text: str, images: list[bytes]) -> dict[str, Any]:
 
 def chat_json(
     messages: list[dict[str, str]],
-    timeout: float = 120.0,
+    timeout: float | None = None,
     *,
     model: str | None = None,
     reasoning: bool = True,
     max_tokens: int | None = None,
+    role: str | None = None,
 ) -> dict[str, Any]:
+    if role is not None:
+        defaults = role_defaults(role)
+        effective_timeout = defaults["timeout"] if timeout is None else timeout
+    else:
+        effective_timeout = 120.0 if timeout is None else timeout
     payload = _request_payload(
         messages,
         model=model,
         reasoning=reasoning,
         max_tokens=max_tokens,
+        role=role,
     )
-    return _extract_json(_post_openrouter(payload, timeout))
+    return _extract_json(_post_openrouter(payload, effective_timeout))
 
 
 def chat_text_multimodal(text: str, images: list[bytes], timeout: float = 120.0) -> str:

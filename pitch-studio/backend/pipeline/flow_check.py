@@ -1,0 +1,254 @@
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from backend.pipeline.llm import chat_json
+from backend.transcripts import normalize_whitespace
+
+FLOW_SYSTEM = (
+    "You are an editor judging spoken-pitch STRUCTURE only — not facts, not voice identity. "
+    "Quote evidence before you score. Rubric:\n"
+    "- join: does B pick up from A so a listener feels one conversation (not a new paragraph "
+    "starting cold)? Score 1-5.\n"
+    "- story_shape: setup → turn → point vs a list of claims. Score 1-5.\n"
+    "- arc: does the talk build toward the ask, following the plan's throughline? Score 1-5.\n"
+    "- naturalness: would a person say this out loud in this order? Score 1-5.\n"
+    "- repetition: the same point or phrase made twice.\n"
+    "- grammar: broken or garbled sentences (quote + fix).\n"
+    "Return strict JSON:\n"
+    '{"joins":[{"from_topic":1,"to_topic":2,"score":1,"quote":"","issue":"","suggested_bridge":""}],'
+    '"sections":[{"topic_id":1,"story_shape":1,"quote":"","issue":""}],'
+    '"arc":{"score":1,"issue":""},"naturalness":{"score":1,"issue":""},'
+    '"repetition":["..."],"grammar":[{"topic_id":1,"quote":"","fix":""}]}'
+)
+
+
+def _clamp_int(value: Any, low: int, high: int, default: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(low, min(high, number))
+
+
+def _clamp_str(value: Any, limit: int = 300) -> str:
+    text = normalize_whitespace(str(value or ""))
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+
+def _format_script(script: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for index, section in enumerate(script.get("sections") or []):
+        if not isinstance(section, dict):
+            continue
+        topic_id = section.get("topic_id") or 0
+        heading = section.get("heading") or section.get("topic_title") or f"Beat {index + 1}"
+        text = normalize_whitespace(str(section.get("text") or ""))
+        parts.append(f"[topic_id={topic_id} | {heading}]\n{text}")
+    cta = normalize_whitespace(str(script.get("cta") or ""))
+    if cta:
+        parts.append(f"[ASK]\n{cta}")
+    return "\n\n".join(parts)
+
+
+def normalize_flow_result(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raw = {}
+    joins: list[dict[str, Any]] = []
+    for item in raw.get("joins") or []:
+        if not isinstance(item, dict):
+            continue
+        joins.append(
+            {
+                "from_topic": int(item.get("from_topic") or 0),
+                "to_topic": int(item.get("to_topic") or 0),
+                "score": _clamp_int(item.get("score"), 1, 5, 3),
+                "quote": _clamp_str(item.get("quote")),
+                "issue": _clamp_str(item.get("issue")),
+                "suggested_bridge": _clamp_str(item.get("suggested_bridge")),
+            }
+        )
+    sections: list[dict[str, Any]] = []
+    for item in raw.get("sections") or []:
+        if not isinstance(item, dict):
+            continue
+        sections.append(
+            {
+                "topic_id": int(item.get("topic_id") or 0),
+                "story_shape": _clamp_int(item.get("story_shape"), 1, 5, 3),
+                "quote": _clamp_str(item.get("quote")),
+                "issue": _clamp_str(item.get("issue")),
+            }
+        )
+    arc_raw = raw.get("arc") if isinstance(raw.get("arc"), dict) else {}
+    natural_raw = raw.get("naturalness") if isinstance(raw.get("naturalness"), dict) else {}
+    repetition: list[str] = []
+    for item in raw.get("repetition") or []:
+        text = _clamp_str(item)
+        if text:
+            repetition.append(text)
+    grammar: list[dict[str, Any]] = []
+    for item in raw.get("grammar") or []:
+        if not isinstance(item, dict):
+            continue
+        quote = _clamp_str(item.get("quote"))
+        fix = _clamp_str(item.get("fix"))
+        if not quote and not fix:
+            continue
+        grammar.append(
+            {
+                "topic_id": int(item.get("topic_id") or 0),
+                "quote": quote,
+                "fix": fix,
+            }
+        )
+    return {
+        "joins": joins,
+        "sections": sections,
+        "arc": {
+            "score": _clamp_int(arc_raw.get("score"), 1, 5, 3),
+            "issue": _clamp_str(arc_raw.get("issue")),
+        },
+        "naturalness": {
+            "score": _clamp_int(natural_raw.get("score"), 1, 5, 3),
+            "issue": _clamp_str(natural_raw.get("issue")),
+        },
+        "repetition": repetition,
+        "grammar": grammar,
+    }
+
+
+def flow_passed(result: dict[str, Any]) -> bool:
+    joins = result.get("joins") or []
+    if joins:
+        scores = [int(item.get("score") or 0) for item in joins if isinstance(item, dict)]
+        if any(score < 3 for score in scores):
+            return False
+        if scores and (sum(scores) / len(scores)) < 3.5:
+            return False
+    arc = int((result.get("arc") or {}).get("score") or 0)
+    natural = int((result.get("naturalness") or {}).get("score") or 0)
+    if arc < 3 or natural < 3:
+        return False
+    if result.get("grammar"):
+        return False
+    return True
+
+
+def flow_score(result: dict[str, Any]) -> float:
+    parts: list[float] = []
+    joins = [int(item.get("score") or 0) for item in (result.get("joins") or []) if isinstance(item, dict)]
+    if joins:
+        parts.append(sum(joins) / len(joins) / 5.0)
+    sections = [
+        int(item.get("story_shape") or 0)
+        for item in (result.get("sections") or [])
+        if isinstance(item, dict)
+    ]
+    if sections:
+        parts.append(sum(sections) / len(sections) / 5.0)
+    arc = int((result.get("arc") or {}).get("score") or 0)
+    natural = int((result.get("naturalness") or {}).get("score") or 0)
+    parts.append(arc / 5.0)
+    parts.append(natural / 5.0)
+    if result.get("grammar"):
+        parts.append(0.2)
+    else:
+        parts.append(1.0)
+    if not parts:
+        return 0.0
+    return max(0.0, min(1.0, sum(parts) / len(parts)))
+
+
+def flow_notes(result: dict[str, Any], limit: int = 8) -> list[str]:
+    scored: list[tuple[int, str]] = []
+    for item in result.get("joins") or []:
+        if not isinstance(item, dict):
+            continue
+        score = int(item.get("score") or 5)
+        if score >= 4:
+            continue
+        quote = item.get("quote") or ""
+        bridge = item.get("suggested_bridge") or ""
+        detail = f" ({quote})" if quote else ""
+        bridge_bit = f" Bridge it, e.g.: {bridge}" if bridge else ""
+        scored.append(
+            (
+                score,
+                f"Transition from section {item.get('from_topic')} to {item.get('to_topic')} "
+                f"is abrupt{detail}.{bridge_bit}".rstrip(),
+            )
+        )
+    for item in result.get("sections") or []:
+        if not isinstance(item, dict):
+            continue
+        shape = int(item.get("story_shape") or 5)
+        if shape >= 4:
+            continue
+        scored.append(
+            (
+                shape,
+                f"Section {item.get('topic_id')} reads as a list of claims. "
+                "Give it a setup, a turn and a point.",
+            )
+        )
+    arc = result.get("arc") or {}
+    if int(arc.get("score") or 5) < 4 and arc.get("issue"):
+        scored.append((int(arc.get("score") or 3), f"Arc: {arc.get('issue')}"))
+    natural = result.get("naturalness") or {}
+    if int(natural.get("score") or 5) < 4 and natural.get("issue"):
+        scored.append(
+            (int(natural.get("score") or 3), f"Naturalness: {natural.get('issue')}")
+        )
+    for phrase in result.get("repetition") or []:
+        text = normalize_whitespace(str(phrase or ""))
+        if text:
+            scored.append((2, f"Repetition: cut or vary «{text}»."))
+    for item in result.get("grammar") or []:
+        if not isinstance(item, dict):
+            continue
+        quote = item.get("quote") or ""
+        fix = item.get("fix") or ""
+        if quote and fix:
+            scored.append(
+                (1, f"Section {item.get('topic_id')} grammar: '{quote}' → '{fix}'")
+            )
+        elif quote:
+            scored.append((1, f"Section {item.get('topic_id')} grammar: '{quote}'"))
+    scored.sort(key=lambda pair: pair[0])
+    notes: list[str] = []
+    for _score, note in scored:
+        if note and note not in notes:
+            notes.append(note)
+        if len(notes) >= limit:
+            break
+    return notes
+
+
+def check_flow(
+    script: dict[str, Any],
+    *,
+    plan: dict[str, Any] | None,
+    duration: str,
+    audience_cluster: str,
+    temperature: str,
+    topic_roles: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    plan_block = json.dumps(plan or {}, ensure_ascii=False)
+    roles_block = json.dumps(topic_roles or [], ensure_ascii=False)
+    user = (
+        f"DURATION: {duration}\n"
+        f"AUDIENCE: {audience_cluster}\n"
+        f"TEMPERATURE: {temperature}\n"
+        f"TOPIC ROLES: {roles_block}\n"
+        f"STORY PLAN: {plan_block}\n\n"
+        f"SPOKEN SCRIPT:\n{_format_script(script)}"
+    )
+    raw = chat_json(
+        [{"role": "system", "content": FLOW_SYSTEM}, {"role": "user", "content": user}],
+        role="flow_judge",
+    )
+    return normalize_flow_result(raw)

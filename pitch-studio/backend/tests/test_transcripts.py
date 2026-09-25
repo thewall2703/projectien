@@ -188,7 +188,10 @@ class PromptVoiceTests(unittest.TestCase):
         self.assertIn("FOUNDER VOICE", user)
         self.assertIn("Stay in India and ride the wave.", user)
         self.assertIn("C0005.MP4 @ 12:30", user)
-        self.assertIn("facts come from LOCKED", messages[0]["content"])
+        self.assertIn("Excerpt sentences and phrasing may be reused", messages[0]["content"])
+        self.assertIn("LOCKED/REPORT wins", messages[0]["content"])
+        self.assertIn("Never first-person founder biography", messages[0]["content"])
+        self.assertNotIn("Do not quote or closely paraphrase", messages[0]["content"])
 
 
 class HashTests(unittest.TestCase):

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from itertools import zip_longest
 from typing import Any, Callable, Protocol
 
 from sqlalchemy.orm import Session
@@ -24,9 +25,19 @@ from backend.pipeline.dsai_deck import (
 )
 from backend.pipeline.gaps import plan_with_generated_slides, vision_candidates_from_instructions
 from backend.pipeline.slide_fill import realize_generated_slides
+from backend.config import settings
+from backend.pipeline.audience_sim import (
+    listener_notes,
+    listener_passed,
+    listener_score,
+    serialize_quality_trace,
+    simulate_audience,
+)
+from backend.pipeline.flow_check import check_flow, flow_notes, flow_passed, flow_score
 from backend.pipeline.llm import chat_json
 from backend.pipeline.prompts import review_pratham_voice, script_messages
 from backend.pipeline.resolver import ResolvedRecipe, resolve_recipe
+from backend.pipeline.script_plan import plan_script
 from backend.pipeline.style_guide import latest_style_guide
 from backend.pipeline.script_flow import (
     ScriptFlowError,
@@ -240,6 +251,276 @@ def _validate_and_repair_budget(
     return script, violations
 
 
+def _rewrite_script_with_corrections(
+    *,
+    target: ScriptTarget,
+    modules: list[Module],
+    sequence: list[str],
+    facts: list[LockedFact],
+    word_budget: int,
+    founder_quotes: list[FounderQuote],
+    report_passages: list[dict[str, Any]],
+    topic_flow: list[Any],
+    style_guide: str,
+    corrections: list[str],
+    draft: dict[str, Any],
+    plan: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], list[str], dict[str, Any]]:
+    """Rewrite → budget repair → voice review. Returns (script, violations, review)."""
+    script = chat_json(
+        script_messages(
+            audience_cluster=target.audience_cluster,
+            duration=target.duration,
+            channel=target.channel,
+            intent=target.intent,
+            temperature=target.temperature,
+            context_note=target.context_note,
+            modules=modules,
+            sequence=sequence,
+            facts=facts,
+            word_budget=word_budget,
+            founder_quotes=founder_quotes,
+            report_passages=report_passages,
+            topic_flow=topic_flow,
+            corrections=corrections,
+            draft=draft,
+            style_guide=style_guide,
+            plan=plan,
+        ),
+        role="script_writer",
+    )
+    script = align_script_to_topics(script, topic_flow, modules)
+    ScriptPayload.model_validate(script)
+    script, violations = _validate_and_repair_budget(
+        script, facts, sequence, word_budget, topic_flow
+    )
+    if violations:
+        return script, violations, {"passed": False, "violations": violations, "score": 0.0}
+    review = review_pratham_voice(
+        script,
+        founder_quotes,
+        style_guide=style_guide,
+        duration=target.duration,
+        channel=target.channel,
+        intent=target.intent,
+        context_note=target.context_note,
+    )
+    return script, violations, review
+
+
+def _topic_roles(topic_flow: list[Any]) -> list[dict[str, Any]]:
+    roles: list[dict[str, Any]] = []
+    total = len(topic_flow)
+    for index, topic in enumerate(topic_flow):
+        payload = topic.to_prompt_dict() if hasattr(topic, "to_prompt_dict") else topic
+        if not isinstance(payload, dict):
+            continue
+        if total <= 1:
+            role = "OPENING + CLOSE"
+        elif index == 0:
+            role = "OPENING"
+        elif index == total - 1:
+            role = "CLOSE"
+        else:
+            role = "BODY"
+        roles.append({"topic_id": payload.get("topic_id"), "role": role, "title": payload.get("title")})
+    return roles
+
+
+def _run_quality_loop(
+    db: Session,
+    target: ScriptTarget,
+    *,
+    script: dict[str, Any],
+    modules: list[Module],
+    facts: list[LockedFact],
+    resolved: ResolvedRecipe,
+    founder_quotes: list[FounderQuote],
+    report_passages: list[dict[str, Any]],
+    topic_flow: list[Any],
+    style_guide: str,
+    persona_label: str,
+    plan: dict[str, Any] | None,
+    plan_error: str,
+    set_status: Callable[[str], None],
+) -> dict[str, Any]:
+    """Flow + listener quality loop. Never fails the parent run."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    from backend.audience import latest_listener_profile, listener_examples_for_persona
+
+    flow_on = bool(settings.flow_check_enabled)
+    listener_on = bool(settings.listener_enabled)
+    if not flow_on and not listener_on:
+        if hasattr(target, "quality_trace_json"):
+            target.quality_trace_json = serialize_quality_trace([], kept_round=0, plan_error=plan_error)
+            db.commit()
+        return script
+
+    try:
+        set_status("reviewing_flow")
+    except Exception:
+        pass
+
+    rounds: list[dict[str, Any]] = []
+    current = script
+    best_script = script
+    best_score: float | None = None
+    best_round = 0
+    previous_score: float | None = None
+
+    def finish() -> dict[str, Any]:
+        if hasattr(target, "quality_trace_json"):
+            target.quality_trace_json = serialize_quality_trace(
+                rounds, kept_round=best_round, plan_error=plan_error
+            )
+            db.commit()
+        return best_script
+
+    try:
+        profile_text = latest_listener_profile(db, persona_label) if persona_label else ""
+        examples = (
+            listener_examples_for_persona(db, persona_label, limit=5) if persona_label else []
+        )
+    except Exception as exc:  # noqa: BLE001
+        rounds.append({"round": 1, "error": f"{type(exc).__name__}: {exc}"})
+        return finish()
+
+    topic_roles = _topic_roles(topic_flow)
+
+    def evaluate(candidate: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None, list[str]]:
+        flow_result: dict[str, Any] | None = None
+        listener_result: dict[str, Any] | None = None
+        errors: list[str] = []
+
+        def run_flow() -> dict[str, Any]:
+            return check_flow(
+                candidate,
+                plan=plan,
+                duration=target.duration,
+                audience_cluster=target.audience_cluster,
+                temperature=target.temperature,
+                topic_roles=topic_roles,
+            )
+
+        def run_listener() -> dict[str, Any]:
+            return simulate_audience(
+                candidate,
+                persona_label=persona_label,
+                profile_text=profile_text,
+                listener_examples=examples,
+                audience_cluster=target.audience_cluster,
+                duration=target.duration,
+                channel=target.channel,
+                intent=target.intent,
+                temperature=target.temperature,
+                context_note=target.context_note,
+            )
+
+        futures = {}
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            if flow_on:
+                futures[pool.submit(run_flow)] = "flow"
+            if listener_on:
+                futures[pool.submit(run_listener)] = "listener"
+            for future in as_completed(futures):
+                kind = futures[future]
+                try:
+                    value = future.result()
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"{kind}:{type(exc).__name__}: {exc}")
+                    continue
+                if kind == "flow":
+                    flow_result = value
+                else:
+                    listener_result = value
+        return flow_result, listener_result, errors
+
+    for round_index in range(3):
+        try:
+            flow_result, listener_result, eval_errors = evaluate(current)
+        except Exception as exc:  # noqa: BLE001
+            rounds.append({"round": round_index + 1, "error": f"{type(exc).__name__}: {exc}"})
+            break
+
+        scores: list[float] = []
+        passed_flags: list[bool] = []
+        flow_list: list[str] = []
+        listener_list: list[str] = []
+        if flow_result is not None:
+            scores.append(flow_score(flow_result))
+            passed_flags.append(flow_passed(flow_result))
+            flow_list = flow_notes(flow_result, limit=8)
+        if listener_result is not None:
+            scores.append(listener_score(listener_result))
+            passed_flags.append(listener_passed(listener_result))
+            listener_list = listener_notes(listener_result, limit=8)
+        notes: list[str] = []
+        for pair in zip_longest(flow_list, listener_list):
+            notes.extend(note for note in pair if note and note not in notes)
+        notes = notes[:10]
+        score = (sum(scores) / len(scores)) if scores else 0.0
+        passed = bool(passed_flags) and all(passed_flags)
+
+        round_trace: dict[str, Any] = {
+            "round": round_index + 1,
+            "flow": flow_result,
+            "listener": listener_result,
+            "score": score,
+            "passed": passed,
+            "notes": notes,
+            "rewrite": "none",
+            "errors": eval_errors,
+        }
+        rounds.append(round_trace)
+
+        if best_score is None or score > best_score:
+            best_script, best_score, best_round = current, score, round_index + 1
+
+        if passed:
+            break
+        if previous_score is not None and score <= previous_score:
+            round_trace["stopped"] = "no_score_improvement"
+            break
+        previous_score = score
+        if round_index == 2 or not notes:
+            break
+
+        try:
+            rewritten, violations, review = _rewrite_script_with_corrections(
+                target=target,
+                modules=modules,
+                sequence=resolved.module_sequence,
+                facts=facts,
+                word_budget=resolved.word_budget,
+                founder_quotes=founder_quotes,
+                report_passages=report_passages,
+                topic_flow=topic_flow,
+                style_guide=style_guide,
+                corrections=notes,
+                draft=current,
+                plan=plan,
+            )
+        except Exception as exc:  # noqa: BLE001
+            round_trace["rewrite"] = "error"
+            round_trace["rewrite_error"] = f"{type(exc).__name__}: {exc}"
+            break
+
+        if violations or not review.get("passed"):
+            round_trace["rewrite"] = "rejected"
+            round_trace["rewrite_rejected"] = {
+                "violations": violations,
+                "voice_passed": bool(review.get("passed")),
+                "voice_violations": review.get("violations") or [],
+            }
+            break
+
+        current = rewritten
+        round_trace["rewrite"] = "accepted"
+
+    return finish()
+
+
 def generate_script_phase(
     db: Session,
     target: ScriptTarget,
@@ -364,6 +645,47 @@ def generate_script_phase(
         set_status("failed")
         return None
 
+    script_plan: dict[str, Any] | None = None
+    plan_error = ""
+    if settings.script_plan_enabled:
+        try:
+            set_status("planning")
+        except Exception:
+            pass
+        try:
+            from backend.audience import latest_listener_profile
+
+            listener_profile = (
+                latest_listener_profile(db, persona_label) if persona_label else ""
+            )
+            script_plan = plan_script(
+                audience_cluster=target.audience_cluster,
+                duration=target.duration,
+                channel=target.channel,
+                intent=target.intent,
+                temperature=target.temperature,
+                context_note=target.context_note,
+                modules=modules,
+                sequence=resolved.module_sequence,
+                facts=facts,
+                word_budget=resolved.word_budget,
+                founder_quotes=founder_quotes,
+                report_passages=report_passages,
+                topic_flow=topic_flow,
+                style_guide=style_guide,
+                listener_profile=listener_profile,
+            )
+            if script_plan is None:
+                plan_error = "planner returned nothing usable"
+        except Exception as exc:  # noqa: BLE001
+            plan_error = f"{type(exc).__name__}: {exc}"
+            script_plan = None
+    if hasattr(target, "script_plan_json"):
+        target.script_plan_json = (
+            json.dumps(script_plan, ensure_ascii=False) if script_plan else ""
+        )
+        db.commit()
+
     set_status("generating_script")
     messages = script_messages(
         audience_cluster=target.audience_cluster,
@@ -380,8 +702,9 @@ def generate_script_phase(
         report_passages=report_passages,
         topic_flow=topic_flow,
         style_guide=style_guide,
+        plan=script_plan,
     )
-    script = chat_json(messages)
+    script = chat_json(messages, role="script_writer")
     script = align_script_to_topics(script, topic_flow, modules)
     ScriptPayload.model_validate(script)
 
@@ -410,7 +733,9 @@ def generate_script_phase(
                 corrections=violations,
                 draft=script,
                 style_guide=style_guide,
-            )
+                plan=script_plan,
+            ),
+            role="script_writer",
         )
         script = align_script_to_topics(script, topic_flow, modules)
         ScriptPayload.model_validate(script)
@@ -457,7 +782,9 @@ def generate_script_phase(
                 corrections=voice_notes,
                 draft=script,
                 style_guide=style_guide,
-            )
+                plan=script_plan,
+            ),
+            role="script_writer",
         )
         script = align_script_to_topics(script, topic_flow, modules)
         ScriptPayload.model_validate(script)
@@ -485,6 +812,30 @@ def generate_script_phase(
         )
         set_status("failed")
         return None
+
+    if settings.flow_check_enabled or settings.listener_enabled:
+        script = _run_quality_loop(
+            db,
+            target,
+            script=script,
+            modules=modules,
+            facts=facts,
+            resolved=resolved,
+            founder_quotes=founder_quotes,
+            report_passages=report_passages,
+            topic_flow=topic_flow,
+            style_guide=style_guide,
+            persona_label=persona_label,
+            plan=script_plan,
+            plan_error=plan_error,
+            set_status=set_status,
+        )
+        target.script_json = json.dumps(script, ensure_ascii=False)
+    elif hasattr(target, "quality_trace_json"):
+        target.quality_trace_json = serialize_quality_trace(
+            [], kept_round=0, plan_error=plan_error
+        )
+        db.commit()
 
     founder_quote_ids = ",".join(str(quote.id) for quote in founder_quotes)
     report_asset_ids = ",".join(

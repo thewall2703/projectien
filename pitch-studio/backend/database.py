@@ -95,6 +95,8 @@ GENERATION_COLUMN_SQL = {
     "cache_key": "ALTER TABLE generations ADD COLUMN cache_key VARCHAR(64) DEFAULT ''",
     "cached_from_id": "ALTER TABLE generations ADD COLUMN cached_from_id INTEGER",
     "deck_use_case": "ALTER TABLE generations ADD COLUMN deck_use_case VARCHAR(64) DEFAULT ''",
+    "script_plan_json": "ALTER TABLE generations ADD COLUMN script_plan_json TEXT DEFAULT ''",
+    "quality_trace_json": "ALTER TABLE generations ADD COLUMN quality_trace_json TEXT DEFAULT ''",
 }
 
 OBJECTION_COLUMN_SQL = {
@@ -119,6 +121,8 @@ STYLE_TRANSCRIPT_COLUMN_SQL = {
 
 SCRIPT_TEST_RUN_COLUMN_SQL = {
     "deck_use_case": "ALTER TABLE script_test_runs ADD COLUMN deck_use_case VARCHAR(64) DEFAULT ''",
+    "script_plan_json": "ALTER TABLE script_test_runs ADD COLUMN script_plan_json TEXT DEFAULT ''",
+    "quality_trace_json": "ALTER TABLE script_test_runs ADD COLUMN quality_trace_json TEXT DEFAULT ''",
 }
 
 DECK_TOPIC_COLUMN_SQL = {
