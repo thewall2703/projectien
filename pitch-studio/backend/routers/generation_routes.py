@@ -20,6 +20,7 @@ from backend.pipeline.brand_deck import (
     brand_deck_file_key,
     page_image,
 )
+from backend.pipeline import dsai_deck
 from backend.pipeline.interpret import InterpretError, interpret_brief
 from backend.pipeline.resolver import is_valid_sequence, parse_sequence
 from backend.pipeline.runner import run as run_generation
@@ -430,6 +431,28 @@ def brand_deck_page(
     try:
         data = page_image(page, brand_deck_file_key(db))
     except BrandDeckUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return Response(
+        content=data,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, max-age=86400"},
+    )
+
+
+@router.get("/dsai-deck/pages/{page}.jpg")
+def dsai_deck_page(
+    page: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Serve one DS & AI deck page as an image, for previews and Brand Deck Testing."""
+    _ = user
+    asset = dsai_deck.find_dsai_asset(db)
+    if asset is None or page < 1 or page > dsai_deck.page_count(asset):
+        raise HTTPException(status_code=404, detail="Page not found")
+    try:
+        data = dsai_deck.page_image(page, asset.file_key or None)
+    except dsai_deck.DsaiDeckUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return Response(
         content=data,

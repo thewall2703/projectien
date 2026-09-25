@@ -8,7 +8,7 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from backend.database import SessionLocal, ensure_schema
-from backend.deck_topic_index import JOB_DECK_PREPARE, prepare_deck_topics
+from backend.deck_topic_index import JOB_DECK_PREPARE, deck_for_asset, prepare_deck_topics
 from backend.media_index import JOB_DESCRIBE, JOB_PREPARE, describe_media, prepare_media
 from backend.models import Job, utc_now
 from backend.qa_extraction import JOB_QA_EXTRACT, run_qa_extraction
@@ -109,7 +109,7 @@ def _run_job(job_id: int) -> None:
         elif job.job_type == JOB_DESCRIBE:
             describe_media(db, job.media_id, on_stage=on_stage)
         elif job.job_type == JOB_DECK_PREPARE:
-            prepare_deck_topics(db, on_stage=on_stage)
+            prepare_deck_topics(db, on_stage=on_stage, deck=deck_for_asset(db, job.asset_id))
         elif job.job_type == JOB_QA_EXTRACT:
             run_qa_extraction(db, job.asset_id, on_stage=on_stage)
         else:

@@ -4,7 +4,29 @@ import { AXES } from "../../axes";
 import SlideView from "../../components/SlideView";
 import { Button, EmptyState, ErrorBanner, Skeleton, Spinner, StatusBadge } from "../../components/ui";
 import { axisLabel, personaLabel } from "../../labels";
-import type { DeckTopicList, DeckTopicRow, RecipeOption } from "../../types";
+import type { DeckKey, DeckTopicList, DeckTopicRow, RecipeOption } from "../../types";
+
+const DECKS: { key: DeckKey; name: string; description: string }[] = [
+  {
+    key: "brand",
+    name: "Brand Deck",
+    description: "The main deck. Every generated pitch is built from it.",
+  },
+  {
+    key: "dsai",
+    name: "DS & AI Deck",
+    description:
+      "Added alongside the Brand Deck only when the generation request mentions DS / AI in its notes.",
+  },
+];
+
+function emptyList(deck: DeckKey): DeckTopicList {
+  return { items: [], asset_id: 0, asset_title: deckInfo(deck).name, deck };
+}
+
+function deckInfo(deck: DeckKey) {
+  return DECKS.find((item) => item.key === deck) || DECKS[0];
+}
 
 function isActiveJob(row?: Pick<DeckTopicList, "job_status"> | null) {
   return row?.job_status === "queued" || row?.job_status === "running";
@@ -27,7 +49,8 @@ function errMessage(err: unknown) {
 }
 
 export default function BrandDeckTesting() {
-  const [list, setList] = useState<DeckTopicList>({ items: [], asset_id: 0, asset_title: "Brand Deck" });
+  const [deck, setDeck] = useState<DeckKey>("brand");
+  const [list, setList] = useState<DeckTopicList>(() => emptyList("brand"));
   const [recipes, setRecipes] = useState<RecipeOption[]>([]);
   const [current, setCurrent] = useState<DeckTopicRow | null>(null);
   const [visionDraft, setVisionDraft] = useState("");
@@ -39,6 +62,8 @@ export default function BrandDeckTesting() {
   const [visionSaved, setVisionSaved] = useState(false);
   const selectedIdRef = useRef(0);
   const pollRef = useRef(0);
+  const deckRef = useRef<DeckKey>("brand");
+  const deckName = deckInfo(deck).name;
 
   const applyCurrent = (row: DeckTopicRow, { syncDrafts = false }: { syncDrafts?: boolean } = {}) => {
     const switching = selectedIdRef.current !== row.id;
@@ -50,7 +75,9 @@ export default function BrandDeckTesting() {
   };
 
   const reloadList = async (keepId?: number) => {
-    const data = await api.deckTopicList();
+    const requested = deckRef.current;
+    const data = await api.deckTopicList(requested);
+    if (deckRef.current !== requested) return data;
     setList(data);
     if (keepId) {
       const next = data.items.find((row) => row.id === keepId);
@@ -65,13 +92,13 @@ export default function BrandDeckTesting() {
     setError("");
     try {
       while (pollRef.current === token) {
-        const data = await api.deckTopicList();
+        const data = await api.deckTopicList(deckRef.current);
         if (pollRef.current !== token) return;
         setList(data);
         const next = data.items.find((row) => row.id === (keepId || selectedIdRef.current)) || data.items[0];
         if (next) applyCurrent(next);
         if (data.job_status === "error") {
-          setError(data.job_error || "Brand deck indexing failed");
+          setError(data.job_error || `${deckInfo(deckRef.current).name} indexing failed`);
           return;
         }
         if (!isActiveJob(data)) return;
@@ -97,17 +124,33 @@ export default function BrandDeckTesting() {
       .recipes()
       .then((data) => setRecipes(data as RecipeOption[]))
       .catch(() => setRecipes([]));
+  }, []);
+
+  useEffect(() => {
+    deckRef.current = deck;
+    pollRef.current += 1;
+    selectedIdRef.current = 0;
+    setCurrent(null);
+    setList(emptyList(deck));
+    setBusy("");
+    setError("");
+    setLoading(true);
     reloadList()
       .then((data) => {
+        if (deckRef.current !== deck) return;
         if (data.items[0]) applyCurrent(data.items[0]);
         if (isActiveJob(data)) void watchJob(data.items[0]?.id);
       })
-      .catch((err) => setError(errMessage(err)))
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (deckRef.current === deck) setError(errMessage(err));
+      })
+      .finally(() => {
+        if (deckRef.current === deck) setLoading(false);
+      });
     return () => {
       pollRef.current += 1;
     };
-  }, []);
+  }, [deck]);
 
   const run = async (label: string, work: () => Promise<DeckTopicRow | void>) => {
     setBusy(label);
@@ -127,7 +170,9 @@ export default function BrandDeckTesting() {
     setBusy("prepare");
     setError("");
     try {
-      const data = await api.prepareDeckTopics(force);
+      const requested = deckRef.current;
+      const data = await api.prepareDeckTopics(force, requested);
+      if (deckRef.current !== requested) return;
       setList(data);
       if (data.items[0]) applyCurrent(data.items[0]);
       await watchJob(current?.id || data.items[0]?.id);
@@ -189,9 +234,23 @@ export default function BrandDeckTesting() {
         <p className="kicker">Library</p>
         <h1 className="font-display text-3xl">Brand deck testing</h1>
         <p className="mt-2 max-w-3xl text-sm text-muted">
-          Group the Brand Deck into topics. Personas are recommended from each topic
+          Group each deck into topics. Personas are recommended from each topic
           analysis automatically. Add a vision later if you want to refine those matches.
         </p>
+        <div className="mt-5 flex flex-wrap gap-2" role="tablist" aria-label="Deck">
+          {DECKS.map((item) => (
+            <Button
+              key={item.key}
+              role="tab"
+              aria-selected={deck === item.key}
+              variant={deck === item.key ? "accent" : "default"}
+              onClick={() => setDeck(item.key)}
+            >
+              {item.name}
+            </Button>
+          ))}
+        </div>
+        <p className="mt-2 text-xs text-muted">{deckInfo(deck).description}</p>
       </div>
       <ErrorBanner message={error} />
       <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
@@ -203,7 +262,7 @@ export default function BrandDeckTesting() {
             {preparing && (
               <p className="flex items-start gap-2 text-xs text-muted">
                 <Spinner className="mt-0.5" />
-                {list.job_stage || "Grouping brand deck pages…"}
+                {list.job_stage || `Grouping ${deckName} pages…`}
               </p>
             )}
             {error && !preparing && list.items.length > 0 && (
@@ -220,7 +279,7 @@ export default function BrandDeckTesting() {
             </div>
           )}
           {!loading && list.items.length === 0 && !preparing && (
-            <p className="p-3 text-sm text-muted">No topics yet. Prepare the Brand Deck to group its slides.</p>
+            <p className="p-3 text-sm text-muted">No topics yet. Prepare the {deckName} to group its slides.</p>
           )}
           {list.items.map((row) => (
             <button
@@ -249,7 +308,7 @@ export default function BrandDeckTesting() {
           {!loading && !current && (
             <EmptyState
               title="Select a topic"
-              description="Prepare the Brand Deck, then choose a topic. Personas are recommended from the analysis."
+              description={`Prepare the ${deckName}, then choose a topic. Personas are recommended from the analysis.`}
             />
           )}
           {current && (
@@ -293,7 +352,7 @@ export default function BrandDeckTesting() {
               <div className="card space-y-3 p-6">
                 <h3 className="font-display text-xl">Topic summary</h3>
                 <p className="whitespace-pre-wrap text-sm leading-6">
-                  {current.summary || "No summary yet. Prepare the Brand Deck to analyze these slides."}
+                  {current.summary || `No summary yet. Prepare the ${deckName} to analyze these slides.`}
                 </p>
               </div>
 
@@ -364,7 +423,7 @@ export default function BrandDeckTesting() {
                   <p className="text-sm text-muted">
                     {current.summary.trim()
                       ? "No recommendations yet. Refresh to match personas from this analysis."
-                      : "Prepare the Brand Deck first. Personas are recommended from the topic analysis."}
+                      : `Prepare the ${deckName} first. Personas are recommended from the topic analysis.`}
                   </p>
                 )}
                 <div className="space-y-3">

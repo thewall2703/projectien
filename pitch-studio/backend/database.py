@@ -116,6 +116,10 @@ STYLE_TRANSCRIPT_COLUMN_SQL = {
     "source_url": "ALTER TABLE style_transcripts ADD COLUMN source_url VARCHAR(1000) DEFAULT ''",
 }
 
+DECK_TOPIC_COLUMN_SQL = {
+    "deck": "ALTER TABLE deck_topics ADD COLUMN deck VARCHAR(16) DEFAULT 'brand'",
+}
+
 
 def _add_missing_columns(table: str, statements: dict[str, str]) -> None:
     inspector = inspect(engine)
@@ -204,6 +208,7 @@ def ensure_schema() -> None:
     _add_missing_columns("founder_quotes", FOUNDER_QUOTE_COLUMN_SQL)
     _add_missing_columns("voice_style_guides", VOICE_STYLE_GUIDE_COLUMN_SQL)
     _add_missing_columns("style_transcripts", STYLE_TRANSCRIPT_COLUMN_SQL)
+    _add_missing_columns("deck_topics", DECK_TOPIC_COLUMN_SQL)
     _ensure_generation_cache_key_index()
     _backfill_founder_quote_style_provenance()
     _SCHEMA_READY = True

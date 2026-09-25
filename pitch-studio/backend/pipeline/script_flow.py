@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -12,6 +13,7 @@ from backend.deck_topic_index import parse_pages
 from backend.models import DeckTopic
 from backend.pipeline.brand_deck import BrandSlide, PAGE_LABELS
 from backend.pipeline.deck import BRAND_SOURCE, GENERATED_SOURCE
+from backend.pipeline.dsai_deck import DSAI_SOURCE
 
 
 class ScriptFlowError(RuntimeError):
@@ -94,12 +96,33 @@ def _generated_topic(slide: Any, topic_id: int, sequence_set: list[str]) -> Scri
     )
 
 
-def _page_map(topics: list[Any]) -> dict[int, Any]:
+def _is_dsai(slide: Any) -> bool:
+    return getattr(slide, "source", BRAND_SOURCE) == DSAI_SOURCE
+
+
+def _topic_deck(topic: Any) -> str:
+    return getattr(topic, "deck", None) or BRAND_SOURCE
+
+
+def _page_map(topics: list[Any], deck: str = BRAND_SOURCE) -> dict[int, Any]:
     mapping: dict[int, Any] = {}
     for topic in topics:
+        if _topic_deck(topic) != deck:
+            continue
         for page in parse_pages(getattr(topic, "pages_json", "") or "[]"):
             mapping[page] = topic
     return mapping
+
+
+def _dsai_fallback_topic(slide: Any) -> Any:
+    """A DS & AI page outside the topic index still gets its own spoken beat."""
+    return SimpleNamespace(
+        id=-100000 - int(slide.page),
+        title=getattr(slide, "label", "") or "DS & AI",
+        summary="",
+        vision="",
+        module_ids="",
+    )
 
 
 def build_script_topics(
@@ -107,12 +130,24 @@ def build_script_topics(
     topics: list[Any],
     sequence: list[str],
 ) -> list[ScriptTopic]:
-    if not topics:
+    brand_topics = [topic for topic in topics if _topic_deck(topic) == BRAND_SOURCE]
+    if not brand_topics:
         raise ScriptFlowError("Prepare Brand Deck topics before generating a pitch")
     if not plan:
         raise ScriptFlowError("The Brand Deck plan is empty")
     mapping = _page_map(topics)
-    missing = [slide.page for slide in plan if not _is_generated(slide) and slide.page not in mapping]
+    dsai_mapping = _page_map(topics, DSAI_SOURCE)
+
+    def topic_for(slide: Any) -> Any:
+        if _is_dsai(slide):
+            return dsai_mapping.get(slide.page) or _dsai_fallback_topic(slide)
+        return mapping[slide.page]
+
+    missing = [
+        slide.page
+        for slide in plan
+        if not _is_generated(slide) and not _is_dsai(slide) and slide.page not in mapping
+    ]
     if missing:
         raise ScriptFlowError(
             "Selected Brand Deck pages are missing from the topic index: "
@@ -124,7 +159,7 @@ def build_script_topics(
     for slide in plan:
         if _is_generated(slide):
             continue
-        source_topic_id = int(mapping[slide.page].id)
+        source_topic_id = int(topic_for(slide).id)
         selected_modules_by_topic.setdefault(source_topic_id, set()).add(slide.module_id)
     flow: list[ScriptTopic] = []
     current: ScriptTopic | None = None
@@ -154,7 +189,7 @@ def build_script_topics(
             pending_evidence_page = None
             continue
         pending_evidence_page = None
-        topic = mapping[slide.page]
+        topic = topic_for(slide)
         source_topic_id = int(topic.id)
         # Deck-topic rows are intentionally broad visual chapters and can span
         # several recipe modules (for example Origin may include both M01 and

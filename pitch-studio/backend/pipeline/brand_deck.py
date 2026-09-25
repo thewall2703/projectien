@@ -398,9 +398,13 @@ def render_pptx(
     presentation.slide_width = Inches(SLIDE_W)
     presentation.slide_height = Inches(SLIDE_H)
     blank = presentation.slide_layouts[6]
+    from backend.pipeline import dsai_deck
+
     for item in plan:
         source = getattr(item, "source", BRAND_SOURCE)
-        if source != BRAND_SOURCE:
+        if source == dsai_deck.DSAI_SOURCE:
+            image = dsai_deck.page_image(item.page)
+        elif source != BRAND_SOURCE:
             # A generated slide carries its rendered JPEG in storage; embed it
             # from the content-addressed file_key. An unrealised placeholder has
             # no image yet, so skip it (the deck stays the same length).

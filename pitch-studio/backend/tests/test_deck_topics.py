@@ -175,7 +175,7 @@ class WorkerDeckJobTests(unittest.TestCase):
         job_id = job.id
         db.close()
 
-        def fake_prepare(_db, on_stage=None):
+        def fake_prepare(_db, on_stage=None, **_kwargs):
             if on_stage:
                 on_stage("Grouping brand deck pages…")
             return []
@@ -197,7 +197,7 @@ class PreparePersistenceTests(unittest.TestCase):
 
         asset = SimpleNamespace(id=7, extract_json="", extract_status="", title="Brand Deck")
         db = mock.Mock()
-        db.query.return_value.order_by.return_value.all.return_value = []
+        db.query.return_value.filter.return_value.order_by.return_value.all.return_value = []
         added = []
 
         def add(row):
@@ -245,7 +245,7 @@ class PreparePersistenceTests(unittest.TestCase):
             )
         ]
         db = mock.Mock()
-        db.query.return_value.order_by.return_value.all.return_value = existing
+        db.query.return_value.filter.return_value.order_by.return_value.all.return_value = existing
         with mock.patch("backend.deck_topic_index._ensure_schema"):
             with mock.patch("backend.deck_topic_index.find_brand_deck_asset", return_value=asset):
                 with mock.patch("backend.deck_topic_index._ensure_extract"):

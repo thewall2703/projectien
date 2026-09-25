@@ -23,6 +23,7 @@ from backend.media_index import (
     sha256_text,
 )
 from backend.models import Asset, DeckTopic, Job, utc_now
+from backend.pipeline import dsai_deck
 from backend.pipeline.brand_deck import (
     PAGE_LABELS,
     PAGE_MODULES,
@@ -50,18 +51,73 @@ StageCallback = Callable[[str], None]
 MAX_TOPIC_FRAMES = 3
 MAX_SUMMARY_CHARS = 500
 
-GROUP_PROMPT = (
-    "You group Masters' Union Brand Deck slides into coherent topics. "
-    "Pages must stay in order. Each topic is a contiguous page range. "
-    "Together the topics must cover every page exactly once, with no gaps "
-    "and no overlaps. Prefer natural story sections over one topic per page. "
-    "Aim for 10-22 topics. Return strict JSON: "
-    '{"topics":[{"title":"","start_page":1,"end_page":3,"module_ids":["M01"]}]}'
-)
+BRAND_DECK = "brand"
+DECKS = (BRAND_DECK, dsai_deck.DECK_KEY)
+
+
+def group_prompt(deck_name: str = "Brand Deck") -> str:
+    return (
+        f"You group Masters' Union {deck_name} slides into coherent topics. "
+        "Pages must stay in order. Each topic is a contiguous page range. "
+        "Together the topics must cover every page exactly once, with no gaps "
+        "and no overlaps. Prefer natural story sections over one topic per page. "
+        "Aim for 10-22 topics. module_ids are pitch module codes (M01-M14) the "
+        "topic supports; leave the list empty when none fit. Return strict JSON: "
+        '{"topics":[{"title":"","start_page":1,"end_page":3,"module_ids":["M01"]}]}'
+    )
+
+
+GROUP_PROMPT = group_prompt()
 
 
 class DeckTopicError(RuntimeError):
     pass
+
+
+def normalize_deck(deck: str | None) -> str:
+    value = (deck or BRAND_DECK).strip().lower()
+    if value not in DECKS:
+        raise DeckTopicError(f"Unknown deck: {deck}")
+    return value
+
+
+def deck_name(deck: str) -> str:
+    return dsai_deck.DECK_NAME if deck == dsai_deck.DECK_KEY else "Brand Deck"
+
+
+def deck_labels(deck: str, asset: Asset | None = None) -> dict[int, str]:
+    if deck == dsai_deck.DECK_KEY:
+        return dsai_deck.page_labels(asset) if asset is not None else {}
+    return PAGE_LABELS
+
+
+def deck_modules(deck: str) -> dict[int, str]:
+    return {} if deck == dsai_deck.DECK_KEY else PAGE_MODULES
+
+
+def deck_page_count(deck: str, asset: Asset | None = None) -> int:
+    if deck == dsai_deck.DECK_KEY:
+        return dsai_deck.page_count(asset)
+    return SOURCE_PAGE_COUNT
+
+
+def deck_page_image(deck: str, page: int, file_key: str | None) -> bytes:
+    if deck == dsai_deck.DECK_KEY:
+        return dsai_deck.page_image(page, file_key)
+    return page_image(page, file_key)
+
+
+def deck_file_key(db: Session, deck: str, asset: Asset) -> str | None:
+    if deck == dsai_deck.DECK_KEY:
+        return asset.file_key or None
+    return brand_deck_file_key(db)
+
+
+def deck_for_asset(db: Session, asset_id: int) -> str:
+    asset = db.get(Asset, asset_id) if asset_id else None
+    if asset is not None and asset.type == dsai_deck.ASSET_TYPE:
+        return dsai_deck.DECK_KEY
+    return BRAND_DECK
 
 
 def _emit_stage(on_stage: StageCallback | None, text: str) -> None:
@@ -93,7 +149,17 @@ def parse_pages(raw: str) -> list[int]:
     return pages
 
 
-def page_items_for(pages: list[int]) -> list[DeckTopicPageOut]:
+def page_items_for(pages: list[int], deck: str = BRAND_DECK) -> list[DeckTopicPageOut]:
+    if deck == dsai_deck.DECK_KEY:
+        return [
+            DeckTopicPageOut(
+                page=page,
+                label=dsai_deck.cached_label(page),
+                module_id="",
+                image_url=dsai_deck.dsai_image_url(page),
+            )
+            for page in pages
+        ]
     return [
         DeckTopicPageOut(
             page=page,
@@ -103,6 +169,16 @@ def page_items_for(pages: list[int]) -> list[DeckTopicPageOut]:
         )
         for page in pages
     ]
+
+
+def find_deck_asset(db: Session, deck: str = BRAND_DECK) -> Asset:
+    if deck == dsai_deck.DECK_KEY:
+        _ensure_schema()
+        asset = dsai_deck.find_dsai_asset(db)
+        if asset is None:
+            raise DeckTopicError("DS & AI deck has not been imported yet")
+        return asset
+    return find_brand_deck_asset(db)
 
 
 def find_brand_deck_asset(db: Session) -> Asset:
@@ -140,15 +216,17 @@ def page_text_map(asset: Asset) -> dict[int, str]:
     return texts
 
 
-def build_page_catalog(asset: Asset) -> list[dict[str, Any]]:
+def build_page_catalog(asset: Asset, deck: str = BRAND_DECK) -> list[dict[str, Any]]:
     texts = page_text_map(asset)
+    labels = deck_labels(deck, asset)
+    modules = deck_modules(deck)
     catalog: list[dict[str, Any]] = []
-    for page in range(1, SOURCE_PAGE_COUNT + 1):
+    for page in range(1, deck_page_count(deck, asset) + 1):
         catalog.append(
             {
                 "page": page,
-                "label": PAGE_LABELS.get(page, f"Page {page}"),
-                "module_id": PAGE_MODULES.get(page, ""),
+                "label": labels.get(page, f"Page {page}"),
+                "module_id": modules.get(page, ""),
                 "text": texts.get(page, ""),
             }
         )
@@ -256,14 +334,14 @@ def _catalog_prompt(catalog: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def group_brand_deck_pages(catalog: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def group_brand_deck_pages(catalog: list[dict[str, Any]], name: str = "Brand Deck") -> list[dict[str, Any]]:
     payload = chat_json(
         [
-            {"role": "system", "content": GROUP_PROMPT},
+            {"role": "system", "content": group_prompt(name)},
             {
                 "role": "user",
                 "content": (
-                    f"Group these {len(catalog)} brand deck pages into contiguous topics.\n\n"
+                    f"Group these {len(catalog)} {name} pages into contiguous topics.\n\n"
                     f"{_catalog_prompt(catalog)}"
                 ),
             },
@@ -291,7 +369,13 @@ def representative_pages(start: int, end: int) -> list[int]:
     return unique
 
 
-def describe_topic_pages(start: int, end: int, catalog: list[dict[str, Any]], file_key: str | None) -> str:
+def describe_topic_pages(
+    start: int,
+    end: int,
+    catalog: list[dict[str, Any]],
+    file_key: str | None,
+    deck: str = BRAND_DECK,
+) -> str:
     by_page = {item["page"]: item for item in catalog}
     frames: list[bytes] = []
     notes: list[str] = []
@@ -299,12 +383,12 @@ def describe_topic_pages(start: int, end: int, catalog: list[dict[str, Any]], fi
         item = by_page.get(page) or {}
         notes.append(f"p{page}: {item.get('label') or PAGE_LABELS.get(page, '')}")
         try:
-            frames.append(page_image(page, file_key))
+            frames.append(deck_page_image(deck, page, file_key))
         except Exception:
             continue
     excerpt = " | ".join(notes)
     prompt = (
-        "These are consecutive Brand Deck slides for one topic. Summarize the topic, "
+        f"These are consecutive {deck_name(deck)} slides for one topic. Summarize the topic, "
         "what the slides argue, and why they belong together as communications material. "
         "Return exactly one plain-text paragraph with no Markdown. "
         f"The complete response must be at most {MAX_SUMMARY_CHARS} characters.\n\n"
@@ -321,7 +405,7 @@ def describe_topic_pages(start: int, end: int, catalog: list[dict[str, Any]], fi
         ]
         if part
     )
-    return normalize_visual_description(fallback or f"Pages {start}-{end} of the Brand Deck.")
+    return normalize_visual_description(fallback or f"Pages {start}-{end} of the {deck_name(deck)}.")
 
 
 def is_stale(row: DeckTopic) -> bool:
@@ -384,10 +468,19 @@ def build_topic_recommendation_messages(
     vision: str,
     recipe_options: list[RecipeOption],
     feedback: dict[str, Any] | None = None,
+    deck: str = BRAND_DECK,
 ) -> list[dict[str, str]]:
     page_range = f"{pages[0]}-{pages[-1]}" if pages else "(none)"
+    usage_note = (
+        "These slides are only added to a pitch when the request is about data science / AI, "
+        "on top of the main brand deck. Classroom exercises, quizzes and workshop activities "
+        "are not pitch material: recommend no personas for them. "
+        if deck == dsai_deck.DECK_KEY
+        else ""
+    )
     system = (
-        "You match a Masters' Union Brand Deck topic to pitch personas. "
+        f"You match a Masters' Union {deck_name(deck)} topic to pitch personas. "
+        f"{usage_note}"
         "Base recommendations on the topic summary first. "
         "If a human vision note is present, refine the matches with it; "
         "if it is empty, still recommend from the analysis alone. "
@@ -405,7 +498,7 @@ def build_topic_recommendation_messages(
         f"Topic summary:\n{summary.strip() or '(none)'}\n\n"
         f"Human vision:\n{vision.strip() or '(none — recommend from the analysis only)'}\n\n"
         f"Prior reviewer feedback:\n{_format_feedback(feedback or empty_feedback())}\n\n"
-        "Recommend the personas this brand deck topic should be shown for."
+        f"Recommend the personas this {deck_name(deck)} topic should be shown for."
     )
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
@@ -419,6 +512,7 @@ def recommend(db: Session, row: DeckTopic) -> dict[str, Any]:
         row.vision,
         options,
         parse_feedback(row.feedback_json),
+        deck=getattr(row, "deck", None) or BRAND_DECK,
     )
     payload = chat_json(messages)
     return {
@@ -496,12 +590,14 @@ def serialize(row: DeckTopic, job: Job | None = None) -> DeckTopicOut:
     pages = parse_pages(row.pages_json)
     rec = parse_recommendations(row.recommendations_json)
     fb = parse_feedback(row.feedback_json)
+    deck = getattr(row, "deck", None) or BRAND_DECK
     return DeckTopicOut(
         id=row.id,
+        deck=deck,
         sort_order=row.sort_order,
         title=row.title,
         pages=pages,
-        page_items=page_items_for(pages),
+        page_items=page_items_for(pages, deck),
         summary=row.summary,
         module_ids=row.module_ids,
         vision=row.vision,
@@ -552,7 +648,7 @@ def serialize(row: DeckTopic, job: Job | None = None) -> DeckTopicOut:
     )
 
 
-def list_deck_topics(db: Session) -> DeckTopicListOut:
+def list_deck_topics(db: Session, deck: str = BRAND_DECK) -> DeckTopicListOut:
     _ensure_schema()
     try:
         from backend.worker import reclaim_stale_jobs
@@ -560,17 +656,23 @@ def list_deck_topics(db: Session) -> DeckTopicListOut:
         reclaim_stale_jobs(db)
     except Exception:
         pass
-    rows = db.query(DeckTopic).order_by(DeckTopic.sort_order, DeckTopic.id).all()
     asset: Asset | None = None
     try:
-        asset = find_brand_deck_asset(db)
+        asset = find_deck_asset(db, deck)
     except DeckTopicError:
         asset = None
+    rows = (
+        db.query(DeckTopic)
+        .filter(DeckTopic.deck == deck)
+        .order_by(DeckTopic.sort_order, DeckTopic.id)
+        .all()
+    )
     job = latest_deck_job(db, asset.id) if asset else None
     return DeckTopicListOut(
         items=[serialize(row, job) for row in rows],
+        deck=deck,
         asset_id=asset.id if asset else 0,
-        asset_title=asset.title if asset else "Brand Deck",
+        asset_title=asset.title if asset else deck_name(deck),
         job_status=job.status if job else "",
         job_stage=job.stage if job else "",
         job_error=job.error if job else "",
@@ -609,13 +711,27 @@ def _match_existing(existing: list[DeckTopic], start: int, end: int) -> DeckTopi
     return row
 
 
-def prepare_deck_topics(db: Session, on_stage: StageCallback | None = None, force: bool = False) -> list[DeckTopic]:
+def prepare_deck_topics(
+    db: Session,
+    on_stage: StageCallback | None = None,
+    force: bool = False,
+    deck: str = BRAND_DECK,
+) -> list[DeckTopic]:
     _ensure_schema()
-    asset = find_brand_deck_asset(db)
-    _ensure_extract(db, asset, on_stage)
-    catalog = build_page_catalog(asset)
+    asset = find_deck_asset(db, deck)
+    if deck == BRAND_DECK:
+        _ensure_extract(db, asset, on_stage)
+    catalog = build_page_catalog(asset, deck)
     source_hash = catalog_source_hash(catalog)
-    existing = db.query(DeckTopic).order_by(DeckTopic.sort_order, DeckTopic.id).all()
+    name = deck_name(deck)
+    labels = deck_labels(deck, asset)
+    modules_by_page = deck_modules(deck)
+    existing = (
+        db.query(DeckTopic)
+        .filter(DeckTopic.deck == deck)
+        .order_by(DeckTopic.sort_order, DeckTopic.id)
+        .all()
+    )
     if existing and not force and all(row.source_hash == source_hash and row.summary.strip() for row in existing):
         missing = [row for row in existing if not row.recommendations_json and not row.vision_frozen]
         if missing:
@@ -630,14 +746,14 @@ def prepare_deck_topics(db: Session, on_stage: StageCallback | None = None, forc
             _emit_stage(on_stage, "Topics already indexed")
         return existing
 
-    _emit_stage(on_stage, "Grouping brand deck pages…")
+    _emit_stage(on_stage, f"Grouping {name} pages…")
     try:
-        groups = group_brand_deck_pages(catalog)
+        groups = group_brand_deck_pages(catalog, name)
     except Exception as exc:  # noqa: BLE001
-        print(f"  brand deck grouping fallback: {exc}", flush=True)
+        print(f"  {name} grouping fallback: {exc}", flush=True)
         groups = fallback_topic_groups(catalog)
 
-    file_key = brand_deck_file_key(db)
+    file_key = deck_file_key(db, deck, asset)
     kept_ids: list[int] = []
     created: list[DeckTopic] = []
     for index, group in enumerate(groups):
@@ -647,17 +763,17 @@ def prepare_deck_topics(db: Session, on_stage: StageCallback | None = None, forc
         match = _match_existing(existing, start, end)
         _emit_stage(on_stage, f"Analyzing topic {index + 1}/{len(groups)}…")
         try:
-            summary = describe_topic_pages(start, end, catalog, file_key)
+            summary = describe_topic_pages(start, end, catalog, file_key, deck)
         except Exception as exc:  # noqa: BLE001
             print(f"  topic {index + 1} visual analysis fallback: {exc}", flush=True)
             summary = normalize_visual_description(
-                " ".join(PAGE_LABELS.get(page, "") for page in pages) or f"Pages {start}-{end}."
+                " ".join(labels.get(page, "") for page in pages) or f"Pages {start}-{end}."
             )
         module_ids = ",".join(dict.fromkeys(group["module_ids"] or [
-            PAGE_MODULES[page] for page in pages if PAGE_MODULES.get(page)
+            modules_by_page[page] for page in pages if modules_by_page.get(page)
         ]))
         if match is None:
-            match = DeckTopic()
+            match = DeckTopic(deck=deck)
             db.add(match)
         match.sort_order = index
         match.title = group["title"]

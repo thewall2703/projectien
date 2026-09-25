@@ -1275,6 +1275,7 @@ def plan_with_generated_slides(
     modules: Sequence[Any] | None = None,
     rank_fn: Any = _MISSING,
     match_fn: Any = _MISSING,
+    ceiling: int | None = None,
 ) -> list[PlannedSlide]:
     """Runner entry point: detect gaps and return the (possibly) augmented plan.
 
@@ -1309,7 +1310,7 @@ def plan_with_generated_slides(
         rank_fn=resolved_rank_fn,
         match_fn=resolved_match_fn,
         allow_photo_templates=_recipe_has_approved_photos(db, recipe_ref),
-        ceiling=slide_ceiling_for(duration),
+        ceiling=slide_ceiling_for(duration) if ceiling is None else ceiling,
     )
     return result.plan
 

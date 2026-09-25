@@ -355,6 +355,7 @@ class DeckTopic(Base):
     __tablename__ = "deck_topics"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    deck: Mapped[str] = mapped_column(String(16), default="brand", index=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, index=True)
     title: Mapped[str] = mapped_column(String(255), default="")
     pages_json: Mapped[str] = mapped_column(Text, default="[]")

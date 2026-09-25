@@ -432,8 +432,11 @@ export type DeckTopicPage = {
   image_url: string;
 };
 
+export type DeckKey = "brand" | "dsai";
+
 export type DeckTopicRow = {
   id: number;
+  deck?: DeckKey;
   sort_order: number;
   title: string;
   pages: number[];
@@ -461,6 +464,7 @@ export type DeckTopicRow = {
 
 export type DeckTopicList = {
   items: DeckTopicRow[];
+  deck?: DeckKey;
   asset_id: number;
   asset_title: string;
   job_status?: string;

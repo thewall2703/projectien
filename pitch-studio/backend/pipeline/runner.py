@@ -16,6 +16,12 @@ from backend.pipeline.brand_deck import (
     render_pptx,
 )
 from backend.pipeline.deck import slide_ceiling_for
+from backend.pipeline.dsai_deck import (
+    dsai_slide_budget,
+    insert_before_closing,
+    is_dsai_request,
+    load_dsai_slides,
+)
 from backend.pipeline.gaps import plan_with_generated_slides
 from backend.pipeline.slide_fill import realize_generated_slides
 from backend.pipeline.llm import chat_json
@@ -221,7 +227,19 @@ def generate_script_phase(
     )
     style_guide = latest_style_guide(db, persona_label=persona_label)
     report_passages = pick_report_passages(db.query(Asset).all(), resolved.module_sequence)
-    plan = plan_pages(resolved.module_sequence, slide_ceiling_for(target.duration))
+    ceiling = slide_ceiling_for(target.duration)
+    dsai_slides = (
+        load_dsai_slides(
+            db,
+            recipe_ref=target.recipe_ref,
+            sequence=resolved.module_sequence,
+            budget=dsai_slide_budget(ceiling),
+        )
+        if is_dsai_request(target.context_note)
+        else []
+    )
+    brand_ceiling = ceiling - len(dsai_slides)
+    plan = plan_pages(resolved.module_sequence, brand_ceiling)
     # Stage 3: fill true gaps the brand deck cannot answer. Prefers swapping in a
     # real unused brand page (RULE ZERO); only otherwise plants a generated
     # placeholder for Stage 4 to fill/render. Returns the plan unchanged when
@@ -236,7 +254,9 @@ def generate_script_phase(
         audience_cluster=target.audience_cluster,
         recipe_ref=target.recipe_ref,
         modules=modules,
+        ceiling=brand_ceiling,
     )
+    plan = insert_before_closing(plan, dsai_slides)
     try:
         topic_flow = load_script_topics(db, plan, resolved.module_sequence)
     except ScriptFlowError as exc:

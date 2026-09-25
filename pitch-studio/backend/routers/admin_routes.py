@@ -15,11 +15,12 @@ from backend.deck_topic_index import (
     DeckTopicError,
     apply_recommendations as apply_deck_recommendations,
     enqueue_deck_prepare,
-    find_brand_deck_asset,
+    find_deck_asset,
     has_extract as deck_has_extract,
     is_stale as deck_is_stale,
     latest_deck_job,
     list_deck_topics,
+    normalize_deck,
     require_editable as require_deck_editable,
     serialize as serialize_deck_topic,
     touch as touch_deck,
@@ -1408,46 +1409,56 @@ def _get_deck_topic(db: Session, topic_id: int) -> DeckTopic:
     return item
 
 
+def _serialize_topic(db: Session, item: DeckTopic) -> DeckTopicOut:
+    try:
+        asset = find_deck_asset(db, item.deck or "brand")
+        job = latest_deck_job(db, asset.id)
+    except DeckTopicError:
+        job = None
+    return serialize_deck_topic(item, job)
+
+
 def _save_deck_feedback(db: Session, item: DeckTopic, payload: dict[str, Any]) -> DeckTopicOut:
     item.feedback_json = json.dumps(payload, ensure_ascii=False)
     touch_deck(item)
     db.commit()
     db.refresh(item)
-    asset = find_brand_deck_asset(db)
-    return serialize_deck_topic(item, latest_deck_job(db, asset.id))
+    return _serialize_topic(db, item)
 
 
 @router.get("/deck-topics", response_model=DeckTopicListOut)
-def list_brand_deck_topics(db: Session = Depends(get_db)) -> DeckTopicListOut:
-    return list_deck_topics(db)
+def list_brand_deck_topics(
+    deck: str = Query(default="brand"),
+    db: Session = Depends(get_db),
+) -> DeckTopicListOut:
+    try:
+        return list_deck_topics(db, normalize_deck(deck))
+    except DeckTopicError as exc:
+        raise _deck_error(exc) from exc
 
 
 @router.post("/deck-topics/prepare", response_model=DeckTopicListOut)
 def prepare_brand_deck_topics(
     force: bool = Query(default=False),
+    deck: str = Query(default="brand"),
     db: Session = Depends(get_db),
 ) -> DeckTopicListOut:
     try:
-        asset = find_brand_deck_asset(db)
+        deck = normalize_deck(deck)
+        asset = find_deck_asset(db, deck)
         if force:
-            for row in db.query(DeckTopic).all():
+            for row in db.query(DeckTopic).filter(DeckTopic.deck == deck).all():
                 row.source_hash = ""
             db.commit()
         enqueue_deck_prepare(db, asset.id, force=force)
     except DeckTopicError as exc:
         raise _deck_error(exc) from exc
-    return list_deck_topics(db)
+    return list_deck_topics(db, deck)
 
 
 @router.get("/deck-topics/{topic_id}", response_model=DeckTopicOut)
 def get_brand_deck_topic(topic_id: int, db: Session = Depends(get_db)) -> DeckTopicOut:
-    item = _get_deck_topic(db, topic_id)
-    try:
-        asset = find_brand_deck_asset(db)
-        job = latest_deck_job(db, asset.id)
-    except DeckTopicError:
-        job = None
-    return serialize_deck_topic(item, job)
+    return _serialize_topic(db, _get_deck_topic(db, topic_id))
 
 
 @router.put("/deck-topics/{topic_id}/vision", response_model=DeckTopicOut)
@@ -1474,8 +1485,7 @@ def save_deck_topic_vision(
         touch_deck(item)
     db.commit()
     db.refresh(item)
-    asset = find_brand_deck_asset(db)
-    return serialize_deck_topic(item, latest_deck_job(db, asset.id))
+    return _serialize_topic(db, item)
 
 
 @router.post("/deck-topics/{topic_id}/reindex", response_model=DeckTopicOut)
@@ -1493,8 +1503,7 @@ def reindex_deck_topic(topic_id: int, db: Session = Depends(get_db)) -> DeckTopi
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     db.commit()
     db.refresh(item)
-    asset = find_brand_deck_asset(db)
-    return serialize_deck_topic(item, latest_deck_job(db, asset.id))
+    return _serialize_topic(db, item)
 
 
 @router.post("/deck-topics/{topic_id}/feedback", response_model=DeckTopicOut)
@@ -1553,8 +1562,7 @@ def freeze_deck_topic(topic_id: int, db: Session = Depends(get_db)) -> DeckTopic
     touch_deck(item)
     db.commit()
     db.refresh(item)
-    asset = find_brand_deck_asset(db)
-    return serialize_deck_topic(item, latest_deck_job(db, asset.id))
+    return _serialize_topic(db, item)
 
 
 @router.post("/deck-topics/{topic_id}/unfreeze", response_model=DeckTopicOut)
@@ -1565,5 +1573,4 @@ def unfreeze_deck_topic(topic_id: int, db: Session = Depends(get_db)) -> DeckTop
     touch_deck(item)
     db.commit()
     db.refresh(item)
-    asset = find_brand_deck_asset(db)
-    return serialize_deck_topic(item, latest_deck_job(db, asset.id))
+    return _serialize_topic(db, item)

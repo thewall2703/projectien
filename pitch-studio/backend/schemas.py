@@ -800,6 +800,7 @@ class DeckTopicPageOut(BaseModel):
 
 class DeckTopicOut(BaseModel):
     id: int
+    deck: str = "brand"
     sort_order: int = 0
     title: str = ""
     pages: list[int] = []
@@ -827,6 +828,7 @@ class DeckTopicOut(BaseModel):
 
 class DeckTopicListOut(BaseModel):
     items: list[DeckTopicOut]
+    deck: str = "brand"
     asset_id: int = 0
     asset_title: str = ""
     job_status: str = ""
