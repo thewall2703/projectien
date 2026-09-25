@@ -1,5 +1,7 @@
 .env
 .env.*
+.cohesivity
+pitch-studio/.admin-credentials
 !.env.example
 !.env*.example
 .venv/

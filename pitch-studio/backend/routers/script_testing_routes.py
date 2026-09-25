@@ -5,7 +5,7 @@ import json
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from backend.auth import get_current_user
+from backend.auth import get_current_user, require_admin
 from backend.database import get_db
 from backend.models import Recipe, ScriptTestFeedback, ScriptTestRating, ScriptTestRun, User, utc_now
 from backend.pipeline.resolver import is_valid_sequence, parse_sequence
@@ -22,7 +22,7 @@ from backend.schemas import (
 )
 from backend.script_testing import find_review_target, run_script_test
 
-router = APIRouter(prefix="/api/script-tests", tags=["script-tests"], dependencies=[Depends(get_current_user)])
+router = APIRouter(prefix="/api/script-tests", tags=["script-tests"], dependencies=[Depends(require_admin)])
 
 
 def _rating_stats(ratings: list[ScriptTestRating]) -> tuple[float | None, int]:

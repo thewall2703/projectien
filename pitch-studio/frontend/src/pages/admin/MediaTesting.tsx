@@ -265,6 +265,11 @@ export default function MediaTesting() {
     run("freeze", () => (current.vision_frozen ? api.unfreezeMedia(current.id) : api.freezeMedia(current.id)));
   };
 
+  const toggleImageExcluded = (imageId: number, excluded: boolean) => {
+    if (!current) return;
+    run(`exclude-${imageId}`, () => api.excludeMediaImage(current.id, imageId, excluded));
+  };
+
   const preparing = busy === "prepare" || (isActiveJob(current) && current?.job_type !== "media_describe");
   const describing = busy === "describe" || (isActiveJob(current) && current?.job_type === "media_describe");
 
@@ -366,7 +371,13 @@ export default function MediaTesting() {
                     </p>
                   </div>
                 </div>
-                <MediaPreview row={current} onSync={() => prepare(current.asset_id)} busy={preparing} />
+                <MediaPreview
+                  row={current}
+                  onSync={() => prepare(current.asset_id)}
+                  busy={preparing}
+                  onToggleExcluded={toggleImageExcluded}
+                  excludingId={busy.startsWith("exclude-") ? Number(busy.replace("exclude-", "")) : null}
+                />
                 {(current.media_kind === "video" &&
                   (!current.transcript.trim() || !current.visual_description.trim())) ||
                 (current.media_kind === "photo" && current.image_assets.length === 0) ? (
@@ -652,10 +663,14 @@ function MediaPreview({
   row,
   onSync,
   busy,
+  onToggleExcluded,
+  excludingId,
 }: {
   row: MediaIndexRow;
   onSync: () => void;
   busy: boolean;
+  onToggleExcluded?: (imageId: number, excluded: boolean) => void;
+  excludingId?: number | null;
 }) {
   if (row.media_kind === "video") {
     const drive = driveEmbed(row.asset_source_url);
@@ -719,13 +734,32 @@ function MediaPreview({
       />
     );
   }
-  return <PhotoGallery key={row.asset_id} images={row.image_assets} />;
+  const excludedCount = row.image_assets.filter((image) => image.excluded).length;
+  return (
+    <div className="space-y-3">
+      {excludedCount > 0 && (
+        <p className="text-xs text-muted">
+          {excludedCount} image{excludedCount === 1 ? "" : "s"} hidden from generation recommendations
+        </p>
+      )}
+      <PhotoGallery
+        key={row.asset_id}
+        images={row.image_assets}
+        onToggleExcluded={onToggleExcluded}
+        excludingId={excludingId}
+      />
+    </div>
+  );
 }
 
 function PhotoGallery({
   images,
+  onToggleExcluded,
+  excludingId,
 }: {
   images: MediaIndexRow["image_assets"];
+  onToggleExcluded?: (imageId: number, excluded: boolean) => void;
+  excludingId?: number | null;
 }) {
   const PAGE_SIZE = 18;
   const CONCURRENT_LOADS = 3;
@@ -754,6 +788,9 @@ function PhotoGallery({
             key={image.id}
             id={image.id}
             title={image.title}
+            excluded={Boolean(image.excluded)}
+            excluding={excludingId === image.id}
+            onToggleExcluded={onToggleExcluded}
             onSettled={thumbnailSettled}
           />
         ))}
@@ -780,10 +817,16 @@ function PhotoGallery({
 function ImageThumb({
   id,
   title,
+  excluded,
+  excluding,
+  onToggleExcluded,
   onSettled,
 }: {
   id: number;
   title: string;
+  excluded: boolean;
+  excluding?: boolean;
+  onToggleExcluded?: (imageId: number, excluded: boolean) => void;
   onSettled: () => void;
 }) {
   const [loaded, setLoaded] = useState(false);
@@ -816,65 +859,84 @@ function ImageThumb({
 
   return (
     <>
-      <button
-        type="button"
-        className="relative aspect-[4/3] overflow-hidden rounded-lg border border-line bg-paper"
-        onClick={() => {
-          setFullLoaded(false);
-          setFullFailed(false);
-          setRetryKey((value) => value + 1);
-          setOpen(true);
-        }}
-        aria-label={`View ${title}`}
-      >
-        {!loaded && !failed && (
-          <Skeleton className="absolute inset-0 z-0 h-full w-full rounded-none" />
-        )}
-        {failed && (
-          <span className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 px-3 text-xs text-muted">
-            Preview unavailable
-            <span
-              role="button"
-              tabIndex={0}
-              className="underline"
-              onClick={(event) => {
-                event.stopPropagation();
-                setFailed(false);
-                setLoaded(false);
-                setRetryKey((value) => value + 1);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
+      <div className="space-y-2">
+        <button
+          type="button"
+          className={`relative aspect-[4/3] w-full overflow-hidden rounded-lg border border-line bg-paper ${
+            excluded ? "opacity-45" : ""
+          }`}
+          onClick={() => {
+            setFullLoaded(false);
+            setFullFailed(false);
+            setRetryKey((value) => value + 1);
+            setOpen(true);
+          }}
+          aria-label={`View ${title}`}
+        >
+          {!loaded && !failed && (
+            <Skeleton className="absolute inset-0 z-0 h-full w-full rounded-none" />
+          )}
+          {failed && (
+            <span className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 px-3 text-xs text-muted">
+              Preview unavailable
+              <span
+                role="button"
+                tabIndex={0}
+                className="underline"
+                onClick={(event) => {
                   event.stopPropagation();
                   setFailed(false);
                   setLoaded(false);
                   setRetryKey((value) => value + 1);
-                }
-              }}
-            >
-              Try again
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setFailed(false);
+                    setLoaded(false);
+                    setRetryKey((value) => value + 1);
+                  }
+                }}
+              >
+                Try again
+              </span>
             </span>
-          </span>
+          )}
+          {excluded && (
+            <span className="absolute left-2 top-2 z-20 rounded bg-ink/80 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-white">
+              Hidden
+            </span>
+          )}
+          <img
+            key={retryKey}
+            src={`/api/assets/${id}/thumbnail.jpg?v=${retryKey}`}
+            alt={title}
+            loading="lazy"
+            decoding="async"
+            className={`relative z-10 h-full w-full object-cover ${failed ? "hidden" : "block"}`}
+            onLoad={() => {
+              setLoaded(true);
+              markSettled();
+            }}
+            onError={() => {
+              setFailed(true);
+              setLoaded(false);
+              markSettled();
+            }}
+          />
+        </button>
+        {onToggleExcluded && (
+          <Button
+            variant="ghost"
+            className="w-full text-xs"
+            loading={excluding}
+            onClick={() => onToggleExcluded(id, !excluded)}
+          >
+            {excluded ? "Allow in generation" : "Don't recommend"}
+          </Button>
         )}
-        <img
-          key={retryKey}
-          src={`/api/assets/${id}/thumbnail.jpg?v=${retryKey}`}
-          alt={title}
-          loading="lazy"
-          decoding="async"
-          className={`relative z-10 h-full w-full object-cover ${failed ? "hidden" : "block"}`}
-          onLoad={() => {
-            setLoaded(true);
-            markSettled();
-          }}
-          onError={() => {
-            setFailed(true);
-            setLoaded(false);
-            markSettled();
-          }}
-        />
-      </button>
+      </div>
 
       {open &&
         createPortal(
@@ -914,13 +976,27 @@ function ImageThumb({
               }}
               onClick={(event) => event.stopPropagation()}
             />
-            <button
-              type="button"
-              className="absolute right-4 top-4 z-[1] rounded-xl border border-white/20 bg-black px-4 py-2 text-sm font-medium text-white"
-              onClick={() => setOpen(false)}
-            >
-              Close
-            </button>
+            <div className="absolute bottom-4 left-1/2 z-[1] flex -translate-x-1/2 gap-2">
+              {onToggleExcluded && (
+                <Button
+                  className="border border-white/20 bg-black text-white"
+                  loading={excluding}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onToggleExcluded(id, !excluded);
+                  }}
+                >
+                  {excluded ? "Allow in generation" : "Don't recommend"}
+                </Button>
+              )}
+              <button
+                type="button"
+                className="rounded-xl border border-white/20 bg-black px-4 py-2 text-sm font-medium text-white"
+                onClick={() => setOpen(false)}
+              >
+                Close
+              </button>
+            </div>
           </div>,
           document.body,
         )}

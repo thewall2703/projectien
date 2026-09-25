@@ -82,13 +82,15 @@ def require_admin(user: User = Depends(get_current_user)) -> User:
 
 
 def bootstrap_admin(db: Session) -> None:
-    if db.query(User).count() > 0:
+    """Ensure the configured bootstrap admin exists with the current password."""
+    email = settings.admin_email.lower().strip()
+    if not email or not settings.admin_password:
         return
-    db.add(
-        User(
-            email=settings.admin_email.lower().strip(),
-            password_hash=hash_password(settings.admin_password),
-            is_admin=True,
-        )
-    )
+    user = db.query(User).filter(User.email == email).first()
+    password_hash = hash_password(settings.admin_password)
+    if user is None:
+        db.add(User(email=email, password_hash=password_hash, is_admin=True))
+    else:
+        user.password_hash = password_hash
+        user.is_admin = True
     db.commit()

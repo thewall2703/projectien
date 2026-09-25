@@ -219,6 +219,12 @@ export const api = {
       headers: jsonHeaders,
       body: JSON.stringify({ recipe_ref: recipeRef, note }),
     }),
+  excludeMediaImage: (id: number, assetId: number, excluded: boolean) =>
+    request<MediaIndexRow>(`/api/admin/media-index/${id}/exclude-image`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ asset_id: assetId, excluded }),
+    }),
   freezeMedia: (id: number) =>
     request<MediaIndexRow>(`/api/admin/media-index/${id}/freeze`, { method: "POST" }),
   unfreezeMedia: (id: number) =>

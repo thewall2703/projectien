@@ -405,12 +405,19 @@ def _rec_row(
     items: list[dict],
     verdicts: dict | None = None,
     added: list | None = None,
+    excluded_image_ids: list[int] | None = None,
 ):
     return SimpleNamespace(
         asset_id=asset_id,
         media_kind=kind,
         recommendations_json=json.dumps({"items": items}),
-        feedback_json=json.dumps({"verdicts": verdicts or {}, "added": added or []}),
+        feedback_json=json.dumps(
+            {
+                "verdicts": verdicts or {},
+                "added": added or [],
+                "excluded_image_ids": excluded_image_ids or [],
+            }
+        ),
     )
 
 
@@ -551,6 +558,60 @@ class RecommendedMediaPickTests(unittest.TestCase):
         self.assertEqual([item.asset_id for item in pictures], [11, 21, 12, 22, 23])
         self.assertTrue(pictures[0].preview_url.endswith("id=c1"))
         self.assertEqual(pictures[0].thumbnail_url, "/api/assets/11/thumbnail.jpg")
+
+    def test_excluded_images_are_skipped_during_generation(self):
+        rows = [
+            _rec_row(
+                10,
+                "photo",
+                [{"recipe_ref": "A1-1", "temperatures": ["X2"], "confidence": 0.8, "rationale": "a"}],
+                excluded_image_ids=[11, 12],
+            ),
+            _rec_row(
+                20,
+                "photo",
+                [{"recipe_ref": "A1-1", "temperatures": ["X2"], "confidence": 0.7, "rationale": "b"}],
+            ),
+        ]
+        parents = [
+            _asset(10, "Campus", "https://drive.google.com/file/d/p1/view", "photo"),
+            _asset(20, "Studio", "https://drive.google.com/file/d/p2/view", "photo"),
+        ]
+        children = {
+            10: [
+                _asset(11, "Campus — 1", "https://drive.google.com/file/d/c1/view", "photo"),
+                _asset(12, "Campus — 2", "https://drive.google.com/file/d/c2/view", "photo"),
+                _asset(13, "Campus — 3", "https://drive.google.com/file/d/c3/view", "photo"),
+            ],
+            20: [
+                _asset(21, "Studio — 1", "https://drive.google.com/file/d/s1/view", "photo"),
+                _asset(22, "Studio — 2", "https://drive.google.com/file/d/s2/view", "photo"),
+            ],
+        }
+        call_assets = {"n": 0}
+
+        def query(model):
+            chain = mock.Mock()
+            chain.filter.return_value = chain
+            chain.order_by.return_value = chain
+            if model is VideoClickEvent:
+                chain.all.return_value = []
+            elif model is Asset:
+                call_assets["n"] += 1
+                chain.all.return_value = [] if call_assets["n"] == 1 else parents
+            else:
+                chain.all.return_value = rows
+            return chain
+
+        db = mock.Mock()
+        db.query.side_effect = query
+        with mock.patch("backend.media_index._ensure_media_schema"):
+            with mock.patch(
+                "backend.media_index.list_image_assets",
+                side_effect=lambda _db, asset: children[asset.id],
+            ):
+                _videos, pictures = pick_recommended_media(db, "A1-1", "X2")
+        self.assertEqual([item.asset_id for item in pictures], [13, 21, 22])
 
     def test_short_and_long_sessions_return_full_catalog(self):
         rows = [

@@ -360,6 +360,7 @@ export type MediaImageAsset = {
   title: string;
   file_status: string;
   content_type: string;
+  excluded?: boolean;
 };
 
 export type MediaRecommendation = {
@@ -376,6 +377,7 @@ export type MediaRecommendation = {
 export type MediaFeedback = {
   verdicts: Record<string, { verdict: string; note: string; by: string; at: string }>;
   added: { recipe_ref: string; note: string; at: string }[];
+  excluded_image_ids?: number[];
 };
 
 export type MediaIndexRow = {

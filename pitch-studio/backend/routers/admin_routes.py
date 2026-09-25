@@ -41,6 +41,7 @@ from backend.media_index import (
     has_extract,
     require_editable,
     serialize,
+    set_image_excluded,
     sha256_text,
     touch,
 )
@@ -94,6 +95,7 @@ from backend.schemas import (
     AssetOut,
     DeckTopicListOut,
     DeckTopicOut,
+    ExcludeImageIn,
     ExtractResultOut,
     FactIn,
     FactOut,
@@ -1330,6 +1332,20 @@ def add_media_usecase(
                 "at": utc_now().isoformat(),
             }
         )
+    return _save_feedback(db, item, feedback)
+
+
+@router.post("/media-index/{media_id}/exclude-image", response_model=MediaIndexOut)
+def exclude_media_image(
+    media_id: int,
+    payload: ExcludeImageIn,
+    db: Session = Depends(get_db),
+) -> MediaIndexOut:
+    item = _get_media_index(db, media_id)
+    try:
+        feedback = set_image_excluded(db, item, payload.asset_id, payload.excluded)
+    except MediaIndexError as exc:
+        raise _media_error(exc) from exc
     return _save_feedback(db, item, feedback)
 
 

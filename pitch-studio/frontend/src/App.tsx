@@ -145,7 +145,7 @@ function LibraryMenu({ isAdmin }: { isAdmin: boolean }) {
 
   const libraryActive =
     location.pathname.startsWith("/history") ||
-    location.pathname.startsWith("/script-testing") ||
+    (isAdmin && location.pathname.startsWith("/script-testing")) ||
     location.pathname.startsWith("/ask") ||
     location.pathname.startsWith("/admin");
 
@@ -184,18 +184,6 @@ function LibraryMenu({ isAdmin }: { isAdmin: boolean }) {
         </Link>
         <Link
           role="menuitem"
-          to="/script-testing"
-          className={`block px-4 py-2 text-sm hover:bg-black/5 ${
-            location.pathname.startsWith("/script-testing")
-              ? "bg-black/5 font-semibold text-black"
-              : "text-black"
-          }`}
-          onClick={() => setOpen(false)}
-        >
-          Script testing
-        </Link>
-        <Link
-          role="menuitem"
           to="/ask"
           className={`block px-4 py-2 text-sm hover:bg-black/5 ${
             location.pathname.startsWith("/ask") ? "bg-black/5 font-semibold text-black" : "text-black"
@@ -210,6 +198,18 @@ function LibraryMenu({ isAdmin }: { isAdmin: boolean }) {
             <p className="px-4 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-grey">
               Admin
             </p>
+            <Link
+              role="menuitem"
+              to="/script-testing"
+              className={`block px-4 py-2 text-sm hover:bg-black/5 ${
+                location.pathname.startsWith("/script-testing")
+                  ? "bg-black/5 font-semibold text-black"
+                  : "text-black"
+              }`}
+              onClick={() => setOpen(false)}
+            >
+              Script testing
+            </Link>
             {ADMIN_LINKS.map((item) => (
               <Link
                 key={item.to}
@@ -376,11 +376,11 @@ export default function App() {
                 <Route path="/generate" element={<Generate />} />
                 <Route path="/result/:id" element={<Result />} />
                 <Route path="/history" element={<History currentUser={user} />} />
-                <Route path="/script-testing" element={<ScriptTesting currentUser={user} />} />
-                <Route path="/script-testing/:id" element={<ScriptTesting currentUser={user} />} />
                 <Route path="/ask" element={<AskTranscripts />} />
                 {user.is_admin && (
                   <>
+                    <Route path="/script-testing" element={<ScriptTesting currentUser={user} />} />
+                    <Route path="/script-testing/:id" element={<ScriptTesting currentUser={user} />} />
                     <Route path="/admin/modules" element={<Modules />} />
                     <Route path="/admin/facts" element={<Facts />} />
                     <Route path="/admin/recipes" element={<Recipes />} />

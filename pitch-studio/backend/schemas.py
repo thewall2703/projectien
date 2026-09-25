@@ -667,6 +667,12 @@ class MediaImageOut(BaseModel):
     title: str
     file_status: str = ""
     content_type: str = ""
+    excluded: bool = False
+
+
+class ExcludeImageIn(BaseModel):
+    asset_id: int
+    excluded: bool = True
 
 
 class RecommendedMediaOut(BaseModel):
@@ -732,6 +738,7 @@ class MediaAddedUsecase(BaseModel):
 class MediaFeedback(BaseModel):
     verdicts: dict[str, MediaVerdict] = {}
     added: list[MediaAddedUsecase] = []
+    excluded_image_ids: list[int] = []
 
 
 class MediaIndexOut(BaseModel):
