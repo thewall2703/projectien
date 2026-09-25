@@ -733,10 +733,10 @@ def reject_candidate(db: Session, candidate_id: int, review_note: str = "") -> Q
 
 AUDIENCE_HINTS = {
     "A": (
-        "student", "students", "parent", "parents", "ug", "pg",
-        "aspirant", "aspirants", "school", "applicant", "applicants",
+        "student", "students", "parent", "parents", "ug", "pg", "undergrad", "graduate",
+        "aspirant", "aspirants", "school", "applicant", "applicants", "experience",
         "family", "admission", "admissions", "faculty", "degree",
-        "vision", "brand", "eligibility",
+        "vision", "brand", "eligibility", "future", "national",
     ),
     "B": ("faculty", "hire", "employee", "candidate", "team", "cxo", "teacher", "academic"),
     "C": ("investor", "vc", "bank", "lender", "donor", "fund", "capital", "vision", "governance"),
@@ -778,7 +778,19 @@ def rank_objections_for_pitch(
         )
         label_hits = len(tokens & label_tokens)
         defend_boost = 1 if defend and any(word in haystack for word in ("object", "concern", "doubt", "why not", "roi")) else 0
-        return (hint_hits + label_hits + defend_boost, label_hits, -row.id)
+        niche_penalty = -2 if (any(w in tokens for w in ("graphic", "art", "design")) or ("b" in tokens and "com" in tokens)) else 0
+        return (hint_hits + label_hits + defend_boost + niche_penalty, label_hits, -row.id)
 
-    ranked = sorted(objections, key=score, reverse=True)
-    return ranked[: max(0, limit)]
+    sorted_rows = sorted(objections, key=score, reverse=True)
+    selected: list[Objection] = []
+    seen_faculty = False
+    for row in sorted_rows:
+        q_tokens = set(normalize_question(row.question).split()) - _STOPWORDS
+        if "faculty" in q_tokens:
+            if seen_faculty:
+                continue
+            seen_faculty = True
+        selected.append(row)
+        if len(selected) >= max(0, limit):
+            break
+    return selected
