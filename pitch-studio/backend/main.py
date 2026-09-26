@@ -11,7 +11,14 @@ from sqlalchemy.exc import OperationalError
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from backend.config import PITCH_STUDIO_ROOT, settings
-from backend.routers import admin_routes, ask_routes, auth_routes, generation_routes, script_testing_routes
+from backend.routers import (
+    admin_routes,
+    ask_routes,
+    auth_routes,
+    generation_feedback_routes,
+    generation_routes,
+    script_testing_routes,
+)
 
 FRONTEND_DIST = PITCH_STUDIO_ROOT / "frontend" / "dist"
 logger = logging.getLogger(__name__)
@@ -58,6 +65,7 @@ app.include_router(auth_routes.router)
 app.include_router(admin_routes.router)
 app.include_router(ask_routes.router)
 app.include_router(generation_routes.router)
+app.include_router(generation_feedback_routes.router)
 app.include_router(script_testing_routes.router)
 
 

@@ -3,6 +3,9 @@ import type {
   DeckKey,
   DeckTopicList,
   DeckTopicRow,
+  GenerationFeedback,
+  GenerationRating,
+  GenerationReview,
   InterpretResult,
   MediaIndexList,
   MediaIndexRow,
@@ -137,6 +140,32 @@ export const api = {
     }),
   getGeneration: (id: number) => request(`/api/generations/${id}`),
   listGenerations: () => request("/api/generations"),
+  getGenerationReview: (id: number) =>
+    request<GenerationReview>(`/api/generations/${id}/review`),
+  addGenerationFeedback: (
+    id: number,
+    body: { target_kind: "sentence" | "paragraph"; target_id: string; comment: string },
+  ) =>
+    request<GenerationFeedback>(`/api/generations/${id}/feedback`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify(body),
+    }),
+  updateGenerationFeedback: (id: number, feedbackId: number, comment: string) =>
+    request<GenerationFeedback>(`/api/generations/${id}/feedback/${feedbackId}`, {
+      method: "PUT",
+      headers: jsonHeaders,
+      body: JSON.stringify({ comment }),
+    }),
+  saveGenerationRating: (id: number, rating: number) =>
+    request<GenerationRating & { average_rating: number | null; rating_count: number }>(
+      `/api/generations/${id}/rating`,
+      {
+        method: "PUT",
+        headers: jsonHeaders,
+        body: JSON.stringify({ rating }),
+      },
+    ),
   createScriptTest: (body: unknown) =>
     request<ScriptTestRun>("/api/script-tests", {
       method: "POST",

@@ -374,7 +374,7 @@ export default function App() {
               <Routes>
                 <Route path="/" element={<Landing />} />
                 <Route path="/generate" element={<Generate />} />
-                <Route path="/result/:id" element={<Result />} />
+                <Route path="/result/:id" element={<Result currentUser={user} />} />
                 <Route path="/history" element={<History currentUser={user} />} />
                 <Route path="/ask" element={<AskTranscripts />} />
                 {user.is_admin && (

@@ -560,6 +560,45 @@ class ScriptTestRunOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class GenerationFeedbackOut(BaseModel):
+    id: int
+    generation_id: int
+    reviewer_user_id: int
+    reviewer_email: str = ""
+    target_kind: str
+    target_id: str
+    section_index: int
+    paragraph_index: int
+    sentence_index: int | None = None
+    reference_text: str
+    comment: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class GenerationRatingOut(BaseModel):
+    id: int
+    generation_id: int
+    reviewer_user_id: int
+    reviewer_email: str = ""
+    rating: float
+    created_at: datetime
+    updated_at: datetime
+    average_rating: float | None = None
+    rating_count: int = 0
+
+    model_config = {"from_attributes": True}
+
+
+class GenerationReviewOut(BaseModel):
+    review_document: ScriptTestReviewDocument
+    feedback: list[GenerationFeedbackOut] = Field(default_factory=list)
+    ratings: list[GenerationRatingOut] = Field(default_factory=list)
+    average_rating: float | None = None
+    rating_count: int = 0
+
+
 class SeedCounts(BaseModel):
     modules: int
     facts: int

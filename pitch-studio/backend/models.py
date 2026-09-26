@@ -153,6 +153,48 @@ class Generation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     user: Mapped[User] = relationship(back_populates="generations")
+    feedback: Mapped[list[GenerationFeedback]] = relationship(back_populates="generation")
+    ratings: Mapped[list[GenerationRating]] = relationship(back_populates="generation")
+
+
+class GenerationFeedback(Base):
+    __tablename__ = "generation_feedback"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    generation_id: Mapped[int] = mapped_column(ForeignKey("generations.id"), index=True)
+    reviewer_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    target_kind: Mapped[str] = mapped_column(String(16))
+    target_id: Mapped[str] = mapped_column(String(128), index=True)
+    section_index: Mapped[int] = mapped_column(Integer, default=0)
+    paragraph_index: Mapped[int] = mapped_column(Integer, default=0)
+    sentence_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reference_text: Mapped[str] = mapped_column(Text, default="")
+    comment: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    generation: Mapped[Generation] = relationship(back_populates="feedback")
+    reviewer: Mapped[User] = relationship()
+
+
+class GenerationRating(Base):
+    __tablename__ = "generation_ratings"
+    __table_args__ = (
+        UniqueConstraint(
+            "generation_id",
+            "reviewer_user_id",
+            name="uq_generation_rating_generation_reviewer",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    generation_id: Mapped[int] = mapped_column(ForeignKey("generations.id"), index=True)
+    reviewer_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    rating: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    generation: Mapped[Generation] = relationship(back_populates="ratings")
+    reviewer: Mapped[User] = relationship()
 
 
 class DeckVisionRow(Base):

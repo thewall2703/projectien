@@ -1,12 +1,26 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../api";
 import SlideStage from "../components/SlideStage";
-import { ErrorBanner, Skeleton, Spinner } from "../components/ui";
+import ScriptRatingPanel from "../components/script/ScriptRatingPanel";
+import {
+  ReviewSectionBody,
+  ScriptFeedbackProvider,
+} from "../components/script/ScriptReviewReader";
+import { Button, ErrorBanner, Skeleton, Spinner } from "../components/ui";
 import { generationAxisLabels, personaLabel } from "../labels";
 import { moduleName } from "../modules";
-import type { DeckSlide, FactRow, Generation, ObjectionRow, RecipeOption, RecommendedMedia } from "../types";
+import type {
+  DeckSlide,
+  FactRow,
+  Generation,
+  GenerationReview,
+  ObjectionRow,
+  RecipeOption,
+  RecommendedMedia,
+  User,
+} from "../types";
 
 const PIPELINE = ["queued", "generating_script", "validating", "generating_deck", "rendering", "done"] as const;
 const STAGGER_S = 0.14;
@@ -120,7 +134,7 @@ function slidesForSection(
   return pages.map((page) => byPage.get(page)).filter((slide): slide is DeckSlide => Boolean(slide));
 }
 
-export default function Result() {
+export default function Result({ currentUser }: { currentUser: User }) {
   const { id } = useParams();
   const [generation, setGeneration] = useState<Generation | null>(null);
   const [recipes, setRecipes] = useState<RecipeOption[]>([]);
@@ -129,6 +143,10 @@ export default function Result() {
   const [activeSection, setActiveSection] = useState<string>("section-script");
   const [openObjection, setOpenObjection] = useState<number | null>(null);
   const [navReady, setNavReady] = useState(false);
+  const [feedbackMode, setFeedbackMode] = useState(false);
+  const [review, setReview] = useState<GenerationReview | null>(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewError, setReviewError] = useState("");
   const wasGenerating = useRef(false);
 
   useLayoutEffect(() => {
@@ -218,6 +236,40 @@ export default function Result() {
     return () => observer.disconnect();
   }, [navReady, generation?.id]);
 
+  useEffect(() => {
+    setFeedbackMode(false);
+    setReview(null);
+    setReviewError("");
+  }, [id]);
+
+  useEffect(() => {
+    if (!feedbackMode || !generation || generation.status !== "done" || !generation.script) {
+      return;
+    }
+    let cancelled = false;
+    setReviewLoading(true);
+    setReviewError("");
+    api
+      .getGenerationReview(generation.id)
+      .then((data) => {
+        if (!cancelled) setReview(data);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setReview(null);
+          setReviewError(err instanceof Error ? err.message : "Failed to load review");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setReviewLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [feedbackMode, generation?.id, generation?.status, generation?.script]);
+
+  const reviewing = feedbackMode && review !== null && !reviewLoading;
+
   const factValues = useMemo(
     () => facts.filter((fact) => fact.status === "verified" && fact.value.length > 3).map((fact) => fact.value),
     [facts],
@@ -297,39 +349,128 @@ export default function Result() {
         )}
 
         <section id="section-script" className="scroll-mt-28 space-y-16">
-          <SectionHeading title="Script & Deck" />
+          <SectionHeading
+            title="Script & Deck"
+            action={
+              done && generation.script ? (
+                <Button
+                  variant={feedbackMode ? "accent" : "ghost"}
+                  className="min-h-11"
+                  onClick={() => setFeedbackMode((value) => !value)}
+                >
+                  {feedbackMode ? "Exit feedback" : "Give feedback"}
+                </Button>
+              ) : null
+            }
+          />
+          {feedbackMode && (
+            <div className="space-y-3">
+              <ErrorBanner message={reviewError} />
+              {reviewLoading && (
+                <p className="flex items-center gap-2 text-sm text-grey">
+                  <Spinner /> Loading review…
+                </p>
+              )}
+              {reviewing && (
+                <>
+                  <p className="text-sm text-grey">{feedbackSummary(review.feedback)}</p>
+                  <div className="glass-panel px-4 py-3 text-sm text-grey-dark">
+                    Double-click a sentence to comment. On mobile, tap a sentence.
+                  </div>
+                </>
+              )}
+            </div>
+          )}
           {!generation.script && generation.status !== "failed" && (
             <p className="flex items-center gap-2 text-sm text-grey">
               <Spinner /> {statusMessage(generation.status)}
             </p>
           )}
-          {generation.script?.sections.map((section, index) => {
-            const topicName = section.topic_title?.trim() || moduleName(section.module_id || "") || section.heading;
-            const matched = slidesForSection(section.pages, section.slide_keys, deckSlides);
-            return (
-              <article
-                key={`${section.topic_id || section.module_id || "section"}-${index}`}
-                className="min-h-[calc(100vh-5rem)] space-y-8"
-              >
-                {matched.length > 0 ? (
-                  <SlideStage slides={matched} />
-                ) : (
-                  <div className="glass-panel flex min-h-[40vh] items-center justify-center p-8 text-center text-grey">
-                    {generation.status === "done"
-                      ? "No deck slides linked to this topic."
-                      : "Slides will appear as the deck is built…"}
+          <ScriptFeedbackProvider
+            feedback={review?.feedback ?? []}
+            currentUserId={currentUser.id}
+            onSaveFeedback={async (payload) => {
+              const item = await api.addGenerationFeedback(generation.id, payload);
+              setReview((current) => (current ? { ...current, feedback: [...current.feedback, item] } : current));
+            }}
+            onUpdateFeedback={async (feedbackId, comment) => {
+              const item = await api.updateGenerationFeedback(generation.id, feedbackId, comment);
+              setReview((current) =>
+                current
+                  ? { ...current, feedback: current.feedback.map((row) => (row.id === item.id ? item : row)) }
+                  : current,
+              );
+            }}
+          >
+            {generation.script?.sections.map((section, index) => {
+              const topicName = section.topic_title?.trim() || moduleName(section.module_id || "") || section.heading;
+              const matched = slidesForSection(section.pages, section.slide_keys, deckSlides);
+              const reviewSection = reviewing ? review.review_document.sections[index] : undefined;
+              return (
+                <article
+                  key={`${section.topic_id || section.module_id || "section"}-${index}`}
+                  className="min-h-[calc(100vh-5rem)] space-y-8"
+                >
+                  {matched.length > 0 ? (
+                    <SlideStage slides={matched} />
+                  ) : (
+                    <div className="glass-panel flex min-h-[40vh] items-center justify-center p-8 text-center text-grey">
+                      {generation.status === "done"
+                        ? "No deck slides linked to this topic."
+                        : "Slides will appear as the deck is built…"}
+                    </div>
+                  )}
+                  <div className="max-w-3xl pb-10">
+                    <p className="kicker">{topicName}</p>
+                    <h2 className="mt-2 font-display text-2xl text-black md:text-3xl">{section.heading}</h2>
+                    {reviewSection ? (
+                      <div className="mt-5">
+                        <ReviewSectionBody section={reviewSection} feedback={review?.feedback ?? []} />
+                      </div>
+                    ) : (
+                      <ScriptBody text={section.text} factValues={factValues} />
+                    )}
                   </div>
-                )}
-                <div className="max-w-3xl pb-10">
-                  <p className="kicker">{topicName}</p>
-                  <h2 className="mt-2 font-display text-2xl text-black md:text-3xl">{section.heading}</h2>
-                  <ScriptBody text={section.text} factValues={factValues} />
-                </div>
-              </article>
-            );
-          })}
+                </article>
+              );
+            })}
+          </ScriptFeedbackProvider>
           {generation.script?.cta && (
             <p className="glass-panel inline-block px-6 py-4 text-base text-black">{generation.script.cta}</p>
+          )}
+          {reviewing && (
+            <ScriptRatingPanel
+              currentUserId={currentUser.id}
+              ratings={review.ratings}
+              averageRating={review.average_rating}
+              ratingCount={review.rating_count}
+              onSave={async (rating) => {
+                const result = await api.saveGenerationRating(generation.id, rating);
+                setReview((current) => {
+                  if (!current) return current;
+                  const ratings = current.ratings
+                    .filter((row) => row.reviewer_user_id !== currentUser.id)
+                    .concat([
+                      {
+                        id: result.id,
+                        generation_id: generation.id,
+                        reviewer_user_id: result.reviewer_user_id,
+                        reviewer_email: result.reviewer_email,
+                        rating: result.rating,
+                        created_at: result.created_at,
+                        updated_at: result.updated_at,
+                      },
+                    ]);
+                  return {
+                    ...current,
+                    ratings,
+                    average_rating: result.average_rating ?? null,
+                    rating_count: result.rating_count,
+                  };
+                });
+                return result;
+              }}
+            />
           )}
         </section>
 
@@ -361,8 +502,21 @@ export default function Result() {
   );
 }
 
-function SectionHeading({ title }: { title: string }) {
-  return <h2 className="mb-8 font-display text-3xl tracking-tight text-black md:text-4xl">{title}</h2>;
+function SectionHeading({ title, action }: { title: string; action?: ReactNode }) {
+  const heading = <h2 className="mb-8 font-display text-3xl tracking-tight text-black md:text-4xl">{title}</h2>;
+  if (!action) return heading;
+  return (
+    <div className="flex flex-wrap items-start justify-between gap-4">
+      {heading}
+      {action}
+    </div>
+  );
+}
+
+function feedbackSummary(feedback: GenerationReview["feedback"]): string {
+  const comments = feedback.length;
+  const reviewers = new Set(feedback.map((item) => item.reviewer_user_id)).size;
+  return `${comments} comment${comments === 1 ? "" : "s"} from ${reviewers} reviewer${reviewers === 1 ? "" : "s"}`;
 }
 
 function TimelineSidebar({

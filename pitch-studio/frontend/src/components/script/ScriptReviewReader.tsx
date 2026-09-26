@@ -1,23 +1,55 @@
-import { useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import Modal from "../Modal";
 import { Button } from "../ui";
 import type {
-  ScriptTestFeedback,
   ScriptTestParagraph,
   ScriptTestReviewDocument,
   ScriptTestSection,
   ScriptTestSentence,
 } from "../../types";
 
+export type ReviewFeedbackItem = {
+  id: number;
+  target_id: string;
+  reviewer_user_id: number;
+  reviewer_email: string;
+  comment: string;
+  created_at: string;
+};
+
 type FeedbackTarget =
   | { kind: "sentence"; targetId: string; referenceText: string }
   | { kind: "paragraph"; targetId: string; referenceText: string };
+
+type ScriptFeedbackContextValue = {
+  feedback: ReviewFeedbackItem[];
+  currentUserId: number;
+  coarse: boolean;
+  openTarget: (target: FeedbackTarget) => void;
+};
+
+const ScriptFeedbackContext = createContext<ScriptFeedbackContextValue | null>(null);
 
 function useIsCoarsePointer() {
   return useMemo(() => {
     if (typeof window === "undefined") return false;
     return window.matchMedia("(pointer: coarse)").matches || window.innerWidth < 768;
   }, []);
+}
+
+function useScriptFeedback() {
+  const value = useContext(ScriptFeedbackContext);
+  if (!value) {
+    throw new Error("useScriptFeedback must be used within ScriptFeedbackProvider");
+  }
+  return value;
 }
 
 function SentenceControl({
@@ -70,7 +102,7 @@ function ParagraphBlock({
   onOpen,
 }: {
   paragraph: ScriptTestParagraph;
-  feedback: ScriptTestFeedback[];
+  feedback: ReviewFeedbackItem[];
   coarse: boolean;
   onOpen: (target: FeedbackTarget) => void;
 }) {
@@ -124,45 +156,54 @@ function ParagraphBlock({
   );
 }
 
+/** Paragraphs + sentence controls for one review section (no section title). */
+export function ReviewSectionBody({
+  section,
+  feedback,
+}: {
+  section: ScriptTestSection;
+  feedback: ReviewFeedbackItem[];
+}) {
+  const { coarse, openTarget } = useScriptFeedback();
+  return (
+    <div className="space-y-8">
+      {section.paragraphs.map((paragraph) => (
+        <ParagraphBlock
+          key={paragraph.id}
+          paragraph={paragraph}
+          feedback={feedback}
+          coarse={coarse}
+          onOpen={openTarget}
+        />
+      ))}
+    </div>
+  );
+}
+
 function SectionBlock({
   section,
   feedback,
-  coarse,
-  onOpen,
 }: {
   section: ScriptTestSection;
-  feedback: ScriptTestFeedback[];
-  coarse: boolean;
-  onOpen: (target: FeedbackTarget) => void;
+  feedback: ReviewFeedbackItem[];
 }) {
   const title = section.topic_title?.trim() || section.heading || `Section ${section.index + 1}`;
   return (
     <article className="space-y-5">
       <h3 className="font-display text-2xl tracking-tight text-black md:text-3xl">{title}</h3>
-      <div className="space-y-8">
-        {section.paragraphs.map((paragraph) => (
-          <ParagraphBlock
-            key={paragraph.id}
-            paragraph={paragraph}
-            feedback={feedback}
-            coarse={coarse}
-            onOpen={onOpen}
-          />
-        ))}
-      </div>
+      <ReviewSectionBody section={section} feedback={feedback} />
     </article>
   );
 }
 
-export default function ScriptReviewReader({
-  document,
+export function ScriptFeedbackProvider({
   feedback,
   currentUserId,
   onSaveFeedback,
   onUpdateFeedback,
+  children,
 }: {
-  document: ScriptTestReviewDocument;
-  feedback: ScriptTestFeedback[];
+  feedback: ReviewFeedbackItem[];
   currentUserId: number;
   onSaveFeedback: (payload: {
     target_kind: "sentence" | "paragraph";
@@ -170,14 +211,22 @@ export default function ScriptReviewReader({
     comment: string;
   }) => Promise<void>;
   onUpdateFeedback: (feedbackId: number, comment: string) => Promise<void>;
+  children: ReactNode;
 }) {
   const coarse = useIsCoarsePointer();
   const [target, setTarget] = useState<FeedbackTarget | null>(null);
-  const [editingFeedback, setEditingFeedback] = useState<ScriptTestFeedback | null>(null);
+  const [editingFeedback, setEditingFeedback] = useState<ReviewFeedbackItem | null>(null);
   const [comment, setComment] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [savedFlash, setSavedFlash] = useState(false);
+
+  const openTarget = useCallback((nextTarget: FeedbackTarget) => {
+    setEditingFeedback(null);
+    setComment("");
+    setError("");
+    setTarget(nextTarget);
+  }, []);
 
   const prior = useMemo(() => {
     if (!target) return [];
@@ -221,37 +270,19 @@ export default function ScriptReviewReader({
     }
   };
 
+  const value = useMemo(
+    () => ({ feedback, currentUserId, coarse, openTarget }),
+    [feedback, currentUserId, coarse, openTarget],
+  );
+
   return (
-    <div className="space-y-8">
-      <div className="glass-panel px-4 py-3 text-sm text-grey-dark">
-        Double-click a sentence to comment. On mobile, tap a sentence.
-      </div>
+    <ScriptFeedbackContext.Provider value={value}>
       {savedFlash && (
         <p className="text-sm font-medium text-black" role="status">
           Feedback saved
         </p>
       )}
-      <div className="space-y-14">
-        {document.sections.map((section) => (
-          <SectionBlock
-            key={section.index}
-            section={section}
-            feedback={feedback}
-            coarse={coarse}
-            onOpen={(nextTarget) => {
-              setEditingFeedback(null);
-              setComment("");
-              setTarget(nextTarget);
-            }}
-          />
-        ))}
-      </div>
-      {document.cta && (
-        <p className="border-t border-black/8 pt-6 text-base font-medium leading-7 text-black md:leading-8">
-          {document.cta}
-        </p>
-      )}
-
+      {children}
       <Modal
         open={Boolean(target)}
         title={target?.kind === "paragraph" ? "Paragraph feedback" : "Sentence feedback"}
@@ -327,6 +358,49 @@ export default function ScriptReviewReader({
           </div>
         )}
       </Modal>
-    </div>
+    </ScriptFeedbackContext.Provider>
+  );
+}
+
+export default function ScriptReviewReader({
+  document,
+  feedback,
+  currentUserId,
+  onSaveFeedback,
+  onUpdateFeedback,
+}: {
+  document: ScriptTestReviewDocument;
+  feedback: ReviewFeedbackItem[];
+  currentUserId: number;
+  onSaveFeedback: (payload: {
+    target_kind: "sentence" | "paragraph";
+    target_id: string;
+    comment: string;
+  }) => Promise<void>;
+  onUpdateFeedback: (feedbackId: number, comment: string) => Promise<void>;
+}) {
+  return (
+    <ScriptFeedbackProvider
+      feedback={feedback}
+      currentUserId={currentUserId}
+      onSaveFeedback={onSaveFeedback}
+      onUpdateFeedback={onUpdateFeedback}
+    >
+      <div className="space-y-8">
+        <div className="glass-panel px-4 py-3 text-sm text-grey-dark">
+          Double-click a sentence to comment. On mobile, tap a sentence.
+        </div>
+        <div className="space-y-14">
+          {document.sections.map((section) => (
+            <SectionBlock key={section.index} section={section} feedback={feedback} />
+          ))}
+        </div>
+        {document.cta && (
+          <p className="border-t border-black/8 pt-6 text-base font-medium leading-7 text-black md:leading-8">
+            {document.cta}
+          </p>
+        )}
+      </div>
+    </ScriptFeedbackProvider>
   );
 }

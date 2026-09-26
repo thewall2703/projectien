@@ -329,6 +329,39 @@ export type ScriptTestRun = ScriptTestRunListItem & {
   ratings: ScriptTestRating[];
 };
 
+export type GenerationFeedback = {
+  id: number;
+  generation_id: number;
+  reviewer_user_id: number;
+  reviewer_email: string;
+  target_kind: "sentence" | "paragraph" | string;
+  target_id: string;
+  section_index: number;
+  paragraph_index: number;
+  sentence_index: number | null;
+  reference_text: string;
+  comment: string;
+  created_at: string;
+};
+
+export type GenerationRating = {
+  id: number;
+  generation_id: number;
+  reviewer_user_id: number;
+  reviewer_email: string;
+  rating: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type GenerationReview = {
+  review_document: ScriptTestReviewDocument;
+  feedback: GenerationFeedback[];
+  ratings: GenerationRating[];
+  average_rating: number | null;
+  rating_count: number;
+};
+
 export type RecommendedMedia = {
   asset_id: number;
   parent_asset_id: number;
