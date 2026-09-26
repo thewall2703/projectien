@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable
 
 from sqlalchemy.orm import Session
@@ -351,6 +352,8 @@ def index_vision_module_content(
     force: bool = False,
     tag: TagFn | None = None,
     embed_fn: EmbedFn | None = None,
+    workers: int = 8,
+    progress: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Tag usable content onto VMs. Never wipe rows if the run fails mid-way."""
     catalog = _catalog_block(db)
@@ -402,12 +405,22 @@ def index_vision_module_content(
         for row, vector in zip(need_embed, vectors):
             row["vector"] = vector
 
+    def tag_one(item: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return parse_vm_tag_payload(tag_fn(item["text"], catalog))
+        except Exception:  # noqa: BLE001
+            return {"modules": {}, "page_hints": []}
+
+    tags: list[dict[str, Any]] = [{} for _ in prepared]
+    with ThreadPoolExecutor(max_workers=max(1, int(workers))) as pool:
+        futures = {pool.submit(tag_one, item): index for index, item in enumerate(prepared)}
+        for done, future in enumerate(as_completed(futures), start=1):
+            tags[futures[future]] = future.result()
+            if progress and (done % 25 == 0 or done == len(prepared)):
+                progress(f"tagged {done}/{len(prepared)}")
+
     try:
-        for item in prepared:
-            try:
-                tagged = parse_vm_tag_payload(tag_fn(item["text"], catalog))
-            except Exception:  # noqa: BLE001
-                tagged = {"modules": {}, "page_hints": []}
+        for item, tagged in zip(prepared, tags):
             strengths = tagged.get("modules") or {}
             if not strengths:
                 strengths = _modules_from_m_tags(item.get("module_ids") or "")
@@ -492,6 +505,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     index_p = sub.add_parser("index", help="tag content onto vision modules")
     index_p.add_argument("--force", action="store_true")
+    index_p.add_argument("--workers", type=int, default=8)
     sub.add_parser("coverage", help="per-VM strong/passing content counts")
     args = parser.parse_args(argv)
 
@@ -508,7 +522,12 @@ def main(argv: list[str] | None = None) -> int:
                     f"total={stats['total']}"
                 )
             return 0
-        result = index_vision_module_content(db, force=bool(args.force))
+        result = index_vision_module_content(
+            db,
+            force=bool(args.force),
+            workers=args.workers,
+            progress=lambda line: print(line, flush=True),
+        )
         print(result)
         return 0
     finally:
