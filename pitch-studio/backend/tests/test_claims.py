@@ -292,6 +292,7 @@ class PromptClaimsTests(unittest.TestCase):
         self.assertIn("HOW WE MAKE CLAIMS", system)
         self.assertIn(CALIBRATION_CLAIM_LINE, system)
         self.assertIn("Average/median pairing", system)
+        self.assertIn("SLIDE WINS ON CONFLICT", system)
         self.assertNotIn("If you mention average CTC, the median CTC must appear", system)
 
     def test_disclosure_only_for_long_scripts(self):

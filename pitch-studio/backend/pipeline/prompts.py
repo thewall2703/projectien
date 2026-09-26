@@ -26,10 +26,11 @@ PRATHAM_REFERENCE_RULES = (
     "story shape, opener, or objection handling. Adapt the move; do not paste the whole excerpt.\n"
     "- Same identity rules as FOUNDER VOICE: personal material is told in third person with attribution.\n"
     "- These are raw transcripts, not verified facts. State a number or claim from them only if LOCKED or "
-    "REPORT EVIDENCE supports it; otherwise keep the move and drop the figure.\n"
+    "REPORT EVIDENCE supports it, or a SELECTED SLIDE for this beat shows that figure; otherwise keep "
+    "the move and drop the figure. If a selected slide and LOCKED/REPORT disagree, the slide wins.\n"
     "- REAL STORIES & FACTS from other sessions may be retold in the speaker's own words as concrete "
     "examples, attributed naturally (e.g. \"one student in the 2025 cohort...\"), never as Pratham's "
-    "own speech; state a number from them only when it matches a LOCKED FACT.\n\n"
+    "own speech; state a number from them only when it matches a LOCKED FACT or the selected slide.\n\n"
 )
 
 UNIVERSITY_STATUS_LINE = (
@@ -296,8 +297,9 @@ def script_messages(
         "('Pratham likes to say…', 'When Pratham started Masters\\' Union, he…'). Never first-person "
         "founder biography from the employee.\n"
         "- Facts and numbers from the excerpts may be used. If the same fact appears in LOCKED or REPORT "
-        "EVIDENCE with a different value, LOCKED/REPORT wins. FORBIDDEN facts are never stated, even if "
-        "an excerpt says them.\n"
+        "EVIDENCE with a different value, LOCKED/REPORT wins — unless a SELECTED SLIDE for this beat "
+        "shows a conflicting figure, in which case the slide wins for that beat. FORBIDDEN facts are "
+        "never stated, even if an excerpt says them.\n"
         + (
             "- The PRATHAM STYLE AND STRUCTURE GUIDE complements FOUNDER VOICE: the guide is rules for "
             "transferable structure and register; the voice block is register examples. Sound like "
@@ -337,7 +339,8 @@ def script_messages(
         "- Never call EFMD, AACSB, BGA, BSIS or NSDC 'accreditations'. They are memberships or affiliations.\n"
         "- REPORT EVIDENCE is from official Masters' Union reports. Use at least one concrete detail from it "
         "in the relevant module (recruiter, role, programme, or named outcome) and attribute the report title "
-        "naturally, the way a person would. If LOCKED and REPORT EVIDENCE conflict on a number, use LOCKED.\n"
+        "naturally, the way a person would. If LOCKED and REPORT EVIDENCE conflict on a number, use LOCKED — "
+        "unless a SELECTED SLIDE for this beat shows a conflicting figure, in which case the slide wins.\n"
         "- One ask only, at the end. Make it sound like a person asking, not a call-to-action button.\n\n"
         "BEAT ROLES:\n"
         "- OPENING: This is the first thing the listener hears. Start independently with a direct question, "
