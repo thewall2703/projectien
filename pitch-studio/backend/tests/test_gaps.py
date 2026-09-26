@@ -528,7 +528,7 @@ class AnswerMatchTests(unittest.TestCase):
         self.assertEqual(_insert_index_for_modules(plan, ()), len(plan) - 1)
 
     def test_objection_qa_slides_are_inserted_before_closing(self):
-        """Q&A gaps stay at the end of the deck, not mid-story beside a module."""
+        """Q&A answer pages stay at the end; unanswered objections are skipped."""
         from backend.pipeline.gaps import _insert_index_for_gap
 
         plan = [
@@ -560,7 +560,7 @@ class AnswerMatchTests(unittest.TestCase):
             key = payload["gaps"][0]["key"]
             return {"slides": [{"key": key, "template_id": DEFAULT_TEMPLATE_ID}]}
 
-        def match_fn(payload):
+        def match_none(payload):
             return {
                 "gaps": [
                     {"key": item["key"], "answer_page": None, "evidence_page": None}
@@ -568,56 +568,43 @@ class AnswerMatchTests(unittest.TestCase):
                 ]
             }
 
-        result = build_gap_plan(
+        # No brand answer → do not invent a Q&A divider.
+        skipped = build_gap_plan(
             plan,
             ["M01", "M04", "M05", "M14"],
             "T4",
             objections=objections,
-            match_fn=match_fn,
+            match_fn=match_none,
             rank_fn=rank_fn,
         )
-        self.assertEqual(len(result.generated), 1)
-        self.assertEqual(result.generated[0].gap_kind, "objection")
-        # Placeholder sits immediately before closing — never between M04 and M05.
-        pages = [getattr(slide, "page", None) for slide in result.plan]
-        qa_index = next(
-            index
-            for index, slide in enumerate(result.plan)
-            if getattr(slide, "slide_key", "") == result.generated[0].slide_key
+        self.assertEqual(skipped.generated, [])
+        self.assertEqual(
+            [getattr(slide, "page", None) for slide in skipped.plan],
+            [COVER_PAGE, 6, 30, 43, CLOSING_PAGE],
         )
-        self.assertEqual(pages[qa_index + 1], CLOSING_PAGE)
-        self.assertLess(pages.index(30), qa_index)
-        self.assertLess(pages.index(43), qa_index)
 
-        topics = build_script_topics(
-            result.plan,
-            [
-                SimpleNamespace(
-                    id=1, title="Cover", pages_json=f"[{COVER_PAGE}]", summary="", vision="", module_ids=""
-                ),
-                SimpleNamespace(
-                    id=2, title="Origin", pages_json="[6]", summary="", vision="", module_ids="M01"
-                ),
-                SimpleNamespace(
-                    id=3, title="C&C", pages_json="[30]", summary="", vision="", module_ids="M04"
-                ),
-                SimpleNamespace(
-                    id=4, title="Ventures", pages_json="[43]", summary="", vision="", module_ids="M05"
-                ),
-                SimpleNamespace(
-                    id=5,
-                    title="Close",
-                    pages_json=f"[{CLOSING_PAGE}]",
-                    summary="",
-                    vision="",
-                    module_ids="M14",
-                ),
-            ],
-            ["M01", "M04", "M05", "M14"],
+        def match_answer(payload):
+            return {
+                "gaps": [
+                    {"key": item["key"], "answer_page": 58, "evidence_page": None}
+                    for item in payload["gaps"]
+                ]
+            }
+
+        # Real answer page not yet in the deck → pull it in before closing.
+        placed = build_gap_plan(
+            plan,
+            ["M01", "M04", "M05", "M07", "M14"],
+            "T4",
+            objections=objections,
+            match_fn=match_answer,
+            rank_fn=rank_fn,
         )
-        self.assertEqual(topics[-2].section, "Q&A")
-        self.assertTrue(topics[-2]._generated)
-        self.assertEqual(topics[-1].pages, [CLOSING_PAGE])
+        self.assertEqual(placed.generated, [])
+        pages = [getattr(slide, "page", None) for slide in placed.plan]
+        self.assertEqual(pages[-1], CLOSING_PAGE)
+        self.assertEqual(pages[-2], 58)
+        self.assertLess(pages.index(43), pages.index(58))
 
     def test_answer_already_in_deck_drops_gap_without_placeholder(self):
         plan = self._base_plan()

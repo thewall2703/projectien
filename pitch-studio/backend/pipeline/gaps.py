@@ -890,8 +890,8 @@ def _insert_index_for_modules(
     return closing_index
 
 
-# Objection / Q&A gaps are optional end-of-deck slides. The salesperson may
-# walk them after the story, or skip them; they must never interrupt the spine.
+# Objection / Q&A gaps are optional end-of-deck material. Prefer a real brand
+# answer page; never generate an empty divider for an unanswered question.
 _QA_GAP_KINDS = frozenset({"objection"})
 
 
@@ -1366,7 +1366,11 @@ def build_gap_plan(
                 kind=candidate.kind,
             ):
                 continue
-            # Nowhere to put the real page — fall through to generation.
+            # Nowhere to put the real page — fall through only for non-Q&A.
+        # Closing Q&A: only pull in a real brand answer page. Never generate a
+        # divider that asks a question the approved material cannot answer.
+        if candidate.kind in _QA_GAP_KINDS:
+            continue
         surviving.append(candidate)
         evidence_by_key[candidate.key] = matched.evidence_page
 

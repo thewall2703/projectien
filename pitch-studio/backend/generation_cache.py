@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 CONTENT_VERSION_KEY = "content_version"
 BACKEND_ROOT = PITCH_STUDIO_ROOT / "backend"
-SCRIPT_PIPELINE_VERSION = "9"
+SCRIPT_PIPELINE_VERSION = "10"
 
 _deploy_version_cache: str | None = None
 
