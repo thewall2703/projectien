@@ -220,6 +220,7 @@ export type Generation = {
   context_note: string;
   recipe_ref: string;
   deck_use_case?: string;
+  generation_mode?: string;
   module_sequence: string;
   status: string;
   script_json: string;

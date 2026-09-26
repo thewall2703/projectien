@@ -33,6 +33,22 @@ PRATHAM_REFERENCE_RULES = (
     "own speech; state a number from them only when it matches a LOCKED FACT or the selected slide.\n\n"
 )
 
+VISION_MODULES_RULES = (
+    "VISION MODULES MODE — slide coverage rules:\n"
+    "- TONE, QUOTES, STYLE: ONLY from Pratham's transcripts (FOUNDER VOICE / style guide / "
+    "PRATHAM BY BEAT). Stories, locked facts, and report passages never set tone.\n"
+    "- CONTENT: use the ranked lines under each narrated slide ([PRATHAM], [LOCKED], [REPORT], "
+    "[STORY — unverified]) as the material for that slide.\n"
+    "- Numbers: the figure ON THE SLIDE wins; else LOCKED; else REPORT. Pratham/story numbers "
+    "only if they match one of those. FORBIDDEN facts never.\n"
+    "- Every narrated slide must get at least one spoken sentence clearly about what is ON that "
+    "slide (name the person, venture, number, or thing shown). Walk narrated slides in listed order.\n"
+    "- Slides marked 'Shown, not narrated' may be grouped in one passing phrase at most — never "
+    "describe their specifics.\n"
+    "- Never describe slides not in the list; never talk about programmes, people, or routes that "
+    "no listed slide shows.\n\n"
+)
+
 UNIVERSITY_STATUS_LINE = (
     "Masters' Union is becoming a university, following approval from the Government of Haryana."
 )
@@ -104,6 +120,15 @@ def _format_topic_flow(topic_flow: list[Any], modules: list[Module], sequence: l
             role = "OPENING" if index == 1 else ("CLOSE" if index == len(topic_flow) else "BODY")
         payload = topic.to_prompt_dict() if hasattr(topic, "to_prompt_dict") else topic
         labels = ", ".join(str(label) for label in (payload.get("labels") or []) if label)
+        if payload.get("narrated_pages") and payload.get("pages"):
+            label_by_page = dict(zip(payload["pages"], payload.get("labels") or []))
+            labels = ", ".join(
+                f"p{page} {label_by_page.get(page, '')}".strip()
+                for page in payload["narrated_pages"]
+            )
+            shown = payload.get("shown_not_narrated") or []
+            if shown:
+                labels += " | Shown, not narrated: " + ", ".join(f"p{page}" for page in shown)
         recipe_ids = payload.get("recipe_modules") or []
         module_blocks = []
         for module_id in recipe_ids:
@@ -196,6 +221,7 @@ def script_messages(
     style_guide: str = "",
     plan: dict[str, Any] | None = None,
     pratham_reference: str = "",
+    vision_slide_briefs: str = "",
 ) -> list[dict[str, str]]:
     locked, forbidden = _format_facts(facts, sequence)
     voice_lines = [format_founder_line(quote) for quote in (founder_quotes or [])]
@@ -314,6 +340,11 @@ def script_messages(
             if pratham_reference
             else ""
         )
+        + (
+            VISION_MODULES_RULES
+            if vision_slide_briefs
+            else ""
+        )
         + CLAIMS_RULES_PROMPT
         + (
             "\n" + DISCLOSURE_RULE + "\n"
@@ -403,6 +434,7 @@ def script_messages(
             else ""
         )
         + (f"{pratham_reference}\n\n" if pratham_reference else "")
+        + (f"{vision_slide_briefs}\n\n" if vision_slide_briefs else "")
         + f"LOCKED — exact figures, said in spoken English:\n{locked}\n\n"
         f"FORBIDDEN — never state these:\n{forbidden}\n\n"
         f"REPORT EVIDENCE:\n{reports}"

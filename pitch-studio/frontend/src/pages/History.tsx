@@ -55,7 +55,13 @@ export default function History({ currentUser }: { currentUser: User }) {
                       {personaLabel(recipes, row.recipe_ref, row) || `Pitch ${row.id}`}
                     </p>
                     <p className="mt-1 text-sm text-grey">
-                      {[labels.audience, labels.duration, labels.channel, labels.intent]
+                      {[
+                        labels.audience,
+                        labels.duration,
+                        labels.channel,
+                        labels.intent,
+                        row.generation_mode === "vision_modules" ? "Vision modules" : null,
+                      ]
                         .filter(Boolean)
                         .join(" · ")}
                     </p>

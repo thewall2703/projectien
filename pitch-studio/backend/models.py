@@ -134,6 +134,7 @@ class Generation(Base):
     context_note: Mapped[str] = mapped_column(Text, default="")
     recipe_ref: Mapped[str] = mapped_column(String(32), default="")
     deck_use_case: Mapped[str] = mapped_column(String(64), default="")
+    generation_mode: Mapped[str] = mapped_column(String(32), default="classic")
     module_sequence: Mapped[str] = mapped_column(String(500), default="")
     status: Mapped[str] = mapped_column(String(32), default="queued")
     script_json: Mapped[str] = mapped_column(Text, default="")
@@ -720,4 +721,30 @@ class AskAnswerCache(Base):
     question: Mapped[str] = mapped_column(Text, default="")
     index_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
     response_json: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class VisionModuleContent(Base):
+    """Content tagged to a vision module (VM01–VM15) for vision_modules mode."""
+
+    __tablename__ = "vision_module_content"
+    __table_args__ = (
+        UniqueConstraint(
+            "vm_id",
+            "source_type",
+            "source_ref",
+            name="uq_vision_module_content_ref",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    vm_id: Mapped[str] = mapped_column(String(8), index=True)
+    source_type: Mapped[str] = mapped_column(String(32), default="")
+    source_ref: Mapped[str] = mapped_column(String(64), default="")
+    text: Mapped[str] = mapped_column(Text, default="")
+    strength: Mapped[str] = mapped_column(String(16), default="passing")
+    score: Mapped[float] = mapped_column(Float, default=0.0)
+    page_hints: Mapped[str] = mapped_column(String(255), default="")
+    embedding_json: Mapped[str] = mapped_column(Text, default="")
+    text_hash: Mapped[str] = mapped_column(String(64), default="", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

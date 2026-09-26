@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 CONTENT_VERSION_KEY = "content_version"
 BACKEND_ROOT = PITCH_STUDIO_ROOT / "backend"
-SCRIPT_PIPELINE_VERSION = "11"
+SCRIPT_PIPELINE_VERSION = "12"
 
 _deploy_version_cache: str | None = None
 
@@ -139,6 +139,7 @@ def compute_cache_key(
     db: Session,
     *,
     deck_use_case: str = "",
+    generation_mode: str = "classic",
 ) -> str:
     payload = {
         "axes": {
@@ -151,6 +152,7 @@ def compute_cache_key(
         "context_note": normalize_context_note(context_note),
         "recipe_ref": recipe_ref or "",
         "deck_use_case": deck_use_case or "",
+        "generation_mode": generation_mode or "classic",
         "openrouter_model": settings.openrouter_model,
         "openrouter_slide_model": settings.openrouter_slide_model,
         "script_pipeline_version": SCRIPT_PIPELINE_VERSION,
@@ -172,6 +174,8 @@ def compute_cache_key(
         "transcript_stories_enabled": bool(settings.transcript_stories_enabled),
         "transcript_stories_per_topic": int(settings.transcript_stories_per_topic),
         "transcript_story_word_cap": int(settings.transcript_story_word_cap),
+        "vision_modules_top_k": int(settings.vision_modules_top_k),
+        "vision_modules_word_cap": int(settings.vision_modules_word_cap),
         "deploy_version": deploy_version(),
         "content_version": get_content_version(db),
     }

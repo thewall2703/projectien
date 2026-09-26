@@ -33,6 +33,10 @@ class ScriptTopic:
     module_ids: list[str] = field(default_factory=list)
     recipe_modules: list[str] = field(default_factory=list)
     section: str = ""
+    narrated_pages: list[int] = field(default_factory=list)
+    narrated_slide_keys: list[str] = field(default_factory=list)
+    shown_not_narrated: list[int] = field(default_factory=list)
+    slide_briefs: list[dict[str, Any]] = field(default_factory=list)
     _source_topic_id: int = field(default=0, repr=False)
     _slide_module_id: str = field(default="", repr=False)
     _generated: bool = field(default=False, repr=False)
@@ -45,7 +49,7 @@ class ScriptTopic:
             page_range = f"p{self.pages[0]}"
         else:
             page_range = f"p{self.pages[0]}–{self.pages[-1]}"
-        return {
+        payload: dict[str, Any] = {
             "topic_id": self.topic_id,
             "title": self.title,
             "pages": self.pages,
@@ -58,6 +62,13 @@ class ScriptTopic:
             "recipe_modules": self.recipe_modules,
             "section": self.section,
         }
+        if self.narrated_pages or self.narrated_slide_keys or self.slide_briefs:
+            payload["narrated_pages"] = self.narrated_pages
+            payload["narrated_slide_keys"] = self.narrated_slide_keys
+            payload["shown_not_narrated"] = self.shown_not_narrated
+            payload["slide_briefs"] = self.slide_briefs
+        return payload
+
 
 
 def _split_ids(raw: str) -> list[str]:

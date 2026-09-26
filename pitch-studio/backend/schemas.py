@@ -313,6 +313,15 @@ class GenerationCreate(BaseModel):
     context_note: str = ""
     recipe_ref: str = ""
     deck_use_case: str = ""
+    generation_mode: str = "classic"
+
+    @field_validator("generation_mode")
+    @classmethod
+    def _validate_generation_mode(cls, value: str) -> str:
+        text = (value or "classic").strip().lower()
+        if text not in {"classic", "vision_modules"}:
+            raise ValueError("generation_mode must be classic or vision_modules")
+        return text
 
 
 class InterpretRequest(BaseModel):
@@ -367,6 +376,7 @@ class GenerationOut(BaseModel):
     context_note: str
     recipe_ref: str
     deck_use_case: str = ""
+    generation_mode: str = "classic"
     module_sequence: str
     status: str
     script_json: str

@@ -328,7 +328,14 @@ export default function Result({ currentUser }: { currentUser: User }) {
           <p className="kicker">Pitch {generation.id}</p>
           <h1 className="font-display text-4xl tracking-tight text-black md:text-5xl">{personaName}</h1>
           <p className="text-sm text-grey">
-            {[axisNames.audience, axisNames.duration, axisNames.channel, axisNames.intent, axisNames.temperature]
+            {[
+              axisNames.audience,
+              axisNames.duration,
+              axisNames.channel,
+              axisNames.intent,
+              axisNames.temperature,
+              generation.generation_mode === "vision_modules" ? "Vision modules" : null,
+            ]
               .filter(Boolean)
               .join(" · ")}
           </p>

@@ -219,6 +219,7 @@ def serialize_quality_trace(
     kept_round: int = 0,
     plan_error: str = "",
     pratham: dict[str, Any] | None = None,
+    vision_modules: dict[str, Any] | None = None,
 ) -> str:
     payload: dict[str, Any] = {
         "plan_error": plan_error or "",
@@ -227,4 +228,6 @@ def serialize_quality_trace(
     }
     if pratham is not None:
         payload["pratham"] = pratham
+    if vision_modules is not None:
+        payload["vision_modules"] = vision_modules
     return json.dumps(payload, ensure_ascii=False)

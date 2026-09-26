@@ -57,6 +57,12 @@ from backend.pipeline.vision_deck import (
     order_by_headings,
     plan_vision_pages,
 )
+from backend.pipeline.vision_modules_flow import (
+    build_vision_modules_plan,
+    check_slide_coverage,
+    coverage_rewrite_note,
+    normalize_generation_mode,
+)
 from backend.schemas import ScriptPayload
 from backend.transcripts import pick_founder_quotes
 from backend.qa_extraction import rank_objections_for_pitch
@@ -401,6 +407,7 @@ def _rewrite_script_with_corrections(
     draft: dict[str, Any],
     plan: dict[str, Any] | None = None,
     pratham_reference: str = "",
+    vision_slide_briefs: str = "",
 ) -> tuple[dict[str, Any], list[str], dict[str, Any]]:
     """Rewrite → budget repair (one repair pass on rule violations) → voice review.
 
@@ -429,6 +436,7 @@ def _rewrite_script_with_corrections(
                 style_guide=style_guide,
                 plan=plan,
                 pratham_reference=pratham_reference,
+                vision_slide_briefs=vision_slide_briefs,
             ),
             role="script_writer",
         )
@@ -490,6 +498,8 @@ def _run_quality_loop(
     set_status: Callable[[str], None],
     pratham_reference: str = "",
     pratham_meta: dict[str, Any] | None = None,
+    vision_slide_briefs: str = "",
+    vision_modules_trace: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Flow + listener quality loop. Never fails the parent run."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -507,6 +517,7 @@ def _run_quality_loop(
                 pratham=_enrich_pratham_meta(
                     pratham_meta or {}, script=script, reference_text=pratham_reference
                 ),
+                vision_modules=vision_modules_trace,
             )
             db.commit()
         return script
@@ -532,6 +543,7 @@ def _run_quality_loop(
                 pratham=_enrich_pratham_meta(
                     pratham_meta or {}, script=best_script, reference_text=pratham_reference
                 ),
+                vision_modules=vision_modules_trace,
             )
             db.commit()
         return best_script
@@ -660,6 +672,7 @@ def _run_quality_loop(
                 draft=current,
                 plan=plan,
                 pratham_reference=pratham_reference,
+                vision_slide_briefs=vision_slide_briefs,
             )
         except Exception as exc:  # noqa: BLE001
             round_trace["rewrite"] = "error"
@@ -723,6 +736,16 @@ def generate_script_phase(
     ceiling = slide_ceiling_for(target.duration)
     deck_use_case = normalize_use_case(getattr(target, "deck_use_case", "") or "")
     vision_sections = load_vision_sections(db, deck_use_case) if deck_use_case else []
+    generation_mode = normalize_generation_mode(
+        getattr(target, "generation_mode", "") or "classic"
+    )
+    vision_mode_trace: dict[str, Any] = {"mode": "classic"}
+    if generation_mode == "vision_modules" and not vision_sections:
+        generation_mode = "classic"
+        vision_mode_trace = {
+            "mode": "classic",
+            "fallback_reason": "vision_modules requested but use case has no vision rows",
+        }
 
     if vision_sections:
         # Vision spine: every Relevant Slides page from the sheet, authored order.
@@ -793,8 +816,22 @@ def generate_script_phase(
     )
     if not vision_sections:
         plan = insert_before_closing(plan, dsai_slides)
+    vision_slide_briefs = ""
+    vision_plan_meta: dict[str, Any] | None = None
     try:
-        topic_flow = load_script_topics(db, plan, resolved.module_sequence)
+        if generation_mode == "vision_modules" and vision_sections:
+            vm_plan = build_vision_modules_plan(
+                db,
+                plan,
+                resolved.module_sequence,
+                duration=target.duration,
+            )
+            topic_flow = vm_plan.topics
+            vision_slide_briefs = vm_plan.vision_slide_briefs_block
+            vision_plan_meta = vm_plan.trace
+            vision_mode_trace = dict(vm_plan.trace)
+        else:
+            topic_flow = load_script_topics(db, plan, resolved.module_sequence)
     except ScriptFlowError as exc:
         target.error = str(exc)
         set_status("failed")
@@ -803,13 +840,57 @@ def generate_script_phase(
         target.error = "Approved Pratham Mittal transcript excerpts are required before generating a script"
         set_status("failed")
         return None
-    pratham_reference, pratham_meta = _pratham_reference(
-        db,
-        persona_label=persona_label,
-        topic_flow=topic_flow,
-        modules=modules,
-        context_note=target.context_note,
-    )
+    if generation_mode == "vision_modules" and vision_plan_meta is not None:
+        from backend.pratham_playbook import format_reference, select_reference
+
+        topic_titles = [
+            str(topic.title)
+            for topic in topic_flow
+            if getattr(topic, "title", None)
+        ]
+        playbook_block = format_reference(
+            select_reference(
+                db,
+                persona_label=persona_label,
+                topics=topic_titles,
+                context_note=target.context_note or "",
+                passage_limit=0,
+            )
+        )
+        blocks = [block for block in (vm_plan.pratham_by_beat, playbook_block) if block]
+        pratham_reference = "\n\n".join(blocks)
+        pratham_meta = {
+            "passage_ids": [
+                int(ref)
+                for ref in (vm_plan.fed_ids.get("pratham_passage") or [])
+                if str(ref).isdigit()
+            ],
+            "fed_words": sum(
+                len(str(item.get("text") or "").split())
+                for topic in topic_flow
+                for brief in (getattr(topic, "slide_briefs", None) or [])
+                for item in (brief.get("ranked") or [])
+                if item.get("source_type") == "pratham_passage"
+            ),
+            "fallback_topic_ids": [],
+            "empty_topic_ids": [],
+            "story_ids": [
+                int(ref)
+                for ref in (vm_plan.fed_ids.get("transcript_story") or [])
+                if str(ref).isdigit()
+            ],
+            "story_words": 0,
+            "moves": 0,
+            "error": "",
+        }
+    else:
+        pratham_reference, pratham_meta = _pratham_reference(
+            db,
+            persona_label=persona_label,
+            topic_flow=topic_flow,
+            modules=modules,
+            context_note=target.context_note,
+        )
 
     script_plan: dict[str, Any] | None = None
     plan_error = ""
@@ -841,6 +922,7 @@ def generate_script_phase(
                 style_guide=style_guide,
                 listener_profile=listener_profile,
                 pratham_reference=pratham_reference,
+                vision_slide_briefs=vision_slide_briefs,
             )
             if script_plan is None:
                 plan_error = "planner returned nothing usable"
@@ -871,46 +953,108 @@ def generate_script_phase(
         style_guide=style_guide,
         plan=script_plan,
         pratham_reference=pratham_reference,
+        vision_slide_briefs=vision_slide_briefs,
     )
     script = chat_json(messages, role="script_writer")
     script = align_script_to_topics(script, topic_flow, modules)
     ScriptPayload.model_validate(script)
 
+    narrated_for_coverage: list[tuple[int, str]] = []
+    if generation_mode == "vision_modules":
+        for topic in topic_flow:
+            for brief in getattr(topic, "slide_briefs", None) or []:
+                page = brief.get("page")
+                if page is None:
+                    continue
+                narrated_for_coverage.append(
+                    (int(page), str(brief.get("label") or f"Page {page}"))
+                )
+        coverage = check_slide_coverage(script, narrated_for_coverage)
+        vision_mode_trace["coverage"] = coverage
+    else:
+        coverage = {"narrated": 0, "mentioned": 0, "missing": []}
+
     set_status("validating")
     script, violations = _validate_and_repair_budget(
         script, facts, resolved.module_sequence, resolved.word_budget, topic_flow
     )
+    coverage_rewrite_done = False
     for _attempt in range(2):
-        if not violations:
-            break
-        script = chat_json(
-            script_messages(
-                audience_cluster=target.audience_cluster,
-                duration=target.duration,
-                channel=target.channel,
-                intent=target.intent,
-                temperature=target.temperature,
-                context_note=target.context_note,
-                modules=modules,
-                sequence=resolved.module_sequence,
-                facts=facts,
-                word_budget=resolved.word_budget,
-                founder_quotes=founder_quotes,
-                report_passages=report_passages,
-                topic_flow=topic_flow,
-                corrections=violations,
-                draft=script,
-                style_guide=style_guide,
-                plan=script_plan,
-                pratham_reference=pratham_reference,
-            ),
-            role="script_writer",
-        )
-        script = align_script_to_topics(script, topic_flow, modules)
-        ScriptPayload.model_validate(script)
-        script, violations = _validate_and_repair_budget(
-            script, facts, resolved.module_sequence, resolved.word_budget, topic_flow
-        )
+        if violations:
+            script = chat_json(
+                script_messages(
+                    audience_cluster=target.audience_cluster,
+                    duration=target.duration,
+                    channel=target.channel,
+                    intent=target.intent,
+                    temperature=target.temperature,
+                    context_note=target.context_note,
+                    modules=modules,
+                    sequence=resolved.module_sequence,
+                    facts=facts,
+                    word_budget=resolved.word_budget,
+                    founder_quotes=founder_quotes,
+                    report_passages=report_passages,
+                    topic_flow=topic_flow,
+                    corrections=violations,
+                    draft=script,
+                    style_guide=style_guide,
+                    plan=script_plan,
+                    pratham_reference=pratham_reference,
+                    vision_slide_briefs=vision_slide_briefs,
+                ),
+                role="script_writer",
+            )
+            script = align_script_to_topics(script, topic_flow, modules)
+            ScriptPayload.model_validate(script)
+            script, violations = _validate_and_repair_budget(
+                script, facts, resolved.module_sequence, resolved.word_budget, topic_flow
+            )
+            continue
+        if (
+            generation_mode == "vision_modules"
+            and narrated_for_coverage
+            and not coverage_rewrite_done
+        ):
+            coverage = check_slide_coverage(script, narrated_for_coverage)
+            vision_mode_trace["coverage"] = coverage
+            coverage_note = coverage_rewrite_note(coverage)
+            if coverage_note:
+                coverage_rewrite_done = True
+                script = chat_json(
+                    script_messages(
+                        audience_cluster=target.audience_cluster,
+                        duration=target.duration,
+                        channel=target.channel,
+                        intent=target.intent,
+                        temperature=target.temperature,
+                        context_note=target.context_note,
+                        modules=modules,
+                        sequence=resolved.module_sequence,
+                        facts=facts,
+                        word_budget=resolved.word_budget,
+                        founder_quotes=founder_quotes,
+                        report_passages=report_passages,
+                        topic_flow=topic_flow,
+                        corrections=[coverage_note],
+                        draft=script,
+                        style_guide=style_guide,
+                        plan=script_plan,
+                        pratham_reference=pratham_reference,
+                        vision_slide_briefs=vision_slide_briefs,
+                    ),
+                    role="script_writer",
+                )
+                script = align_script_to_topics(script, topic_flow, modules)
+                ScriptPayload.model_validate(script)
+                script, violations = _validate_and_repair_budget(
+                    script, facts, resolved.module_sequence, resolved.word_budget, topic_flow
+                )
+                coverage = check_slide_coverage(script, narrated_for_coverage)
+                vision_mode_trace["coverage"] = coverage
+                if violations:
+                    continue
+        break
     if violations:
         target.script_json = json.dumps(script, ensure_ascii=False)
         target.validation_report = "\n".join(violations)
@@ -953,6 +1097,7 @@ def generate_script_phase(
                 style_guide=style_guide,
                 plan=script_plan,
                 pratham_reference=pratham_reference,
+                vision_slide_briefs=vision_slide_briefs,
             ),
             role="script_writer",
         )
@@ -1001,6 +1146,8 @@ def generate_script_phase(
             set_status=set_status,
             pratham_reference=pratham_reference,
             pratham_meta=pratham_meta,
+            vision_slide_briefs=vision_slide_briefs,
+            vision_modules_trace=vision_mode_trace,
         )
         target.script_json = json.dumps(script, ensure_ascii=False)
     elif hasattr(target, "quality_trace_json"):
@@ -1011,6 +1158,7 @@ def generate_script_phase(
             pratham=_enrich_pratham_meta(
                 pratham_meta, script=script, reference_text=pratham_reference
             ),
+            vision_modules=vision_mode_trace,
         )
         db.commit()
 

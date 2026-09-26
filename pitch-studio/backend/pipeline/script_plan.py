@@ -198,6 +198,7 @@ def plan_script(
     style_guide: str = "",
     listener_profile: str = "",
     pratham_reference: str = "",
+    vision_slide_briefs: str = "",
 ) -> dict[str, Any] | None:
     locked, forbidden = _format_facts(facts, sequence)
     voice = "\n".join(format_founder_line(quote) for quote in founder_quotes) or "(none)"
@@ -221,6 +222,7 @@ def plan_script(
         )
         + f"FOUNDER VOICE EXCERPTS:\n{voice}\n\n"
         + (f"{pratham_reference}\n\n" if pratham_reference else "")
+        + (f"{vision_slide_briefs}\n\n" if vision_slide_briefs else "")
         + f"LOCKED:\n{locked}\n\n"
         f"FORBIDDEN:\n{forbidden}\n\n"
         f"REPORT EVIDENCE:\n{reports}\n\n"

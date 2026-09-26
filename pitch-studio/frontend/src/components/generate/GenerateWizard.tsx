@@ -49,6 +49,7 @@ export type GenerateWizardPayload = {
   context_note: string;
   recipe_ref?: string;
   deck_use_case?: string;
+  generation_mode?: "classic" | "vision_modules";
 };
 
 const DECK_USE_CASES: { code: string; label: string }[] = [
@@ -196,6 +197,7 @@ export default function GenerateWizard({
   const [intent, setIntent] = useState("");
   const [temperature, setTemperature] = useState("");
   const [deckUseCase, setDeckUseCase] = useState("");
+  const [generationMode, setGenerationMode] = useState<"classic" | "vision_modules">("classic");
   const [context, setContext] = useState("");
   const [interpretSummary, setInterpretSummary] = useState("");
   const [interpretNotes, setInterpretNotes] = useState("");
@@ -226,6 +228,7 @@ export default function GenerateWizard({
     setTemperature(result.temperature);
     setSelected(result.recipe_ref || "");
     setDeckUseCase(result.deck_use_case || "");
+    if (!result.deck_use_case) setGenerationMode("classic");
     setInterpretSummary(result.summary);
     setInterpretNotes(result.notes || "");
     setPersonaCandidates(result.persona_candidates || []);
@@ -239,6 +242,7 @@ export default function GenerateWizard({
     setIntent("");
     setTemperature("");
     setDeckUseCase("");
+    setGenerationMode("classic");
     setInterpretSummary("");
     setInterpretNotes("");
     setPersonaCandidates([]);
@@ -389,6 +393,7 @@ export default function GenerateWizard({
         context_note,
         ...(selected ? { recipe_ref: selected } : {}),
         ...(deckUseCase ? { deck_use_case: deckUseCase } : {}),
+        generation_mode: deckUseCase ? generationMode : "classic",
       };
       await onSubmit(body);
     } catch (err) {
@@ -595,7 +600,11 @@ export default function GenerateWizard({
                       <select
                         className="field mt-3"
                         value={deckUseCase}
-                        onChange={(e) => setDeckUseCase(e.target.value)}
+                        onChange={(e) => {
+                          const next = e.target.value;
+                          setDeckUseCase(next);
+                          if (!next) setGenerationMode("classic");
+                        }}
                       >
                         {DECK_USE_CASES.map((row) => (
                           <option key={row.code || "none"} value={row.code}>
@@ -604,6 +613,49 @@ export default function GenerateWizard({
                         ))}
                       </select>
                     </label>
+
+                    <fieldset className="block">
+                      <legend className="kicker">Script mode</legend>
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                        {(
+                          [
+                            {
+                              code: "classic" as const,
+                              label: "Classic",
+                              hint: "Current pipeline",
+                            },
+                            {
+                              code: "vision_modules" as const,
+                              label: "Vision modules",
+                              hint: "Narrate a quota of slides per vision section",
+                            },
+                          ] as const
+                        ).map((row) => {
+                          const disabled = row.code === "vision_modules" && !deckUseCase;
+                          const active = (deckUseCase ? generationMode : "classic") === row.code;
+                          return (
+                            <button
+                              key={row.code}
+                              type="button"
+                              disabled={disabled}
+                              className={`rounded-2xl border px-4 py-3 text-left transition ${
+                                active
+                                  ? "border-black bg-black text-white"
+                                  : disabled
+                                    ? "cursor-not-allowed border-black/5 bg-black/[0.02] text-grey"
+                                    : "border-black/10 bg-white/60 text-black hover:border-black/30"
+                              }`}
+                              onClick={() => setGenerationMode(row.code)}
+                            >
+                              <span className="text-sm font-medium">{row.label}</span>
+                              <p className={`mt-1 text-xs ${active ? "text-white/70" : "text-grey"}`}>
+                                {disabled ? "Needs a deck use case" : row.hint}
+                              </p>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </fieldset>
 
                     {!interpretFailed && candidateRows.length > 0 && (
                       <div>

@@ -23,6 +23,7 @@ from backend.pipeline.brand_deck import (
 from backend.pipeline import dsai_deck
 from backend.pipeline.interpret import InterpretError, interpret_brief
 from backend.pipeline.vision_deck import normalize_use_case
+from backend.pipeline.vision_modules_flow import normalize_generation_mode
 from backend.pipeline.resolver import is_valid_sequence, parse_sequence
 from backend.pipeline.runner import run as run_generation
 from backend.recipe_cache import list_recipe_options
@@ -129,6 +130,7 @@ def _list_item(generation: Generation, user_email: str | None = None) -> Generat
         context_note=generation.context_note,
         recipe_ref=generation.recipe_ref,
         deck_use_case=getattr(generation, "deck_use_case", "") or "",
+        generation_mode=getattr(generation, "generation_mode", "") or "classic",
         module_sequence=generation.module_sequence,
         status=generation.status,
         script_json="",
@@ -188,6 +190,9 @@ def create_generation(
 ) -> GenerationOut:
     recipe_ref = payload.recipe_ref or ""
     deck_use_case = normalize_use_case(payload.deck_use_case)
+    generation_mode = normalize_generation_mode(payload.generation_mode)
+    if generation_mode == "vision_modules" and not deck_use_case:
+        generation_mode = "classic"
     axes = {
         "audience_cluster": payload.audience_cluster,
         "duration": payload.duration,
@@ -218,6 +223,7 @@ def create_generation(
         recipe_ref,
         db,
         deck_use_case=deck_use_case,
+        generation_mode=generation_mode,
     )
     cached = (
         db.query(Generation)
@@ -233,6 +239,7 @@ def create_generation(
             context_note=payload.context_note,
             recipe_ref=recipe_ref,
             deck_use_case=deck_use_case,
+            generation_mode=generation_mode,
             module_sequence=cached.module_sequence,
             status="done",
             script_json=cached.script_json,
@@ -259,6 +266,7 @@ def create_generation(
         context_note=payload.context_note,
         recipe_ref=recipe_ref,
         deck_use_case=deck_use_case,
+        generation_mode=generation_mode,
         status="queued",
         cache_key=cache_key,
     )
@@ -289,6 +297,7 @@ def list_generations(
             Generation.context_note,
             Generation.recipe_ref,
             Generation.deck_use_case,
+            Generation.generation_mode,
             Generation.module_sequence,
             Generation.status,
             Generation.pptx_path,

@@ -66,6 +66,8 @@ class Settings(BaseSettings):
     transcript_stories_enabled: bool = True
     transcript_stories_per_topic: int = 2
     transcript_story_word_cap: int = 1500
+    vision_modules_top_k: int = 4
+    vision_modules_word_cap: int = 4500
     passage_tagger_model: str = ""
     admin_email: str = "admin@example.com"
     admin_password: str = "changeme"

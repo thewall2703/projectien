@@ -95,6 +95,7 @@ GENERATION_COLUMN_SQL = {
     "cache_key": "ALTER TABLE generations ADD COLUMN cache_key VARCHAR(64) DEFAULT ''",
     "cached_from_id": "ALTER TABLE generations ADD COLUMN cached_from_id INTEGER",
     "deck_use_case": "ALTER TABLE generations ADD COLUMN deck_use_case VARCHAR(64) DEFAULT ''",
+    "generation_mode": "ALTER TABLE generations ADD COLUMN generation_mode VARCHAR(32) DEFAULT 'classic'",
     "script_plan_json": "ALTER TABLE generations ADD COLUMN script_plan_json TEXT DEFAULT ''",
     "quality_trace_json": "ALTER TABLE generations ADD COLUMN quality_trace_json TEXT DEFAULT ''",
 }
