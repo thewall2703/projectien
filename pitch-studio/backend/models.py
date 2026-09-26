@@ -377,6 +377,30 @@ class PrathamMove(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class PrathamPassage(Base):
+    """A contiguous Pratham-only passage tagged to modules for beat-level retrieval."""
+
+    __tablename__ = "pratham_passages"
+    __table_args__ = (
+        UniqueConstraint("style_transcript_id", "passage_index", name="uq_pratham_passage_index"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    style_transcript_id: Mapped[int] = mapped_column(Integer, index=True)
+    passage_index: Mapped[int] = mapped_column(Integer, default=0)
+    text: Mapped[str] = mapped_column(Text)
+    word_count: Mapped[int] = mapped_column(Integer, default=0)
+    module_ids: Mapped[str] = mapped_column(String(255), default="")
+    module_strengths_json: Mapped[str] = mapped_column(Text, default="{}")
+    audience: Mapped[str] = mapped_column(String(200), default="")
+    summary: Mapped[str] = mapped_column(String(400), default="")
+    usable: Mapped[bool] = mapped_column(Boolean, default=True)
+    source_name: Mapped[str] = mapped_column(String(300), default="")
+    embedding_json: Mapped[str] = mapped_column(Text, default="")
+    text_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class MediaIndex(Base):
     __tablename__ = "media_index"
 

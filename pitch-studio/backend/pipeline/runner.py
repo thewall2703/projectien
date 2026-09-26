@@ -214,10 +214,18 @@ def _pratham_reference(
     topic_flow: list[Any],
     modules: list[Module],
     context_note: str,
-) -> str:
-    """Persona playbook moves + Pratham passages matched to this script. Never fails the run."""
+) -> tuple[str, dict[str, Any]]:
+    """Beat passages + playbook moves matched to this script. Never fails the run."""
+    empty_meta: dict[str, Any] = {
+        "passage_ids": [],
+        "fed_words": 0,
+        "fallback_topic_ids": [],
+        "empty_topic_ids": [],
+        "moves": 0,
+        "error": "",
+    }
     if not persona_label:
-        return ""
+        return "", empty_meta
     topics: list[str] = []
     for topic in topic_flow or []:
         payload = topic.to_prompt_dict() if hasattr(topic, "to_prompt_dict") else topic
@@ -226,18 +234,82 @@ def _pratham_reference(
     if not topics:
         topics = [module.name for module in modules if module.name]
     try:
-        from backend.pratham_playbook import build_pratham_reference
+        from backend.pratham_passages import format_passages_for_prompt, select_passages_for_topics
+        from backend.pratham_playbook import PASSAGE_LIMIT, format_reference, select_reference
 
-        return build_pratham_reference(
-            db, persona_label=persona_label, topics=topics, context_note=context_note or ""
+        beat_block = ""
+        selection: dict[str, Any] = {
+            "topics": [],
+            "fed_words": 0,
+            "fallback_topic_ids": [],
+            "empty_topic_ids": [],
+        }
+        if settings.pratham_passages_enabled and topic_flow:
+            selection = select_passages_for_topics(
+                db,
+                topics=topic_flow,
+                persona_label=persona_label,
+                context_note=context_note or "",
+            )
+            beat_block = format_passages_for_prompt(selection)
+        passage_ids = [
+            int(passage["id"])
+            for topic in selection.get("topics") or []
+            for passage in topic.get("passages") or []
+            if passage.get("id") is not None
+        ]
+        # Avoid feeding the same speech twice when beat passages are present.
+        selection_playbook = select_reference(
+            db,
+            persona_label=persona_label,
+            topics=topics,
+            context_note=context_note or "",
+            passage_limit=0 if beat_block else PASSAGE_LIMIT,
         )
-    except Exception:  # noqa: BLE001
+        playbook_block = format_reference(selection_playbook)
+        blocks = [block for block in (beat_block, playbook_block) if block]
+        meta = {
+            "passage_ids": passage_ids,
+            "fed_words": int(selection.get("fed_words") or 0),
+            "fallback_topic_ids": list(selection.get("fallback_topic_ids") or []),
+            "empty_topic_ids": list(selection.get("empty_topic_ids") or []),
+            "moves": len(selection_playbook.get("moves") or []),
+            "error": "",
+        }
+        return "\n\n".join(blocks), meta
+    except Exception as exc:  # noqa: BLE001
         logger.exception("Pratham reference lookup failed for %s", persona_label)
         try:
             db.rollback()
         except Exception:  # noqa: BLE001
             pass
-        return ""
+        return "", {**empty_meta, "error": f"{type(exc).__name__}: {exc}"}
+
+
+def _script_spoken_text(script: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for section in script.get("sections") or []:
+        if isinstance(section, dict) and section.get("text"):
+            parts.append(str(section["text"]))
+    if script.get("cta"):
+        parts.append(str(script["cta"]))
+    return " ".join(parts)
+
+
+def _enrich_pratham_meta(
+    meta: dict[str, Any],
+    *,
+    script: dict[str, Any],
+    reference_text: str,
+) -> dict[str, Any]:
+    from backend.pratham_passages import link_rate, phrase_reuse_rate
+
+    spoken = _script_spoken_text(script)
+    return {
+        **meta,
+        "reuse_rate": round(phrase_reuse_rate(spoken, reference_text), 4),
+        "link_rate": round(link_rate(spoken), 4),
+    }
 
 
 def _select_objections(
@@ -389,6 +461,7 @@ def _run_quality_loop(
     plan_error: str,
     set_status: Callable[[str], None],
     pratham_reference: str = "",
+    pratham_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Flow + listener quality loop. Never fails the parent run."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -399,7 +472,14 @@ def _run_quality_loop(
     listener_on = bool(settings.listener_enabled)
     if not flow_on and not listener_on:
         if hasattr(target, "quality_trace_json"):
-            target.quality_trace_json = serialize_quality_trace([], kept_round=0, plan_error=plan_error)
+            target.quality_trace_json = serialize_quality_trace(
+                [],
+                kept_round=0,
+                plan_error=plan_error,
+                pratham=_enrich_pratham_meta(
+                    pratham_meta or {}, script=script, reference_text=pratham_reference
+                ),
+            )
             db.commit()
         return script
 
@@ -418,7 +498,12 @@ def _run_quality_loop(
     def finish() -> dict[str, Any]:
         if hasattr(target, "quality_trace_json"):
             target.quality_trace_json = serialize_quality_trace(
-                rounds, kept_round=best_round, plan_error=plan_error
+                rounds,
+                kept_round=best_round,
+                plan_error=plan_error,
+                pratham=_enrich_pratham_meta(
+                    pratham_meta or {}, script=best_script, reference_text=pratham_reference
+                ),
             )
             db.commit()
         return best_script
@@ -691,7 +776,7 @@ def generate_script_phase(
         target.error = "Approved Pratham Mittal transcript excerpts are required before generating a script"
         set_status("failed")
         return None
-    pratham_reference = _pratham_reference(
+    pratham_reference, pratham_meta = _pratham_reference(
         db,
         persona_label=persona_label,
         topic_flow=topic_flow,
@@ -888,11 +973,17 @@ def generate_script_phase(
             plan_error=plan_error,
             set_status=set_status,
             pratham_reference=pratham_reference,
+            pratham_meta=pratham_meta,
         )
         target.script_json = json.dumps(script, ensure_ascii=False)
     elif hasattr(target, "quality_trace_json"):
         target.quality_trace_json = serialize_quality_trace(
-            [], kept_round=0, plan_error=plan_error
+            [],
+            kept_round=0,
+            plan_error=plan_error,
+            pratham=_enrich_pratham_meta(
+                pratham_meta, script=script, reference_text=pratham_reference
+            ),
         )
         db.commit()
 

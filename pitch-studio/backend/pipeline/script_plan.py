@@ -19,7 +19,7 @@ PLAN_SYSTEM = (
     "You plan a spoken Masters' Union pitch for an EMPLOYEE speaker (never Pratham). "
     "Build one throughline and one beat per deck topic, in topic-flow order. "
     "Each beat needs a point, a proof (from LOCKED, REPORT, FOUNDER excerpts, or NONE), "
-    "a story device, a bridge_in, and an approx word count. "
+    "a story device, a bridge_in, a pratham_move, and an approx word count. "
     "The talk will be SPOKEN, so plan for the ear: one clear idea per beat, said simply. "
     "bridge_in is a short note on the logical link from the previous beat, not a line to say; leave it "
     "empty when the link is obvious, and never plan announced transitions ('the next question is…'). "
@@ -31,11 +31,13 @@ PLAN_SYSTEM = (
     "When a PRATHAM PLAYBOOK is given, build at least one beat's story_device on a playbook move "
     "(name the move in that beat's point or proof) where it fits the listener; never plan an "
     "unverified number from the playbook or passages as proof. "
+    "For every beat that has a PRATHAM BY BEAT passage, plan how the beat borrows from it "
+    "(his example, his question, his framing) in pratham_move; use \"\" if none fits. "
     "Return strict JSON only:\n"
     '{"throughline":"...","listener_start":"...","listener_end":"...","arc":"...",'
     '"beats":[{"topic_id":1,"role":"OPENING|BODY|CLOSE","point":"...","proof":"...",'
     '"proof_source":"LOCKED|REPORT|FOUNDER|NONE","story_device":"anecdote|question|contrast|example|none",'
-    '"bridge_in":"...","approx_words":80}],"ask":"..."}'
+    '"bridge_in":"...","pratham_move":"...","approx_words":80}],"ask":"..."}'
 )
 
 _PROOF_SOURCES = frozenset({"LOCKED", "REPORT", "FOUNDER", "NONE"})
@@ -82,6 +84,7 @@ def _placeholder_beat(topic_id: int, role: str, approx_words: int) -> dict[str, 
         "proof_source": "NONE",
         "story_device": "none",
         "bridge_in": "" if role in {"OPENING", "OPENING + CLOSE"} else "",
+        "pratham_move": "",
         "approx_words": approx_words,
     }
 
@@ -126,6 +129,7 @@ def normalize_script_plan(
             "proof_source": proof_source,
             "story_device": device,
             "bridge_in": _clamp_str(item.get("bridge_in"), 240),
+            "pratham_move": _clamp_str(item.get("pratham_move"), 240),
             "approx_words": max(0, approx),
         }
 

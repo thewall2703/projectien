@@ -150,8 +150,9 @@ CURATION_SYSTEM = (
     "Drop science tangents (CRISPR, aging biology), unrelated personal anecdotes, "
     "and crowd-work with no institutional content.\n"
     "Return text as a contiguous excerpt from the chunk.\n"
+    "module_ids: only modules the quote is clearly about; [] otherwise.\n"
     'Output: {"snippets":[{"text":"...","topic":"institution|vision|students|challenges|founder",'
-    '"module_ids":["M07"],"keep":true}]}'
+    '"module_ids":[],"keep":true}]}'
 )
 
 

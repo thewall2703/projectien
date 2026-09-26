@@ -125,6 +125,13 @@ class FlowCheckUnitTests(unittest.TestCase):
                 "written_lines": [
                     {"topic_id": 5, "quote": "External judgment matters: 6 startups pitched.", "spoken_fix": "Six of our startups pitched on Shark Tank."}
                 ],
+                "cold_starts": [
+                    {
+                        "topic_id": 5,
+                        "quote": "A. B. C.",
+                        "chained": "A. And B. That's C.",
+                    }
+                ],
                 "signposting": ["the next question is what learning produces"],
                 "hedging": ["A pitch isn't a successful company"],
                 "name_drops": ["Rhea and Ayush building Lexi's"],
@@ -134,7 +141,7 @@ class FlowCheckUnitTests(unittest.TestCase):
         self.assertFalse(flow_passed(result))
         notes = flow_notes(result, limit=10)
         joined = "\n".join(notes)
-        for expected in ("written English", "Announced transitions", "Reflexive caveats", "Names with no story", "say it like"):
+        for expected in ("written English", "Announced transitions", "Reflexive caveats", "Names with no story", "say it like", "cold sentence starts"):
             self.assertIn(expected, joined)
 
     def test_flow_passed_thresholds(self):
@@ -705,7 +712,7 @@ class CacheKeyPipelineTests(unittest.TestCase):
         with mock.patch.object(settings, "script_writer_model", "openai/other-model"):
             key2 = compute_cache_key(axes, "X2", "note", "", db)
         self.assertNotEqual(key1, key2)
-        self.assertEqual(SCRIPT_PIPELINE_VERSION, "3")
+        self.assertEqual(SCRIPT_PIPELINE_VERSION, "4")
 
 
 if __name__ == "__main__":

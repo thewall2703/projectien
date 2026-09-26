@@ -136,8 +136,58 @@ class PlaybookTests(unittest.TestCase):
         block = build_pratham_reference(self.db, persona_label="Current student", topics=["gym"], embed_fn=fake_embed)
         self.assertEqual(block.count("Gym take"), 1)
 
-    def test_reference_is_empty_for_unknown_persona(self):
-        self.assertEqual(build_pratham_reference(self.db, persona_label="Nobody", topics=["x"], embed_fn=fake_embed), "")
+    def test_reference_returns_moves_for_untagged_persona(self):
+        self.db.add(
+            PrathamMove(
+                style_transcript_id=self.solo.id,
+                kind="analogy",
+                label="Campus as gym",
+                excerpt="Think of this campus like a gym.",
+                embedding_json=vector(3, 0, 0, 0),
+                text_hash="untagged",
+                source_name=self.solo.name,
+            )
+        )
+        self.db.commit()
+        block = build_pratham_reference(
+            self.db, persona_label="Nobody", topics=["gym"], embed_fn=fake_embed
+        )
+        self.assertIn("Campus as gym", block)
+
+    def test_passage_limit_zero_omits_passages(self):
+        self.db.add(
+            PrathamMove(
+                style_transcript_id=self.solo.id,
+                kind="analogy",
+                label="Campus as gym",
+                excerpt="Think of this campus like a gym.",
+                embedding_json=vector(3, 0, 0, 0),
+                text_hash="lim0",
+                source_name=self.solo.name,
+            )
+        )
+        self.db.add(
+            TranscriptChunk(
+                source_type="style",
+                source_id=str(self.solo.id),
+                source_name=self.solo.name,
+                chunk_index=0,
+                text="Think of this campus like a gym.",
+                embedding_json=vector(3, 0, 0, 0),
+            )
+        )
+        self.db.commit()
+        from backend.pratham_playbook import select_reference
+
+        selection = select_reference(
+            self.db,
+            persona_label="Current student",
+            topics=["gym"],
+            embed_fn=fake_embed,
+            passage_limit=0,
+        )
+        self.assertEqual(selection["passages"], [])
+        self.assertTrue(selection["moves"])
 
 
 class PromptWiringTests(unittest.TestCase):
@@ -149,8 +199,9 @@ class PromptWiringTests(unittest.TestCase):
         with_ref = script_messages(**kwargs, pratham_reference="PRATHAM PLAYBOOK — test block")
         without = script_messages(**kwargs)
         self.assertIn("PRATHAM PLAYBOOK — test block", with_ref[1]["content"])
-        self.assertIn("PRATHAM PLAYBOOK AND PASSAGES", with_ref[0]["content"])
+        self.assertIn("PRATHAM BY BEAT AND PLAYBOOK", with_ref[0]["content"])
         self.assertNotIn("PRATHAM PLAYBOOK", without[0]["content"] + without[1]["content"])
+        self.assertNotIn("PRATHAM BY BEAT", without[0]["content"] + without[1]["content"])
 
 
 if __name__ == "__main__":

@@ -218,8 +218,13 @@ def serialize_quality_trace(
     *,
     kept_round: int = 0,
     plan_error: str = "",
+    pratham: dict[str, Any] | None = None,
 ) -> str:
-    return json.dumps(
-        {"plan_error": plan_error or "", "rounds": rounds, "kept_round": kept_round},
-        ensure_ascii=False,
-    )
+    payload: dict[str, Any] = {
+        "plan_error": plan_error or "",
+        "rounds": rounds,
+        "kept_round": kept_round,
+    }
+    if pratham is not None:
+        payload["pratham"] = pratham
+    return json.dumps(payload, ensure_ascii=False)

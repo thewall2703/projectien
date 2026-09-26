@@ -10,11 +10,13 @@ from backend.schemas import AUDIENCE_CLUSTERS, CHANNELS, DURATIONS, INTENTS, TEM
 from backend.transcripts import format_founder_line
 
 PRATHAM_REFERENCE_RULES = (
-    "PRATHAM PLAYBOOK AND PASSAGES — more of Pratham's real speech, matched to this audience and topics:\n"
-    "- Build at least one beat on a PLAYBOOK move where it fits naturally: adapt the framework, analogy, "
-    "story shape, opener, or objection handling to this listener. Adapt the move; do not paste the whole excerpt.\n"
-    "- Use PASSAGES for rhythm, phrasing, and how he sequences an argument; borrow short phrases, not paragraphs.\n"
-    "- Same identity rules as FOUNDER VOICE: items marked personal are told in third person with attribution.\n"
+    "PRATHAM BY BEAT AND PLAYBOOK — his real speech matched to this talk's beats:\n"
+    "- Build each beat's delivery on its PRATHAM BY BEAT passage: his order of ideas, "
+    "his examples and questions, and the way each sentence picks up the last.\n"
+    "- Reuse his sentences and phrases freely (verbatim or adapted). Do not paste a whole passage.\n"
+    "- Build at least one beat on a PLAYBOOK move where it fits: adapt the framework, analogy, "
+    "story shape, opener, or objection handling. Adapt the move; do not paste the whole excerpt.\n"
+    "- Same identity rules as FOUNDER VOICE: personal material is told in third person with attribution.\n"
     "- These are raw transcripts, not verified facts. State a number or claim from them only if LOCKED or "
     "REPORT EVIDENCE supports it; otherwise keep the move and drop the figure.\n\n"
 )
@@ -190,8 +192,18 @@ def script_messages(
         "a person actually says across a table, not the sentences they would write in an essay or on a slide.\n"
         "- Say it, then read it aloud in your head. If you would not say that exact sentence to a parent or "
         "student in a real conversation, rewrite it until you would.\n"
-        "- Short sentences, one idea each, subject and verb up front. Most sentences under 18 words. "
-        "Break long ones in two.\n"
+        "- Short sentences, one idea each, subject and verb up front — but CHAINED like Pratham. "
+        "Most sentences pick up the one before: a link word (so, and, but, because, now), a pointer "
+        "(that, this, it), or repeating the previous sentence's key word. "
+        "Real example from his sessions: 'This is not playboy school. That is not this program. "
+        "This program is the buffet is laid out. Now you have to get up.'\n"
+        "  COLD: 'A practical model needs an institution behind it. Our purpose is practitioner-led "
+        "education, with formal governance that challenges delivery. The Board of Governors on this "
+        "slide is part of that structure.'\n"
+        "  CHAINED: 'A model like this needs an institution behind it. And that institution has to be "
+        "able to say no to us. That's what the Board of Governors on this slide is for.'\n"
+        "- A list of names or bodies is said once, in one sentence, then the point — never one "
+        "'They include…' sentence per item.\n"
         "- Verbs, not noun phrases: 'we built it so you practise every week', not 'the model is designed to "
         "enable repeated practice'. No stacked labels like 'practitioner-led learning outcomes'.\n"
         "- No written punctuation in the spoken text: no colons, slashes, semicolons, brackets, or "
@@ -364,6 +376,7 @@ def script_messages(
                 f"point={beat.get('point')}; proof={beat.get('proof')} "
                 f"[{beat.get('proof_source')}]; story_device={beat.get('story_device')}; "
                 f"bridge_in={beat.get('bridge_in') or '(opening)'}; "
+                f"pratham_move={beat.get('pratham_move') or '(none)'}; "
                 f"approx_words={beat.get('approx_words')}"
             )
         user += (

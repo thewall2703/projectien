@@ -20,6 +20,9 @@ FLOW_SYSTEM = (
     "formal connectives, and phrasing nobody says in conversation.\n"
     "- written_lines: up to 8 of the most written-sounding sentences, each with how a person would "
     "actually say it (spoken_fix).\n"
+    "- cold_starts: up to 6 runs of 3+ consecutive sentences that do not connect to each other "
+    "(each sentence starts cold). For each, quote the run and give a chained rewrite where most "
+    "sentences pick up the one before.\n"
     "- signposting: sentences that announce the talk's own structure ('the next question is', "
     "'now let's look at', 'once that is clear', 'with X in place'). A good join does not announce itself.\n"
     "- hedging: reflexive caveats that undercut a point ('a pitch isn't a company, but…', "
@@ -35,6 +38,7 @@ FLOW_SYSTEM = (
     '"arc":{"score":1,"issue":""},"naturalness":{"score":1,"issue":""},'
     '"spoken":{"score":1,"issue":""},'
     '"written_lines":[{"topic_id":1,"quote":"","spoken_fix":""}],'
+    '"cold_starts":[{"topic_id":1,"quote":"","chained":""}],'
     '"signposting":["..."],"hedging":["..."],"name_drops":["..."],'
     '"repetition":["..."],"grammar":[{"topic_id":1,"quote":"","fix":""}]}'
 )
@@ -120,6 +124,22 @@ def normalize_flow_result(raw: Any) -> dict[str, Any]:
                     "spoken_fix": _clamp_str(item.get("spoken_fix")),
                 }
             )
+    cold_starts: list[dict[str, Any]] = []
+    for item in raw.get("cold_starts") or []:
+        if not isinstance(item, dict):
+            continue
+        quote = _clamp_str(item.get("quote"))
+        if not quote:
+            continue
+        cold_starts.append(
+            {
+                "topic_id": int(item.get("topic_id") or 0),
+                "quote": quote,
+                "chained": _clamp_str(item.get("chained")),
+            }
+        )
+        if len(cold_starts) >= 6:
+            break
     grammar: list[dict[str, Any]] = []
     for item in raw.get("grammar") or []:
         if not isinstance(item, dict):
@@ -151,6 +171,7 @@ def normalize_flow_result(raw: Any) -> dict[str, Any]:
             "issue": _clamp_str(spoken_raw.get("issue")),
         },
         "written_lines": written_lines,
+        "cold_starts": cold_starts,
         "signposting": _quotes("signposting"),
         "hedging": _quotes("hedging"),
         "name_drops": _quotes("name_drops"),
@@ -291,6 +312,17 @@ def flow_notes(result: dict[str, Any], limit: int = 8) -> list[str]:
                 1,
                 f"Section {item.get('topic_id')} sounds written: '{item['quote']}'"
                 + (f" → say it like: '{fix}'" if fix else ""),
+            )
+        )
+    for item in result.get("cold_starts") or []:
+        if not isinstance(item, dict) or not item.get("quote"):
+            continue
+        chained = item.get("chained") or ""
+        scored.append(
+            (
+                1,
+                f"Section {item.get('topic_id')} has cold sentence starts: '{item['quote']}'"
+                + (f" → chain it like: '{chained}'" if chained else ""),
             )
         )
     for item in result.get("grammar") or []:

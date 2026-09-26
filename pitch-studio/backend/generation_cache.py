@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 CONTENT_VERSION_KEY = "content_version"
 BACKEND_ROOT = PITCH_STUDIO_ROOT / "backend"
-SCRIPT_PIPELINE_VERSION = "3"
+SCRIPT_PIPELINE_VERSION = "4"
 
 _deploy_version_cache: str | None = None
 
@@ -166,6 +166,9 @@ def compute_cache_key(
         "script_plan_enabled": bool(settings.script_plan_enabled),
         "flow_check_enabled": bool(settings.flow_check_enabled),
         "listener_enabled": bool(settings.listener_enabled),
+        "pratham_passages_enabled": bool(settings.pratham_passages_enabled),
+        "pratham_passages_per_topic": int(settings.pratham_passages_per_topic),
+        "pratham_passage_word_cap": int(settings.pratham_passage_word_cap),
         "deploy_version": deploy_version(),
         "content_version": get_content_version(db),
     }

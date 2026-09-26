@@ -240,26 +240,38 @@ def select_reference(
     move_limit: int = MOVE_LIMIT,
     passage_limit: int = PASSAGE_LIMIT,
 ) -> dict[str, list[dict[str, Any]]]:
-    transcript_ids = persona_transcript_ids(db, persona_label)
-    if not transcript_ids:
+    tagged_ids = set(persona_transcript_ids(db, persona_label))
+    processed = db.query(StyleTranscript).filter(StyleTranscript.status == "processed").all()
+    pratham_only_ids = {row.id for row in processed if _is_pratham_only(row.raw_text or "")}
+    # Persona tags boost ranking; they never gate. Untagged personas still get
+    # every processed Pratham-only transcript.
+    candidate_ids = set(tagged_ids) | set(pratham_only_ids) if tagged_ids else set(pratham_only_ids)
+    if not candidate_ids:
         return {"moves": [], "passages": []}
 
     moves = [
-        {"row": row, "vector": parse_embedding(row.embedding_json)}
+        {
+            "row": row,
+            "vector": parse_embedding(row.embedding_json),
+            "tagged": row.style_transcript_id in tagged_ids,
+        }
         for row in db.query(PrathamMove)
-        .filter(PrathamMove.style_transcript_id.in_(transcript_ids), PrathamMove.status == "approved")
+        .filter(PrathamMove.style_transcript_id.in_(candidate_ids), PrathamMove.status == "approved")
         .all()
     ]
     moves = [item for item in moves if item["vector"]]
 
-    transcripts = db.query(StyleTranscript).filter(StyleTranscript.id.in_(transcript_ids)).all()
-    pratham_only = {str(row.id) for row in transcripts if _is_pratham_only(row.raw_text or "")}
+    passage_source_ids = {str(tid) for tid in (candidate_ids & pratham_only_ids)}
     passages = [
-        {"row": row, "vector": parse_embedding(row.embedding_json)}
+        {
+            "row": row,
+            "vector": parse_embedding(row.embedding_json),
+            "tagged": int(row.source_id) in tagged_ids if str(row.source_id).isdigit() else False,
+        }
         for row in db.query(TranscriptChunk)
-        .filter(TranscriptChunk.source_type == SOURCE_STYLE, TranscriptChunk.source_id.in_(pratham_only))
+        .filter(TranscriptChunk.source_type == SOURCE_STYLE, TranscriptChunk.source_id.in_(passage_source_ids))
         .all()
-    ] if pratham_only else []
+    ] if passage_source_ids else []
     passages = [item for item in passages if item["vector"]]
     if not moves and not passages:
         return {"moves": [], "passages": []}
@@ -269,10 +281,16 @@ def select_reference(
     embed = embed_fn or default_embed_texts
     query_vectors = embed(queries)
 
+    for item in moves:
+        item["score"] = max((cosine_similarity(q, item["vector"]) for q in query_vectors), default=0.0)
+        if item["tagged"]:
+            item["score"] += 0.1
+    moves = sorted(moves, key=lambda item: item["score"], reverse=True)
+
     picked_moves: list[dict[str, Any]] = []
     picked_vectors: list[list[float]] = []
     per_kind: Counter[str] = Counter()
-    for item in _rank(moves, query_vectors):
+    for item in moves:
         row = item["row"]
         if per_kind[row.kind] >= 2:
             continue
@@ -285,9 +303,17 @@ def select_reference(
         if len(picked_moves) >= move_limit:
             break
 
+    for item in passages:
+        item["score"] = max((cosine_similarity(q, item["vector"]) for q in query_vectors), default=0.0)
+        if item["tagged"]:
+            item["score"] += 0.1
+    passages = sorted(passages, key=lambda item: item["score"], reverse=True)
+
     picked_passages: list[dict[str, Any]] = []
     per_source: Counter[str] = Counter()
-    for item in _rank(passages, query_vectors):
+    for item in passages:
+        if passage_limit <= 0:
+            break
         row = item["row"]
         if per_source[row.source_id] >= 2:
             continue
@@ -331,6 +357,8 @@ def build_pratham_reference(
     topics: list[str],
     context_note: str = "",
     embed_fn: EmbedFn | None = None,
+    move_limit: int = MOVE_LIMIT,
+    passage_limit: int = PASSAGE_LIMIT,
 ) -> str:
     return format_reference(
         select_reference(
@@ -339,6 +367,8 @@ def build_pratham_reference(
             topics=topics,
             context_note=context_note,
             embed_fn=embed_fn,
+            move_limit=move_limit,
+            passage_limit=passage_limit,
         )
     )
 

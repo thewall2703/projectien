@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     script_plan_enabled: bool = True
     flow_check_enabled: bool = True
     listener_enabled: bool = True
+    pratham_passages_enabled: bool = True
+    pratham_passages_per_topic: int = 2
+    pratham_passage_word_cap: int = 3500
+    passage_tagger_model: str = ""
     admin_email: str = "admin@example.com"
     admin_password: str = "changeme"
     google_client_id: str = ""
