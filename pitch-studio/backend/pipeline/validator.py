@@ -5,9 +5,11 @@ import re
 from typing import Any
 
 from backend.models import LockedFact
+from backend.pipeline.claims import claim_violations
 
 MEMBERSHIP_NAMES = ("EFMD", "AACSB", "BGA", "BSIS", "NSDC")
 FORBIDDEN_STATUSES = {"conflict", "do_not_use", "needs_source", "needs_decision"}
+# Retained for tests / callers that still import the placement markers.
 AVERAGE_MARKER = "33.39"
 MEDIAN_MARKER = "27.78"
 OPENING_CONTINUATION_RE = re.compile(
@@ -446,12 +448,10 @@ def validate_script(
         if len(value) >= 8 and value in full:
             violations.append(f"Forbidden fact appears: {fact.fact} = {value}")
 
-    for section in sections:
+    for number, section in enumerate(sections, start=1):
         text = section.get("text", "")
-        if AVERAGE_MARKER in text and MEDIAN_MARKER not in text:
-            violations.append(
-                "Average CTC mentioned without median CTC in the same section"
-            )
+        violations.extend(claim_violations(text, unit_label=f"Section {number}"))
+    violations.extend(claim_violations(script.get("cta") or "", unit_label="The final ask"))
 
     sentences = re.split(r"(?<=[.!?])\s+", full)
     for sentence in sentences:

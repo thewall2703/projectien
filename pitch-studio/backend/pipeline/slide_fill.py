@@ -64,6 +64,7 @@ from backend.generated_slides import (
     save_generated_slide_image,
 )
 from backend.models import GeneratedSlide, GeneratedSlideAttempt
+from backend.pipeline.claims import SLIDE_CLAIMS_RULES_PROMPT, claim_violations, pair_median_facts
 from backend.pipeline.brand_deck import (
     COVER_PAGE,
     MODULE_PAGES,
@@ -342,6 +343,16 @@ def gate_number_provenance(
     return violations
 
 
+def gate_claim_hygiene(spec: TemplateSpec, values: Mapping[str, Any]) -> list[str]:
+    """Reject banned claim phrases, rounded aggregates, and unpaired averages per slide."""
+    parts: list[str] = []
+    for name in spec.fillable_slots:
+        parts.append(str(values.get(name) or ""))
+    for name in spec.fillable_lists:
+        parts.extend(_list_items(values, name))
+    return claim_violations("\n".join(parts), unit_label="This slide")
+
+
 def gate_copy_register(spec: TemplateSpec, values: Mapping[str, Any]) -> list[str]:
     """Reject unmistakable officialese before render and vision.
 
@@ -398,8 +409,11 @@ _FILL_SYSTEM = (
     "Follow the conventions: write '&' not 'and', and no trailing full stop. "
     "You may wrap a short italic-serif accent in *single asterisks* and bold a "
     "subject in **double asterisks**, sparingly, like the exemplars. Respect "
-    "every slot's min/max words and chars and each list's max_items. Return "
-    'strict JSON mapping each slot/list name to its value, e.g. {"title":"...",'
+    "every slot's min/max words and chars and each list's max_items. "
+    "On-slide copy stays spec-sheet: short declarative fragments, exact numbers — "
+    "no slang, no personality asides. "
+    + SLIDE_CLAIMS_RULES_PROMPT
+    + 'Return strict JSON mapping each slot/list name to its value, e.g. {"title":"...",'
     '"items":["...","..."]}. Do not add keys and do not fill photo content.'
 )
 
@@ -755,6 +769,8 @@ def _fill_payload(
             "Avoid officialese, passive-bureaucratic scaffolding and hedging filler.",
             "Never use 'as per', 'pursuant to', 'in order to', 'with respect to', 'following ... approval', 'for the purpose of', 'in this regard', 'it is/should be noted that', or passive 'hereby' constructions.",
             "Only use numbers that appear in locked_facts or report_passages.",
+            "If you state an average CTC/pay figure, put the median on the same slide.",
+            "Never round figures up with '+' / 'plus'; never use banned claim adjectives.",
             "Do not design; only write the slot copy.",
             "max_chars counts visible characters (spaces included, emphasis asterisks excluded); aim a few characters under every limit.",
             "When previous_values is present, fix only what corrections names and keep every other slot exactly as it was.",
@@ -1153,6 +1169,7 @@ def _realize_one(
     source_facts = [
         facts_by_id[fid] for fid in placeholder.source_fact_ids if fid in facts_by_id
     ]
+    source_facts = pair_median_facts(source_facts, pool=list(facts_by_id.values()))
     source_passages = relevant_passages(passages, _placeholder_modules(placeholder))
     claim_hash = compute_claim_hash(
         claim=placeholder.claim,
@@ -1244,6 +1261,17 @@ def _realize_one(
                 db, generation_id, placeholder,
                 attempt_number=attempt_number, outcome="provenance",
                 gate="provenance", violations=violations, slot_values=values,
+            )
+            continue
+
+        # Gate b2: claim hygiene (banned phrases, rounded aggregates, unpaired averages).
+        violations = gate_claim_hygiene(spec, values)
+        if violations:
+            corrections = violations
+            _archive_attempt(
+                db, generation_id, placeholder,
+                attempt_number=attempt_number, outcome="claim_hygiene",
+                gate="claim_hygiene", violations=violations, slot_values=values,
             )
             continue
 

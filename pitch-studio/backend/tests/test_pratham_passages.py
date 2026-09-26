@@ -507,7 +507,7 @@ class PromptAndPlanTests(unittest.TestCase):
         with mock.patch.object(settings, "pratham_passages_per_topic", 9):
             key2 = compute_cache_key(axes, "X2", "note", "", db)
         self.assertNotEqual(key1, key2)
-        self.assertEqual(SCRIPT_PIPELINE_VERSION, "7")
+        self.assertEqual(SCRIPT_PIPELINE_VERSION, "8")
 
 
 class RunnerWiringTests(unittest.TestCase):

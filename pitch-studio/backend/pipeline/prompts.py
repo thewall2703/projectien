@@ -4,6 +4,13 @@ import json
 from typing import Any
 
 from backend.models import FounderQuote, LockedFact, Module
+from backend.pipeline.claims import (
+    CALIBRATION_CLAIM_LINE,
+    CLAIMS_RULES_PROMPT,
+    DISCLOSURE_RULE,
+    disclosure_applies,
+    pair_median_facts,
+)
 from backend.pipeline.resolver import MAX_SCRIPT_MINUTES, script_minutes_for_duration
 from backend.pipeline.validator import budget_range, count_script_words
 from backend.schemas import AUDIENCE_CLUSTERS, CHANNELS, DURATIONS, INTENTS, TEMPERATURES
@@ -146,7 +153,7 @@ def _format_modules(modules: list[Module], sequence: list[str]) -> str:
 
 
 def _format_facts(facts: list[LockedFact], sequence: list[str]) -> tuple[str, str]:
-    locked = []
+    locked_facts: list[LockedFact] = []
     forbidden = []
     sequence_set = set(sequence)
     for fact in facts:
@@ -155,9 +162,14 @@ def _format_facts(facts: list[LockedFact], sequence: list[str]) -> tuple[str, st
         value = UNIVERSITY_STATUS_LINE if fact.fact.strip().lower() == "university status" else fact.value
         line = f"- {fact.fact}: {value} (source: {fact.source})"
         if fact.status == "verified" and relevant:
-            locked.append(line)
+            locked_facts.append(fact)
         elif fact.status in {"conflict", "do_not_use", "needs_source", "needs_decision"}:
             forbidden.append(line)
+    locked_facts = pair_median_facts(locked_facts, pool=facts)
+    locked = []
+    for fact in locked_facts:
+        value = UNIVERSITY_STATUS_LINE if fact.fact.strip().lower() == "university status" else fact.value
+        locked.append(f"- {fact.fact}: {value} (source: {fact.source})")
     return "\n".join(locked) or "(none)", "\n".join(forbidden) or "(none)"
 
 
@@ -239,19 +251,30 @@ def script_messages(
         "longer ones so it has a pulse. A one-line sentence is allowed and often stronger.\n"
         "- Open like a person actually opens — a real question, a sharp claim, or a concrete image. "
         "NEVER open with 'In today's...', 'In a world where...', 'Masters' Union is a...', or a definition.\n"
-        "- Prove with specifics, not adjectives. Name the person, the number, the place, the company. "
+        "- Prove with specifics, not adjectives. Lead with named proof where available: a named "
+        "student, alumnus or venture plus a checkable outcome from LOCKED / REPORT / REAL STORIES "
+        "beats a round aggregate. Name the person, the number, the place, the company. "
         "Show it; don't label it. One concrete example beats three claims.\n"
         "- Let ideas build the way a story does: set up, then land the point. Rhetorical questions are good. "
         "A little dry confidence and humour is good. Sound convinced, not salesy.\n"
         "- BANNED words/phrases (they scream machine-written): 'in today's fast-paced/rapidly evolving', "
         "'leverage', 'delve', 'landscape', 'tapestry', 'ecosystem' (as filler), 'furthermore', 'moreover', "
-        "'in conclusion', 'unlock', 'empower', 'seamless', 'robust', 'world-class', 'cutting-edge', "
+        "'in conclusion', 'unlock', 'empower', 'seamless', 'robust', "
         "'holistic', 'boasts', 'nestled', 'at the end of the day', 'it's worth noting', 'game-changer', "
-        "'testament to'. Kill stacked three-adjective phrases and generic hype.\n"
+        "'testament to'. Kill stacked three-adjective phrases and generic hype. "
+        "(Claim-hygiene bans like 'world-class' / 'cutting-edge' live in HOW WE MAKE CLAIMS below.)\n"
         "- Inside a section's text: it is spoken prose. No headings, no bullet points, no numbered lists, "
         "no markdown. Separate spoken beats with a blank line so the reader can breathe — a new "
         "paragraph every two or three sentences, or whenever the idea, example, or addressee shifts. "
-        "Longer sessions (10 minutes and up) must never be one unbroken wall of text.\n\n"
+        "Longer sessions (10 minutes and up) must never be one unbroken wall of text.\n"
+        "- Sound like Pratham speaking, not a brochure: short punchy lines mixed with longer ones; "
+        "tag questions ('right?', 'no?'); direct address ('boss', 'guys', 'yaar' sparingly); "
+        "asides and self-interruptions ('and honestly—', 'I'll tell you why'); dry dares to the "
+        "listener ('check it', 'Google it'). A Hindi/Hinglish word or phrase where it lands naturally "
+        "is fine — roughly one light touch per ~150 spoken words, never whole Hindi sentences, and "
+        "never forced. If the audience/persona is corporate HR or parents in a formal setting, tone "
+        "the slang and Hindi down. Calibration (exact claim + median + disclosure attitude + rhythm):\n"
+        f"  '{CALIBRATION_CLAIM_LINE}'\n\n"
         "SPEAKER IDENTITY — DO NOT CONFUSE STYLE WITH IDENTITY:\n"
         "- This script will be delivered by a Masters' Union EMPLOYEE or representative. The speaker is "
         "not Pratham Mittal and must never impersonate him.\n"
@@ -275,16 +298,23 @@ def script_messages(
         "an excerpt says them.\n"
         + (
             "- The PRATHAM STYLE AND STRUCTURE GUIDE complements FOUNDER VOICE: the guide is rules for "
-            "transferable structure and register; the voice block is register examples. Treat observed devices "
-            "as context-dependent, not a checklist: do not force Hindi, named parts, audience games, prizes, "
-            "or Q&A mechanics into a pitch where they do not naturally fit.\n\n"
+            "transferable structure and register; the voice block is register examples. Sound like "
+            "Pratham — rhythm, tag questions, light code-mixing, asides — when it fits the audience. "
+            "Treat format devices as context-dependent, not a checklist: do not force named parts, "
+            "audience games, prizes, or Q&A mechanics into a pitch where they do not naturally fit.\n\n"
             if style_guide
-            else "\n"
+            else ""
         )
         + (
             PRATHAM_REFERENCE_RULES
             if pratham_reference
             else ""
+        )
+        + CLAIMS_RULES_PROMPT
+        + (
+            "\n" + DISCLOSURE_RULE + "\n"
+            if disclosure_applies(duration)
+            else "\n"
         )
         + "IMPACT MUST BE PROPORTIONAL TO TIME:\n"
         "- 30–60 seconds: precise, specific, factual; one point and one proof.\n"
@@ -301,7 +331,7 @@ def script_messages(
         "the fact's label or slash-separated value. The university-status line is the one exception: say it "
         "word for word.\n"
         "- FORBIDDEN facts must never appear.\n"
-        "- If you mention average CTC, the median CTC must appear in the same paragraph.\n"
+        "- Average/median pairing and exact (never rounded-up) figures: follow HOW WE MAKE CLAIMS above.\n"
         "- Never call EFMD, AACSB, BGA, BSIS or NSDC 'accreditations'. They are memberships or affiliations.\n"
         "- REPORT EVIDENCE is from official Masters' Union reports. Use at least one concrete detail from it "
         "in the relevant module (recruiter, role, programme, or named outcome) and attribute the report title "
@@ -431,7 +461,10 @@ def voice_review_messages(
         "You review a spoken pitch written for a Masters' Union EMPLOYEE or representative. "
         "Pratham Mittal is the style source, NOT the speaker. The goal is an employee who communicates "
         "with Pratham's directness, conversational rhythm, specificity, and plain language without "
-        "impersonating him. Pass if the draft is mostly direct, conversational, concrete-to-point, and plain. "
+        "impersonating him — including short/long line mix, tag questions, light direct address, "
+        "asides, dry dares to the listener, and occasional natural Hindi/Hinglish when the audience "
+        "allows it. Pass if the draft is mostly direct, conversational, concrete-to-point, and plain. "
+        "Fail polished brochure English even when the facts are correct. "
         "Third-person references to Pratham are correct when discussing founder-specific material "
         "(including attributed quotes and anecdotes); NEVER fail a draft merely because it refers to him "
         "in the third person or reuses excerpt phrasing with attribution. Fail identity only when the "
@@ -443,9 +476,14 @@ def voice_review_messages(
         "Minor leftover formality is not enough to fail if the voice is still spoken. "
         + (
             "Use the PRATHAM-DERIVED EMPLOYEE STYLE GUIDE as contextual guidance, not a mandatory checklist. "
-            "Apply only rules appropriate to the pitch duration, channel, intent, and context. The absence of "
-            "Hindi, named parts, gamification, prizes, audience interaction, or a question framework is not a "
-            "failure unless the supplied pitch context specifically requires that device. "
+            "Reward Pratham-like personality when it fits the audience: short/long rhythm mix, tag questions "
+            "('right?', 'no?'), sparingly used direct address ('boss', 'guys', 'yaar'), asides/"
+            "self-interruptions, dry dares ('check it'), and light Hindi/Hinglish where natural — not "
+            "polished brochure English. Penalise brochure voice. Tone slang and Hindi down for corporate "
+            "HR or formal parent settings. Apply only rules appropriate to the pitch duration, channel, "
+            "intent, and context. Missing named parts, gamification, prizes, audience interaction, or a "
+            "question framework is not a failure unless the supplied pitch context specifically requires "
+            "that device. "
             if style_guide
             else ""
         )
