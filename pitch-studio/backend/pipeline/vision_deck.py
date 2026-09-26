@@ -46,6 +46,28 @@ USE_CASES: tuple[tuple[str, str], ...] = (
     ("parents_decided", "Parents, decided"),
 )
 
+# Deck and script headings, in the order of the sheet's "Titles / Section"
+# column (comma-separated titles split; "Purpose, Vision and Governance" is one
+# quoted title). Page bounds follow the deck's content where the sheet's blocks
+# are coarser: 55–56 are immersion photos, 81–82 are campus pages.
+VISION_HEADINGS: tuple[tuple[str, int, int], ...] = (
+    ("The Founding Story", 1, 8),
+    ("Purpose, Vision and Governance", 9, 11),
+    ("Why Learn by Doing", 12, 18),
+    ("Learning Model", 19, 20),
+    ("Inclass", 21, 28),
+    ("Outclass: C&C", 29, 38),
+    ("Outclass: Labs", 39, 42),
+    ("Funded Ventures", 43, 50),
+    ("Immersions", 51, 56),
+    ("Outcomes", 57, 64),
+    ("Student Life", 65, 72),
+    ("Campus", 73, 82),
+    ("Programmes", 83, 87),
+    ("Recognition", 88, 90),
+    ("Vision Ahead", 91, 92),
+)
+
 USE_CASE_KEYS = frozenset(key for key, _label in USE_CASES)
 USE_CASE_LABELS = {key: label for key, label in USE_CASES}
 
@@ -755,6 +777,52 @@ def insert_at_section(
         if getattr(plan[position], "section", "") in earlier:
             index = position + 1
     return [*plan[:index], *slides, *plan[index:]]
+
+
+def heading_index(page: int | None) -> int:
+    """Position of the brand page's heading in :data:`VISION_HEADINGS`."""
+    if page:
+        for index, (_title, first, last) in enumerate(VISION_HEADINGS):
+            if first <= int(page) <= last:
+                return index
+    return len(VISION_HEADINGS)
+
+
+def heading_for_page(page: int | None) -> str:
+    index = heading_index(page)
+    return VISION_HEADINGS[index][0] if index < len(VISION_HEADINGS) else ""
+
+
+def _is_brand_slide(slide: Any) -> bool:
+    return isinstance(slide, BrandSlide)
+
+
+def order_by_headings(plan: Sequence[Any]) -> list[Any]:
+    """Reorder body slides into the sheet's heading order and tag their heading.
+
+    Cover and closing stay put. Within a heading the incoming order is kept.
+    Non-brand slides (DS & AI pages, generated placeholders) travel with the
+    brand slide before them.
+    """
+    slides = list(plan)
+    if len(slides) < 3:
+        return [
+            replace(slide, section=heading_for_page(slide.page)) if _is_brand_slide(slide) else slide
+            for slide in slides
+        ]
+    body = slides[1:-1]
+    current = 0
+    keyed: list[tuple[int, int, Any]] = []
+    for position, slide in enumerate(body):
+        if _is_brand_slide(slide):
+            current = heading_index(slide.page)
+        keyed.append((current, position, slide))
+    keyed.sort(key=lambda item: (item[0], item[1]))
+    ordered = [slides[0], *(slide for _index, _position, slide in keyed), slides[-1]]
+    return [
+        replace(slide, section=heading_for_page(slide.page)) if _is_brand_slide(slide) else slide
+        for slide in ordered
+    ]
 
 
 def load_vision_sections(db: Any, use_case: str) -> list[VisionSectionPlan]:

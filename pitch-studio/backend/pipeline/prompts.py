@@ -319,6 +319,9 @@ def script_messages(
             "merge, or reorder topics. Extra recipe information may be woven into the most relevant "
             "existing topic only. The 'text' is the spoken words for that beat; 'heading' is a short "
             "internal label (2-4 words) only.\n"
+            "- A topic titled with a deck heading (The Founding Story, Inclass, Outcomes…) spans every "
+            "selected slide under that heading: walk those slides in their listed order and cover each "
+            "recipe module listed for the topic, as one connected stretch of talk.\n"
             '- Output: {"sections":[{"topic_id":1,"topic_title":"...","pages":[1,2],"module_id":"M01",'
             '"heading":"...","text":"..."}], "cta":"..."}'
             if topic_flow

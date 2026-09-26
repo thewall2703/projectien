@@ -24,7 +24,7 @@ from backend.pipeline.dsai_deck import (
     is_dsai_request,
     load_dsai_slides,
 )
-from backend.pipeline.gaps import plan_with_generated_slides, vision_candidates_from_instructions
+from backend.pipeline.gaps import plan_with_generated_slides
 from backend.pipeline.slide_fill import realize_generated_slides
 from backend.config import settings
 from backend.pipeline.audience_sim import (
@@ -54,6 +54,7 @@ from backend.pipeline.vision_deck import (
     module_sequence_from_pages,
     module_sequence_from_slides,
     normalize_use_case,
+    order_by_headings,
     plan_vision_pages,
 )
 from backend.schemas import ScriptPayload
@@ -696,7 +697,6 @@ def generate_script_phase(
     deck_use_case = normalize_use_case(getattr(target, "deck_use_case", "") or "")
     vision_sections = load_vision_sections(db, deck_use_case) if deck_use_case else []
 
-    vision_instructions: list[Any] = []
     if vision_sections:
         # Vision spine: sheet pages in authored order, trimmed to the ceiling.
         # For ug_dsai, DS & AI pages stand in for the sections left blank.
@@ -712,14 +712,15 @@ def generate_script_phase(
             use_case=deck_use_case,
             ceiling=ceiling - len(dsai_slides),
         )
-        plan = insert_at_section(
-            vision_result.slides,
-            dsai_slides,
-            vision_result,
-            blank[0].section_order if blank else 0,
+        plan = order_by_headings(
+            insert_at_section(
+                vision_result.slides,
+                dsai_slides,
+                vision_result,
+                blank[0].section_order if blank else 0,
+            )
         )
         gap_ceiling = ceiling
-        vision_instructions = list(vision_result.instructions)
         # Script / validator follow the modules the deck actually carries.
         resolved = ResolvedRecipe(
             ref=resolved.ref,
@@ -748,9 +749,10 @@ def generate_script_phase(
             else []
         )
         gap_ceiling = ceiling - len(dsai_slides)
-        plan = plan_pages(resolved.module_sequence, gap_ceiling)
+        plan = order_by_headings(plan_pages(resolved.module_sequence, gap_ceiling))
 
-    # Stage 3: vision loglines first (when mapped), then heuristic gaps.
+    # Stage 3: generate only for story gaps the existing deck cannot cover. The
+    # sheet's "New slide logline" briefs are design-team work, not generation input.
     plan = plan_with_generated_slides(
         db,
         plan,
@@ -762,7 +764,6 @@ def generate_script_phase(
         recipe_ref=target.recipe_ref,
         modules=modules,
         ceiling=gap_ceiling,
-        vision_candidates=vision_candidates_from_instructions(vision_instructions),
     )
     if not vision_sections:
         plan = insert_before_closing(plan, dsai_slides)

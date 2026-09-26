@@ -14,6 +14,7 @@ from backend.models import DeckTopic
 from backend.pipeline.brand_deck import BrandSlide, PAGE_LABELS
 from backend.pipeline.deck import BRAND_SOURCE, GENERATED_SOURCE
 from backend.pipeline.dsai_deck import DSAI_SOURCE
+from backend.pipeline.vision_deck import heading_for_page
 
 
 class ScriptFlowError(RuntimeError):
@@ -31,8 +32,11 @@ class ScriptTopic:
     vision: str = ""
     module_ids: list[str] = field(default_factory=list)
     recipe_modules: list[str] = field(default_factory=list)
+    section: str = ""
     _source_topic_id: int = field(default=0, repr=False)
     _slide_module_id: str = field(default="", repr=False)
+    _generated: bool = field(default=False, repr=False)
+    _source_ids: list[int] = field(default_factory=list, repr=False)
 
     def to_prompt_dict(self) -> dict[str, Any]:
         if not self.pages:
@@ -52,6 +56,7 @@ class ScriptTopic:
             "vision": self.vision,
             "module_ids": self.module_ids,
             "recipe_modules": self.recipe_modules,
+            "section": self.section,
         }
 
 
@@ -93,6 +98,7 @@ def _generated_topic(slide: Any, topic_id: int, sequence_set: list[str]) -> Scri
         # own beat and never collapses into an adjacent brand topic.
         _source_topic_id=-topic_id,
         _slide_module_id=module_id,
+        _generated=True,
     )
 
 
@@ -164,9 +170,11 @@ def build_script_topics(
     flow: list[ScriptTopic] = []
     current: ScriptTopic | None = None
     pending_evidence_page: int | None = None
+    last_heading = ""
     for slide in plan:
         if _is_generated(slide):
             current = _generated_topic(slide, len(flow) + 1, sequence_set)
+            current.section = last_heading
             flow.append(current)
             pending_evidence_page = getattr(slide, "evidence_page", None)
             continue
@@ -191,21 +199,41 @@ def build_script_topics(
         pending_evidence_page = None
         topic = topic_for(slide)
         source_topic_id = int(topic.id)
-        # Deck-topic rows are intentionally broad visual chapters and can span
-        # several recipe modules (for example Origin may include both M01 and
-        # the M09 Gurugram page). Do not turn those different arguments into
-        # one spoken beat: that lets a later, vivid slide hijack the opening.
-        # Collapse only adjacent pages that share both chapter and module.
+        heading = "" if _is_dsai(slide) else heading_for_page(slide.page)
+        if heading:
+            last_heading = heading
+        # Brand slides under one vision-sheet heading are one spoken beat that
+        # covers every module those slides carry. DS & AI pages have no
+        # heading and collapse only with adjacent pages of the same chapter
+        # and module.
         if (
             current is not None
-            and current._source_topic_id == source_topic_id
-            and current._slide_module_id == slide.module_id
+            and not current._generated
+            and (
+                (heading and current.section == heading)
+                or (
+                    not heading
+                    and not current.section
+                    and current._source_topic_id == source_topic_id
+                    and current._slide_module_id == slide.module_id
+                )
+            )
         ):
             current.pages.append(slide.page)
             current.slide_keys.append(slide.slide_key)
             current.labels.append(slide.label or PAGE_LABELS.get(slide.page, f"Page {slide.page}"))
             if slide.module_id and slide.module_id in sequence_set and slide.module_id not in current.recipe_modules:
                 current.recipe_modules.append(slide.module_id)
+            if source_topic_id not in current._source_ids:
+                current._source_ids.append(source_topic_id)
+                for module_id in _split_ids(getattr(topic, "module_ids", "")):
+                    if module_id not in current.module_ids:
+                        current.module_ids.append(module_id)
+                for attr in ("summary", "vision"):
+                    extra = (getattr(topic, attr, "") or "").strip()
+                    if extra and extra not in getattr(current, attr):
+                        setattr(current, attr, f"{getattr(current, attr)} {extra}".strip())
+            current._slide_module_id = slide.module_id
             continue
         module_ids = _split_ids(getattr(topic, "module_ids", ""))
         # The source DeckTopic may span several modules. Feeding all of them
@@ -217,7 +245,7 @@ def build_script_topics(
         # Once a broad source chapter is split, give each spoken beat a title
         # that describes its actual slides instead of repeating a misleading
         # chapter title such as "Origin" over the Gurugram beat.
-        beat_title = (
+        beat_title = heading or (
             label
             if len(selected_modules_by_topic.get(source_topic_id, set())) > 1
             else source_title or f"Topic {source_topic_id}"
@@ -234,8 +262,10 @@ def build_script_topics(
             vision=(getattr(topic, "vision", "") or "").strip(),
             module_ids=module_ids,
             recipe_modules=recipe_modules,
+            section=heading,
             _source_topic_id=source_topic_id,
             _slide_module_id=slide.module_id,
+            _source_ids=[source_topic_id],
         )
         flow.append(current)
     return flow

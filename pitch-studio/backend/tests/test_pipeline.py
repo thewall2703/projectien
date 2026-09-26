@@ -345,12 +345,16 @@ class ScriptFlowTests(unittest.TestCase):
             SimpleNamespace(id=4, title="Close", pages_json="[92]", summary="Ask", vision="", module_ids="M14"),
         ]
         flow = build_script_topics(plan, topics, ["M01", "M04", "M14"])
-        self.assertEqual([topic.topic_id for topic in flow], [1, 2, 3, 4])
-        self.assertEqual(flow[1].pages, [6, 7])
-        self.assertEqual(flow[1].slide_keys, ["brand:p6", "brand:p7"])
-        self.assertEqual(flow[1].labels, ["Origin", "Story"])
-        self.assertEqual(flow[1].recipe_modules, ["M01"])
-        self.assertEqual(flow[2].recipe_modules, ["M04"])
+        self.assertEqual([topic.topic_id for topic in flow], [1, 2, 3])
+        self.assertEqual(flow[0].pages, [1, 6, 7])
+        self.assertEqual(flow[0].slide_keys, ["brand:p1", "brand:p6", "brand:p7"])
+        self.assertEqual(flow[0].labels, ["Cover", "Origin", "Story"])
+        self.assertEqual(flow[0].title, "The Founding Story")
+        self.assertEqual(flow[0].section, "The Founding Story")
+        self.assertEqual(flow[0].recipe_modules, ["M01"])
+        self.assertIn("Why we exist", flow[0].summary)
+        self.assertEqual(flow[1].recipe_modules, ["M04"])
+        self.assertEqual(flow[2].title, "Vision Ahead")
         # Every beat carries one stable slide key per selected page.
         for topic in flow:
             self.assertEqual(len(topic.slide_keys), len(topic.pages))
@@ -369,9 +373,9 @@ class ScriptFlowTests(unittest.TestCase):
         self.assertEqual([topic.topic_id for topic in flow], [1, 2])
         self.assertEqual([topic.pages for topic in flow], [[6], [51]])
         self.assertEqual([topic.recipe_modules for topic in flow], [["M01"], ["M04"]])
-        self.assertEqual([topic.title for topic in flow], ["Origin", "Proof"])
+        self.assertEqual([topic.title for topic in flow], ["The Founding Story", "Immersions"])
 
-    def test_origin_chapter_does_not_merge_cover_origin_and_gurugram(self):
+    def test_founding_story_heading_is_one_beat_covering_its_modules(self):
         plan = [
             BrandSlide(1, "", "Learn by Doing"),
             BrandSlide(4, "M01", "Medical students learn from doctors"),
@@ -388,15 +392,60 @@ class ScriptFlowTests(unittest.TestCase):
             )
         ]
         flow = build_script_topics(plan, topics, ["M01", "M09"])
-        self.assertEqual([topic.pages for topic in flow], [[1], [4], [8]])
-        self.assertEqual(
-            [topic.title for topic in flow],
-            [
-                "Learn by Doing",
-                "Medical students learn from doctors",
-                "In the heart of Gurugram's business hub",
-            ],
+        self.assertEqual([topic.pages for topic in flow], [[1, 4, 8]])
+        self.assertEqual(flow[0].title, "The Founding Story")
+        self.assertEqual(flow[0].recipe_modules, ["M01", "M09"])
+
+    def test_generated_slide_keeps_own_beat_under_current_heading(self):
+        placeholder = SimpleNamespace(
+            source="generated",
+            page=None,
+            slide_key="generated:x",
+            module_id="M07",
+            recipe_modules=("M07",),
+            title="Placement method",
+            summary="How the numbers are counted",
+            claim="",
+            vision="",
+            evidence_page=None,
         )
+        plan = [
+            BrandSlide(57, "M07", "Outcomes of this approach"),
+            placeholder,
+            BrandSlide(58, "M07", "Placements"),
+        ]
+        topics = [
+            SimpleNamespace(id=13, title="Outcomes", pages_json="[57,58]", summary="", vision="", module_ids="M07"),
+        ]
+        flow = build_script_topics(plan, topics, ["M07"])
+        self.assertEqual([topic.title for topic in flow], ["Outcomes", "Placement method", "Outcomes"])
+        self.assertEqual([topic.section for topic in flow], ["Outcomes", "Outcomes", "Outcomes"])
+
+
+class OrderByHeadingsTests(unittest.TestCase):
+    def test_body_follows_sheet_heading_order_and_tags_sections(self):
+        from backend.pipeline.vision_deck import order_by_headings
+
+        dsai = SimpleNamespace(source="dsai", page=4, slide_key="dsai:p4")
+        plan = [
+            BrandSlide(1, "", "Cover"),
+            BrandSlide(58, "M07", "Placements"),
+            BrandSlide(22, "M08", "Faculty mix"),
+            dsai,
+            BrandSlide(6, "M01", "Born"),
+            BrandSlide(49, "M06", "Funds"),
+            BrandSlide(28, "M08", "Who taught"),
+            BrandSlide(91, "M14", "Close"),
+        ]
+        ordered = order_by_headings(plan)
+        self.assertEqual(
+            [getattr(slide, "page", None) for slide in ordered],
+            [1, 6, 22, 4, 28, 49, 58, 91],
+        )
+        self.assertIs(ordered[3], dsai)
+        self.assertEqual(ordered[2].section, "Inclass")
+        self.assertEqual(ordered[5].section, "Funded Ventures")
+        self.assertEqual(ordered[-1].section, "Vision Ahead")
 
     def test_missing_topic_index_fails(self):
         with self.assertRaises(ScriptFlowError):
