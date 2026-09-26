@@ -21,7 +21,13 @@ from sqlalchemy.orm import Session
 from backend.database import SessionLocal, ensure_schema
 from backend.models import PrathamMove, StyleTranscript, StyleTranscriptPersona, TranscriptChunk
 from backend.pipeline.llm import chat_json
-from backend.pipeline.style_guide import SENTENCE_SPLIT_RE, _split_speaker, parse_webvtt, pratham_lines
+from backend.pipeline.style_guide import (
+    SENTENCE_SPLIT_RE,
+    _split_speaker,
+    is_pratham_mittal_speaker,
+    parse_webvtt,
+    pratham_lines,
+)
 from backend.transcript_search import (
     SOURCE_STYLE,
     EmbedFn,
@@ -215,8 +221,8 @@ def _is_pratham_only(raw_text: str) -> bool:
     for line in parse_webvtt(raw_text or ""):
         speaker, _utterance = _split_speaker(line)
         if speaker:
-            speakers.add(speaker.lower())
-    return bool(speakers) and all("pratham" in speaker for speaker in speakers)
+            speakers.add(speaker)
+    return bool(speakers) and all(is_pratham_mittal_speaker(speaker) for speaker in speakers)
 
 
 def _trim_words(text: str, limit: int) -> str:

@@ -29,7 +29,7 @@ from backend.transcripts import CURATION_SYSTEM
 PRATHAM_VTT = """WEBVTT
 
 00:00:01.000 --> 00:00:20.000
-Pratham Mittal: Think of this campus like a gym. Paying the fee does not make you fit. Showing up every day does. A renter never fixes the leaking tap. An owner fixes it the same night. Be an owner here. The buffet is laid out. Now you have to get up. This is not playboy school. That is not this program.
+Pratham Mittal: Think of this campus like a gym. Paying the fee does not make you fit. Showing up every day does. A renter never fixes the leaking tap. An owner fixes it the same night. Be an owner here. The buffet is laid out. Now you have to get up. This is not playboy school. That is not this program. Builders come here to ship products and companies. Faculty practitioners teach every week on campus. Students own outcomes and they own the culture. Discipline beats credentials when the work gets hard. You have to show up for the hard conversations. The room only works if everyone brings energy. This is a place for people who want to build. Stay in India and build something that matters. The programme is designed around live work and real stakes. Mentors will push you when you coast. Peers will call you out when you hide. That is the point of this campus model. Effort compounds when you treat the place like an owner. Guests and renters leave the same problems for someone else. Owners fix the problem before it spreads. That is how culture stays sharp over a full year. You will not get fit by reading about the gym. You will get fit by lifting every day with intent. That is the deal we make with every cohort that joins.
 """
 
 
@@ -507,7 +507,7 @@ class PromptAndPlanTests(unittest.TestCase):
         with mock.patch.object(settings, "pratham_passages_per_topic", 9):
             key2 = compute_cache_key(axes, "X2", "note", "", db)
         self.assertNotEqual(key1, key2)
-        self.assertEqual(SCRIPT_PIPELINE_VERSION, "6")
+        self.assertEqual(SCRIPT_PIPELINE_VERSION, "7")
 
 
 class RunnerWiringTests(unittest.TestCase):
@@ -630,6 +630,9 @@ class RunnerWiringTests(unittest.TestCase):
         ), mock.patch(
             "backend.pratham_passages.select_passages_for_topics", return_value=selection
         ), mock.patch(
+            "backend.transcript_stories.select_stories_for_topics",
+            return_value={"topics": [], "fed_words": 0},
+        ), mock.patch(
             "backend.pratham_playbook.select_reference",
             return_value={"moves": [{"row": SimpleNamespace(
                 kind="analogy", label="Gym", personal=False, use_when="x",
@@ -660,6 +663,7 @@ class RunnerWiringTests(unittest.TestCase):
         self.assertEqual(trace["pratham"]["fed_words"], 10)
         self.assertIn("reuse_rate", trace["pratham"])
         self.assertIn("link_rate", trace["pratham"])
+        self.assertEqual(trace["pratham"]["story_ids"], [])
 
     def test_selection_exception_does_not_fail_run(self):
         from backend.pipeline.brand_deck import BrandSlide
@@ -726,6 +730,9 @@ class RunnerWiringTests(unittest.TestCase):
             "backend.pratham_passages.select_passages_for_topics",
             side_effect=RuntimeError("boom"),
         ), mock.patch(
+            "backend.transcript_stories.select_stories_for_topics",
+            return_value={"topics": [], "fed_words": 0},
+        ), mock.patch(
             "backend.pipeline.runner.chat_json", return_value=script
         ), mock.patch(
             "backend.pipeline.runner.ScriptPayload.model_validate", return_value=None
@@ -742,6 +749,127 @@ class RunnerWiringTests(unittest.TestCase):
         self.assertIsNotNone(result)
         trace = json.loads(target.quality_trace_json)
         self.assertIn("boom", trace["pratham"]["error"])
+
+
+class StrictMatcherAndMixedIndexTests(unittest.TestCase):
+    def setUp(self) -> None:
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        self.db = sessionmaker(bind=engine, autoflush=False)()
+        self.db.add(Module(id="M05", name="Builders", job="prove", core_content="builders", sort_order=5))
+        self.db.commit()
+
+    def tearDown(self) -> None:
+        self.db.close()
+
+    def test_is_pratham_mittal_speaker(self):
+        from backend.pipeline.style_guide import is_pratham_mittal_speaker
+
+        self.assertTrue(is_pratham_mittal_speaker("Pratham Mittal"))
+        self.assertTrue(is_pratham_mittal_speaker("pratham mittal"))
+        self.assertTrue(is_pratham_mittal_speaker("Pratham Mittal (Host)"))
+        self.assertFalse(is_pratham_mittal_speaker("Pratham Yadav"))
+        self.assertFalse(is_pratham_mittal_speaker("Pratham"))
+        self.assertFalse(is_pratham_mittal_speaker("Host"))
+
+    def test_mixed_indexes_only_pratham_mittal_runs(self):
+        from backend.pipeline.style_guide import pratham_speech_runs, parse_webvtt
+
+        mittal_block = (
+            "Think of this campus like a gym. Paying the fee does not make you fit. "
+            "Showing up every day does. A renter never fixes the leaking tap. "
+            "An owner fixes it the same night. Be an owner here. The buffet is laid out. "
+            "Now you have to get up. This is not playboy school. That is not this program. "
+            "Builders come here to ship products and companies. Faculty practitioners teach "
+            "every week on campus. Students own outcomes and they own the culture. "
+            "Discipline beats credentials when the work gets hard. You have to show up. "
+            "The room only works if everyone brings energy. This is a place for builders. "
+            "Stay in India and build something that matters. Live work and real stakes. "
+            "Mentors will push you when you coast. Peers will call you out when you hide. "
+            "That is the point of this campus model. Effort compounds for owners. "
+            "Guests leave problems for someone else. Owners fix problems before they spread. "
+            "Culture stays sharp over a full year. You will not get fit by reading. "
+            "You get fit by lifting every day with intent. That is the deal with every cohort."
+        )
+        later = (
+            "And then the cohort shipped three ventures in one term. That is the bar. "
+            "We keep the same standard for every incoming batch that joins the programme here."
+        )
+        mixed = f"""WEBVTT
+
+00:00:01.000 --> 00:00:40.000
+Pratham Mittal: {mittal_block}
+
+00:00:40.000 --> 00:00:50.000
+Pratham Yadav: I am an attendee and my question is about fees and scholarships for next year.
+
+00:00:50.000 --> 00:01:00.000
+Host Speaker: Welcome everyone to the Masters' Union PGP webinar tonight.
+
+00:01:00.000 --> 00:01:30.000
+Pratham Mittal: {later}
+"""
+        lines = parse_webvtt(mixed)
+        runs = pratham_speech_runs(lines, min_merge_words=5)
+        self.assertEqual(len(runs), 2)
+        self.assertNotIn("attendee", "\n".join(runs).lower())
+        self.assertNotIn("Welcome everyone", "\n".join(runs))
+
+        row = StyleTranscript(name="Mixed", raw_text=mixed, text_hash="mixed", status="processed")
+        self.db.add(row)
+        self.db.commit()
+
+        def tag_ok(_text: str):
+            return {
+                "modules": [{"id": "M05", "strength": "strong"}],
+                "audience": "students",
+                "summary": "gym",
+                "usable": True,
+            }
+
+        with mock.patch("backend.generation_cache.bump_content_version"):
+            result = index_passages(self.db, row.id, tag=tag_ok, embed_fn=fake_embed, workers=2)
+        self.assertGreaterEqual(result["passages"], 1)
+        texts = " ".join(p.text for p in self.db.query(PrathamPassage).all())
+        self.assertIn("campus like a gym", texts)
+        self.assertIn("three ventures", texts)
+        self.assertNotIn("attendee", texts.lower())
+        self.assertNotIn("Welcome everyone", texts)
+
+    def test_uploaded_status_pratham_only_is_selected(self):
+        uploaded = StyleTranscript(
+            name="Uploaded Pratham",
+            raw_text=PRATHAM_VTT,
+            text_hash="up",
+            status="uploaded",
+        )
+        self.db.add(uploaded)
+        self.db.commit()
+        self.db.add(
+            PrathamPassage(
+                style_transcript_id=uploaded.id,
+                passage_index=0,
+                text="Gym gym gym discipline every morning on campus.",
+                word_count=8,
+                module_ids="M05",
+                module_strengths_json=json.dumps({"M05": "strong"}),
+                usable=True,
+                source_name=uploaded.name,
+                embedding_json=vector(3, 0, 0, 0, 0),
+                text_hash="up1",
+            )
+        )
+        self.db.commit()
+        selection = select_passages_for_topics(
+            self.db,
+            topics=[ScriptTopic(topic_id=1, title="Builders", pages=[1], module_ids=["M05"])],
+            persona_label="Nobody",
+            embed_fn=fake_embed,
+            per_topic=1,
+            word_cap=500,
+        )
+        self.assertEqual(len(selection["topics"]), 1)
+        self.assertEqual(selection["topics"][0]["passages"][0]["source_name"], uploaded.name)
 
 
 if __name__ == "__main__":

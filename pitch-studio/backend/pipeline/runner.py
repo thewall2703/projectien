@@ -216,12 +216,14 @@ def _pratham_reference(
     modules: list[Module],
     context_note: str,
 ) -> tuple[str, dict[str, Any]]:
-    """Beat passages + playbook moves matched to this script. Never fails the run."""
+    """Beat passages + stories + playbook moves matched to this script. Never fails the run."""
     empty_meta: dict[str, Any] = {
         "passage_ids": [],
         "fed_words": 0,
         "fallback_topic_ids": [],
         "empty_topic_ids": [],
+        "story_ids": [],
+        "story_words": 0,
         "moves": 0,
         "error": "",
     }
@@ -237,6 +239,7 @@ def _pratham_reference(
     try:
         from backend.pratham_passages import format_passages_for_prompt, select_passages_for_topics
         from backend.pratham_playbook import PASSAGE_LIMIT, format_reference, select_reference
+        from backend.transcript_stories import format_stories_for_prompt, select_stories_for_topics
 
         beat_block = ""
         selection: dict[str, Any] = {
@@ -259,6 +262,28 @@ def _pratham_reference(
             for passage in topic.get("passages") or []
             if passage.get("id") is not None
         ]
+
+        story_block = ""
+        story_selection: dict[str, Any] = {"topics": [], "fed_words": 0}
+        if settings.transcript_stories_enabled and topic_flow:
+            try:
+                story_selection = select_stories_for_topics(db, topics=topic_flow)
+                story_block = format_stories_for_prompt(story_selection)
+            except Exception:  # noqa: BLE001
+                logger.exception("Transcript story selection failed for %s", persona_label)
+                try:
+                    db.rollback()
+                except Exception:  # noqa: BLE001
+                    pass
+                story_selection = {"topics": [], "fed_words": 0}
+                story_block = ""
+        story_ids = [
+            int(story["id"])
+            for topic in story_selection.get("topics") or []
+            for story in topic.get("stories") or []
+            if story.get("id") is not None
+        ]
+
         # Avoid feeding the same speech twice when beat passages are present.
         selection_playbook = select_reference(
             db,
@@ -268,12 +293,14 @@ def _pratham_reference(
             passage_limit=0 if beat_block else PASSAGE_LIMIT,
         )
         playbook_block = format_reference(selection_playbook)
-        blocks = [block for block in (beat_block, playbook_block) if block]
+        blocks = [block for block in (beat_block, story_block, playbook_block) if block]
         meta = {
             "passage_ids": passage_ids,
             "fed_words": int(selection.get("fed_words") or 0),
             "fallback_topic_ids": list(selection.get("fallback_topic_ids") or []),
             "empty_topic_ids": list(selection.get("empty_topic_ids") or []),
+            "story_ids": story_ids,
+            "story_words": int(story_selection.get("fed_words") or 0),
             "moves": len(selection_playbook.get("moves") or []),
             "error": "",
         }

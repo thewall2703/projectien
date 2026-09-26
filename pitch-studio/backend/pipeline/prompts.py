@@ -18,7 +18,10 @@ PRATHAM_REFERENCE_RULES = (
     "story shape, opener, or objection handling. Adapt the move; do not paste the whole excerpt.\n"
     "- Same identity rules as FOUNDER VOICE: personal material is told in third person with attribution.\n"
     "- These are raw transcripts, not verified facts. State a number or claim from them only if LOCKED or "
-    "REPORT EVIDENCE supports it; otherwise keep the move and drop the figure.\n\n"
+    "REPORT EVIDENCE supports it; otherwise keep the move and drop the figure.\n"
+    "- REAL STORIES & FACTS from other sessions may be retold in the speaker's own words as concrete "
+    "examples, attributed naturally (e.g. \"one student in the 2025 cohort...\"), never as Pratham's "
+    "own speech; state a number from them only when it matches a LOCKED FACT.\n\n"
 )
 
 UNIVERSITY_STATUS_LINE = (

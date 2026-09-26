@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     pratham_passages_enabled: bool = True
     pratham_passages_per_topic: int = 2
     pratham_passage_word_cap: int = 3500
+    transcript_stories_enabled: bool = True
+    transcript_stories_per_topic: int = 2
+    transcript_story_word_cap: int = 1500
     passage_tagger_model: str = ""
     admin_email: str = "admin@example.com"
     admin_password: str = "changeme"

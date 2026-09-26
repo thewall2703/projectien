@@ -18,9 +18,13 @@ from backend.transcripts import chunk_sentences, curate_chunk, is_verbatim, quot
 
 TRANSCRIPT_CHAR_BUDGET = 60_000
 TIMESTAMP_RE = re.compile(r"-->")
+CUE_TIME_RE = re.compile(
+    r"^(\d{2}):(\d{2}):(\d{2})[.,](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[.,](\d{3})"
+)
 CUE_NUMBER_RE = re.compile(r"^\d+$")
 SPEAKER_RE = re.compile(r"^([^:]{1,80}):\s*(.*)$")
 SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+PRATHAM_RUN_MERGE_WORDS = 40
 
 DISTILL_SYSTEM = (
     "You are distilling how Pratham Mittal (founder, Masters' Union) structures and "
@@ -74,6 +78,67 @@ def _split_speaker(line: str) -> tuple[str | None, str]:
     if not speaker or not utterance:
         return None, stripped
     return speaker, utterance
+
+
+def is_pratham_mittal_speaker(label: str) -> bool:
+    """True only for the founder (needs both 'pratham' and 'mittal')."""
+    tokens = {part for part in re.split(r"[^a-z0-9]+", (label or "").lower()) if part}
+    return "pratham" in tokens and "mittal" in tokens
+
+
+def _cue_seconds(groups: tuple[str, ...]) -> float:
+    hours, minutes, seconds, millis = (int(part) for part in groups)
+    return hours * 3600 + minutes * 60 + seconds + millis / 1000.0
+
+
+def parse_webvtt_cues(text: str) -> list[dict[str, Any]]:
+    """Parse VTT/plain text into cues with optional times and speaker labels."""
+    raw = text or ""
+    probe = raw.lstrip("\ufeff \t\r\n")
+    if not probe.upper().startswith("WEBVTT"):
+        return [
+            {"start_sec": None, "end_sec": None, "speaker": None, "text": line.strip()}
+            for line in raw.splitlines()
+            if line.strip()
+        ]
+
+    cues: list[dict[str, Any]] = []
+    start_sec: float | None = None
+    end_sec: float | None = None
+    for line in probe.splitlines()[1:]:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if CUE_NUMBER_RE.fullmatch(stripped):
+            continue
+        match = CUE_TIME_RE.match(stripped)
+        if match:
+            start_sec = _cue_seconds(match.groups()[:4])
+            end_sec = _cue_seconds(match.groups()[4:])
+            continue
+        if TIMESTAMP_RE.search(stripped):
+            start_sec = None
+            end_sec = None
+            continue
+        upper = stripped.upper()
+        if upper.startswith("WEBVTT") or upper.startswith("NOTE") or upper.startswith("STYLE") or upper.startswith(
+            "REGION"
+        ):
+            continue
+        speaker, utterance = _split_speaker(stripped)
+        if not utterance:
+            continue
+        cues.append(
+            {
+                "start_sec": start_sec,
+                "end_sec": end_sec,
+                "speaker": speaker,
+                "text": utterance,
+            }
+        )
+        start_sec = None
+        end_sec = None
+    return cues
 
 
 def parse_webvtt(text: str) -> list[str]:
@@ -131,9 +196,39 @@ def pratham_lines(lines: list[str]) -> str:
     utterances: list[str] = []
     for line in lines:
         speaker, utterance = _split_speaker(line)
-        if speaker and "pratham" in speaker.lower() and utterance:
+        if speaker and is_pratham_mittal_speaker(speaker) and utterance:
             utterances.append(utterance)
     return "\n".join(utterances)
+
+
+def pratham_speech_runs(
+    lines: list[str],
+    *,
+    min_merge_words: int = PRATHAM_RUN_MERGE_WORDS,
+) -> list[str]:
+    """Contiguous Pratham Mittal runs; tiny runs may merge with a neighbour."""
+    runs: list[str] = []
+    current: list[str] = []
+    for line in lines:
+        speaker, utterance = _split_speaker(line)
+        if speaker and is_pratham_mittal_speaker(speaker) and utterance:
+            current.append(utterance)
+            continue
+        if current:
+            runs.append("\n".join(current))
+            current = []
+    if current:
+        runs.append("\n".join(current))
+    if not runs:
+        return []
+
+    merged: list[str] = [runs[0]]
+    for run in runs[1:]:
+        if len(merged[-1].split()) < min_merge_words or len(run.split()) < min_merge_words:
+            merged[-1] = f"{merged[-1]}\n{run}"
+        else:
+            merged.append(run)
+    return merged
 
 
 def normalize_persona_labels(labels: list[str] | None) -> list[str]:

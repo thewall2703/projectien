@@ -1,6 +1,7 @@
 """Pratham passages: long contiguous speech tagged by module, retrieved per beat.
 
-index   -> split Pratham-only style transcripts into passages, tag modules, embed
+index   -> split Pratham Mittal speech (solo or mixed transcripts) into passages,
+          tag modules, embed
 select  -> for each script topic, pick 1–2 passages about that beat's modules
           (persona is a ranking boost, never a gate)
 """
@@ -21,9 +22,9 @@ from backend.config import settings
 from backend.database import SessionLocal, ensure_schema
 from backend.models import FounderQuote, Module, PrathamPassage, StyleTranscript
 from backend.pipeline.llm import chat_json
-from backend.pipeline.style_guide import SENTENCE_SPLIT_RE
+from backend.pipeline.style_guide import SENTENCE_SPLIT_RE, parse_webvtt, pratham_lines, pratham_speech_runs
 from backend.pipeline.validator import split_spoken_sentences
-from backend.pratham_playbook import _is_pratham_only, persona_transcript_ids, pratham_text
+from backend.pratham_playbook import persona_transcript_ids
 from backend.transcript_search import (
     EmbedFn,
     cosine_similarity,
@@ -195,14 +196,21 @@ def index_passages(
     embed_fn: EmbedFn | None = None,
     workers: int = 6,
 ) -> dict[str, Any]:
-    """Replace passages for one processed Pratham-only style transcript."""
+    """Replace passages for one style transcript that contains Pratham Mittal speech.
+
+    Packs sentences within contiguous Pratham runs (other speakers split runs).
+    Below MIN_WORDS of Pratham text: return zeros and leave existing rows alone.
+    """
     transcript = db.get(StyleTranscript, transcript_id)
     if transcript is None:
         raise ValueError("Style transcript not found")
-    if not _is_pratham_only(transcript.raw_text or ""):
+    lines = parse_webvtt(transcript.raw_text or "")
+    text = pratham_lines(lines)
+    if len(text.split()) < MIN_WORDS:
         return {"passages": 0, "usable": 0, "by_module": {}}
-    text = pratham_text(transcript.raw_text or "")
-    bodies = split_passages(text) if text.strip() else []
+    bodies: list[str] = []
+    for run in pratham_speech_runs(lines):
+        bodies.extend(split_passages(run))
     catalog = _catalog_block(db)
     tag_fn = tag or (lambda body: _default_tag(body, catalog))
 
@@ -367,24 +375,11 @@ def select_passages_for_topics(
         return {"topics": [], "fed_words": 0, "fallback_topic_ids": [], "empty_topic_ids": []}
 
     tagged_ids = set(persona_transcript_ids(db, persona_label))
-    transcripts = (
-        db.query(StyleTranscript)
-        .filter(StyleTranscript.status == "processed")
-        .all()
-    )
-    pratham_only_ids = {
-        row.id for row in transcripts if _is_pratham_only(row.raw_text or "")
-    }
-    if not pratham_only_ids:
-        return empty
 
     candidates: list[dict[str, Any]] = []
     for row in (
         db.query(PrathamPassage)
-        .filter(
-            PrathamPassage.style_transcript_id.in_(pratham_only_ids),
-            PrathamPassage.usable.is_(True),
-        )
+        .filter(PrathamPassage.usable.is_(True))
         .all()
     ):
         vector = parse_embedding(row.embedding_json)
@@ -649,7 +644,10 @@ def retag_quotes(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
-    index_p = sub.add_parser("index", help="index passages for processed Pratham-only style transcripts")
+    index_p = sub.add_parser(
+        "index",
+        help="index Pratham Mittal passages from any style transcript (any status)",
+    )
     index_p.add_argument("--transcript-id", type=int, default=0)
     index_p.add_argument("--force", action="store_true")
     sub.add_parser("coverage", help="per-module strong/passing passage counts")
@@ -698,11 +696,12 @@ def main(argv: list[str] | None = None) -> int:
             result = retag_quotes(db, dry_run=args.dry_run)
             print(result)
             return 0
-        query = db.query(StyleTranscript).filter(StyleTranscript.status == "processed")
+        query = db.query(StyleTranscript)
         if args.transcript_id:
             query = query.filter(StyleTranscript.id == args.transcript_id)
         for row in query.order_by(StyleTranscript.id.asc()).all():
-            if not args.transcript_id and not _is_pratham_only(row.raw_text or ""):
+            lines = parse_webvtt(row.raw_text or "")
+            if not args.transcript_id and len(pratham_lines(lines).split()) < MIN_WORDS:
                 continue
             has_rows = (
                 db.query(PrathamPassage)

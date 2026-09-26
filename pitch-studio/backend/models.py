@@ -443,6 +443,36 @@ class PrathamPassage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class TranscriptStory(Base):
+    """A concrete story or fact extracted from non-Pratham speech in a style transcript."""
+
+    __tablename__ = "transcript_stories"
+    __table_args__ = (
+        UniqueConstraint("style_transcript_id", "story_index", name="uq_transcript_story_index"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    style_transcript_id: Mapped[int] = mapped_column(Integer, index=True)
+    story_index: Mapped[int] = mapped_column(Integer, default=0)
+    kind: Mapped[str] = mapped_column(String(16), default="story")
+    title: Mapped[str] = mapped_column(String(200), default="")
+    text: Mapped[str] = mapped_column(Text, default="")
+    excerpt: Mapped[str] = mapped_column(Text, default="")
+    speaker: Mapped[str] = mapped_column(String(200), default="")
+    start_sec: Mapped[float | None] = mapped_column(Float, nullable=True)
+    end_sec: Mapped[float | None] = mapped_column(Float, nullable=True)
+    module_ids: Mapped[str] = mapped_column(String(255), default="")
+    module_strengths_json: Mapped[str] = mapped_column(Text, default="{}")
+    entities: Mapped[str] = mapped_column(String(500), default="")
+    figures: Mapped[str] = mapped_column(String(500), default="")
+    usable: Mapped[bool] = mapped_column(Boolean, default=True)
+    source_name: Mapped[str] = mapped_column(String(300), default="")
+    source_url: Mapped[str] = mapped_column(String(1000), default="")
+    embedding_json: Mapped[str] = mapped_column(Text, default="")
+    text_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class MediaIndex(Base):
     __tablename__ = "media_index"
 
