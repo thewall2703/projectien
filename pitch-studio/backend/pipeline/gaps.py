@@ -38,7 +38,9 @@ Two invariants keep the deck safe:
   ceiling a gap fill replaces the weakest planned body page, and unused evidence
   is skipped rather than pushing past the limit. The cover and closing are never
   touched, and a page that is the sole carrier of a recipe module is never
-  removed or moved (that would just open a new gap).
+  removed or moved (that would just open a new gap). Objection / Q&A gaps are
+  always planted immediately before the closing slide so they stay optional
+  end-of-deck material the salesperson can take or skip.
 * **Nothing changes when there is no true gap.** With no surviving gap — or at
   T0, whose generated budget is zero — the plan is returned exactly as planned.
 
@@ -888,6 +890,32 @@ def _insert_index_for_modules(
     return closing_index
 
 
+# Objection / Q&A gaps are optional end-of-deck slides. The salesperson may
+# walk them after the story, or skip them; they must never interrupt the spine.
+_QA_GAP_KINDS = frozenset({"objection"})
+
+
+def _insert_index_for_gap(
+    plan: Sequence[Any],
+    modules: tuple[str, ...],
+    kind: str = "",
+) -> int:
+    """Insertion index for a gap: Q&A always before closing, else by module."""
+    if kind in _QA_GAP_KINDS:
+        return max(len(plan) - 1, 0)
+    return _insert_index_for_modules(plan, modules)
+
+
+def _qa_replace_index(plan: Sequence[Any], protected_keys: set[str]) -> int | None:
+    """At the ceiling, displace the last unprotected body slide so Q&A stays last."""
+    closing_index = max(len(plan) - 1, 0)
+    for index in range(closing_index - 1, 0, -1):
+        key = getattr(plan[index], "slide_key", "") or ""
+        if key and key not in protected_keys:
+            return index
+    return None
+
+
 def _brand_for_page(page: int) -> BrandSlide:
     return BrandSlide(page, PAGE_MODULES.get(page, ""), PAGE_LABELS.get(page, f"Page {page}"))
 
@@ -901,13 +929,19 @@ def _place_real_page(
     used_pages: set[int],
     swapped_pages: list[int],
     ceiling: int,
+    *,
+    kind: str = "",
 ) -> bool:
     """Insert or replace ``page`` into the plan. Returns False if nowhere to put it."""
     real = _brand_for_page(page)
     if len(result_plan) < ceiling:
-        result_plan.insert(_insert_index_for_modules(result_plan, modules), real)
+        result_plan.insert(_insert_index_for_gap(result_plan, modules, kind), real)
     else:
-        index = weakest_body_index(result_plan, sequence_set, protected_keys)
+        index = (
+            _qa_replace_index(result_plan, protected_keys)
+            if kind in _QA_GAP_KINDS
+            else weakest_body_index(result_plan, sequence_set, protected_keys)
+        )
         if index is None:
             return False
         result_plan[index] = real
@@ -1329,6 +1363,7 @@ def build_gap_plan(
                 used_pages,
                 swapped_pages,
                 deck_ceiling,
+                kind=candidate.kind,
             ):
                 continue
             # Nowhere to put the real page — fall through to generation.
@@ -1352,7 +1387,9 @@ def build_gap_plan(
         evidence_in_plan = evidence is not None and evidence in used_pages
 
         if len(result_plan) < deck_ceiling:
-            insert_at = _insert_index_for_modules(result_plan, candidate.modules)
+            insert_at = _insert_index_for_gap(
+                result_plan, candidate.modules, candidate.kind
+            )
             moved: BrandSlide | None = None
             if evidence_in_plan and evidence is not None:
                 old_idx = _page_index(result_plan, evidence)
@@ -1389,7 +1426,12 @@ def build_gap_plan(
             continue
 
         # At the ceiling: replace the weakest body page; skip unused evidence.
-        index = weakest_body_index(result_plan, sequence_set, protected_keys)
+        # Q&A replaces the last body slide so optional end slides stay at the end.
+        index = (
+            _qa_replace_index(result_plan, protected_keys)
+            if candidate.kind in _QA_GAP_KINDS
+            else weakest_body_index(result_plan, sequence_set, protected_keys)
+        )
         if index is None:
             break
         displaced = result_plan[index]

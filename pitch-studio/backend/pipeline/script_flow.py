@@ -174,7 +174,12 @@ def build_script_topics(
     for slide in plan:
         if _is_generated(slide):
             current = _generated_topic(slide, len(flow) + 1, sequence_set)
-            current.section = last_heading
+            # Objection / Q&A slides live at the end of the deck as optional
+            # beats — keep them under a Q&A section, not the prior story heading.
+            if (getattr(slide, "gap_kind", "") or "") == "objection":
+                current.section = "Q&A"
+            else:
+                current.section = last_heading
             flow.append(current)
             pending_evidence_page = getattr(slide, "evidence_page", None)
             continue
