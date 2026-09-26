@@ -31,6 +31,26 @@ DANGLING_END_WORDS = frozenset(
 )
 SENTENCE_END_RE = re.compile(r"[.!?…][\"'”’)\]]*$")
 MIN_SECTION_WORDS = 12
+# Written-English markers in text meant to be said aloud. Thresholds stay loose because a
+# hard violation that survives the correction rewrites fails the generation.
+SIGNPOST_RE = re.compile(
+    r"\bthe next question is\b"
+    r"|\bnow let'?s\b"
+    r"|\bnext,? let'?s\b"
+    r"|\blet'?s (?:now )?(?:zoom|turn|move on|look at|talk about|dive|unpack)\b"
+    r"|\bonce (?:that|this|the)\b[^.?!]{0,60}\b(?:is|are) (?:clear|established|in place)\b"
+    r"|\bwith (?:that|this|the)\b[^.?!]{0,50}\b(?:clear|named|in place|established|covered)\b,"
+    r"|\b(?:that|this|which) brings us to\b"
+    r"|\bmoving on\b"
+    r"|\bhaving (?:seen|covered|established)\b"
+    r"|\bso here'?s that\b"
+    r"|\bnow that we'?ve (?:seen|covered|looked)\b",
+    re.IGNORECASE,
+)
+MAX_SIGNPOSTS = 2
+SLASH_RE = re.compile(r"\s/\s|(?<=[A-Za-z%])/(?=[A-Za-z0-9])")
+LABEL_COLON_RE = re.compile(r"(?<!\d):(?!\d)")
+MAX_LABEL_COLONS = 1
 
 
 def _words(text: str) -> list[str]:
@@ -317,6 +337,42 @@ def sentence_integrity_violations(script: dict[str, Any], word_budget: int) -> l
     return violations
 
 
+def spoken_english_violations(script: dict[str, Any]) -> list[str]:
+    """Flag written-English habits a listener hears as a narrated document."""
+    violations: list[str] = []
+    texts = [
+        (f"Section {number}", (section.get("text") or "").strip())
+        for number, section in enumerate(script.get("sections") or [], start=1)
+    ] + [("The final ask", (script.get("cta") or "").strip())]
+    signposts: list[str] = []
+    colons: list[str] = []
+    for label, text in texts:
+        if not text:
+            continue
+        for sentence in split_spoken_sentences(re.sub(r"\s+", " ", text)):
+            if SLASH_RE.search(sentence):
+                violations.append(
+                    f"{label} reads out a slash: \"{_quote(sentence)}\". Say it as a spoken sentence"
+                )
+            if SIGNPOST_RE.search(sentence):
+                signposts.append(f"{label}: \"{_quote(sentence)}\"")
+            if LABEL_COLON_RE.search(sentence):
+                colons.append(f"{label}: \"{_quote(sentence)}\"")
+    if len(signposts) > MAX_SIGNPOSTS:
+        violations.append(
+            f"The script announces its own transitions {len(signposts)} times ("
+            + "; ".join(signposts[:6])
+            + "). Cut these and start each section on its point, the way people talk"
+        )
+    if len(colons) > MAX_LABEL_COLONS:
+        violations.append(
+            "Colons read like slide labels, not speech ("
+            + "; ".join(colons[:4])
+            + "). Say the connection in words"
+        )
+    return violations
+
+
 def validate_script(
     script: dict[str, Any],
     facts: list[LockedFact],
@@ -372,6 +428,7 @@ def validate_script(
     if not (script.get("cta") or "").strip():
         violations.append("Script is missing one final ask")
     violations.extend(sentence_integrity_violations(script, word_budget))
+    violations.extend(spoken_english_violations(script))
 
     full = script_text(script)
     word_count = count_script_words(script)

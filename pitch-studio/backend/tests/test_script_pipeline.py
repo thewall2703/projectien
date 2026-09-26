@@ -115,6 +115,28 @@ class FlowCheckUnitTests(unittest.TestCase):
         self.assertIn("152 immersions in 7 and 18", notes[0])
         self.assertEqual(sum(note.startswith("Repetition") for note in notes), 1)
 
+    def test_written_english_fails_flow_and_reaches_the_writer(self):
+        result = normalize_flow_result(
+            {
+                "joins": [{"from_topic": 1, "to_topic": 2, "score": 4}],
+                "arc": {"score": 4},
+                "naturalness": {"score": 4},
+                "spoken": {"score": 2, "issue": "essay read aloud"},
+                "written_lines": [
+                    {"topic_id": 5, "quote": "External judgment matters: 6 startups pitched.", "spoken_fix": "Six of our startups pitched on Shark Tank."}
+                ],
+                "signposting": ["the next question is what learning produces"],
+                "hedging": ["A pitch isn't a successful company"],
+                "name_drops": ["Rhea and Ayush building Lexi's"],
+                "grammar": [{"topic_id": n, "quote": f"We is {n}", "fix": "We are"} for n in range(12)],
+            }
+        )
+        self.assertFalse(flow_passed(result))
+        notes = flow_notes(result, limit=10)
+        joined = "\n".join(notes)
+        for expected in ("written English", "Announced transitions", "Reflexive caveats", "Names with no story", "say it like"):
+            self.assertIn(expected, joined)
+
     def test_flow_passed_thresholds(self):
         good = normalize_flow_result(
             {
@@ -122,6 +144,7 @@ class FlowCheckUnitTests(unittest.TestCase):
                 "sections": [{"topic_id": 1, "story_shape": 4}],
                 "arc": {"score": 4},
                 "naturalness": {"score": 4},
+                "spoken": {"score": 4},
                 "repetition": [],
                 "grammar": [],
             }
@@ -330,6 +353,7 @@ class QualityLoopTests(unittest.TestCase):
             "sections": [{"topic_id": 1, "story_shape": 4, "quote": "", "issue": ""}],
             "arc": {"score": 4, "issue": ""},
             "naturalness": {"score": 4, "issue": ""},
+            "spoken": {"score": 4, "issue": ""},
             "repetition": [],
             "grammar": [],
         }
@@ -681,7 +705,7 @@ class CacheKeyPipelineTests(unittest.TestCase):
         with mock.patch.object(settings, "script_writer_model", "openai/other-model"):
             key2 = compute_cache_key(axes, "X2", "note", "", db)
         self.assertNotEqual(key1, key2)
-        self.assertEqual(SCRIPT_PIPELINE_VERSION, "2")
+        self.assertEqual(SCRIPT_PIPELINE_VERSION, "3")
 
 
 if __name__ == "__main__":

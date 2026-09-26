@@ -14,12 +14,28 @@ FLOW_SYSTEM = (
     "- story_shape: setup → turn → point vs a list of claims. Score 1-5.\n"
     "- arc: does the talk build toward the ask, following the plan's throughline? Score 1-5.\n"
     "- naturalness: would a person say this out loud in this order? Score 1-5.\n"
+    "- spoken: is this SPOKEN English or WRITTEN English read aloud? Score 1-5. 5 = sounds like a person "
+    "talking across a table; 3 = a well-written essay being read out; 1 = slide copy. Written English "
+    "includes long clause-stacked sentences, noun phrases instead of verbs, 'X: Y' label lines, "
+    "formal connectives, and phrasing nobody says in conversation.\n"
+    "- written_lines: up to 8 of the most written-sounding sentences, each with how a person would "
+    "actually say it (spoken_fix).\n"
+    "- signposting: sentences that announce the talk's own structure ('the next question is', "
+    "'now let's look at', 'once that is clear', 'with X in place'). A good join does not announce itself.\n"
+    "- hedging: reflexive caveats that undercut a point ('a pitch isn't a company, but…', "
+    "'X alone doesn't prove…'). Only flag caveats that are not needed for accuracy.\n"
+    "- name_drops: students, alumni or student ventures offered as an example with no story (who they "
+    "are, what they did, what happened). Do not flag recruiter lists, membership bodies, board members, "
+    "faculty names, or Pratham Mittal.\n"
     "- repetition: the same point or phrase made twice.\n"
     "- grammar: broken or garbled sentences (quote + fix).\n"
     "Return strict JSON:\n"
     '{"joins":[{"from_topic":1,"to_topic":2,"score":1,"quote":"","issue":"","suggested_bridge":""}],'
     '"sections":[{"topic_id":1,"story_shape":1,"quote":"","issue":""}],'
     '"arc":{"score":1,"issue":""},"naturalness":{"score":1,"issue":""},'
+    '"spoken":{"score":1,"issue":""},'
+    '"written_lines":[{"topic_id":1,"quote":"","spoken_fix":""}],'
+    '"signposting":["..."],"hedging":["..."],"name_drops":["..."],'
     '"repetition":["..."],"grammar":[{"topic_id":1,"quote":"","fix":""}]}'
 )
 
@@ -85,11 +101,25 @@ def normalize_flow_result(raw: Any) -> dict[str, Any]:
         )
     arc_raw = raw.get("arc") if isinstance(raw.get("arc"), dict) else {}
     natural_raw = raw.get("naturalness") if isinstance(raw.get("naturalness"), dict) else {}
-    repetition: list[str] = []
-    for item in raw.get("repetition") or []:
-        text = _clamp_str(item)
-        if text:
-            repetition.append(text)
+    spoken_raw = raw.get("spoken") if isinstance(raw.get("spoken"), dict) else {}
+
+    def _quotes(key: str) -> list[str]:
+        return [text for text in (_clamp_str(item) for item in raw.get(key) or []) if text]
+
+    repetition = _quotes("repetition")
+    written_lines: list[dict[str, Any]] = []
+    for item in raw.get("written_lines") or []:
+        if not isinstance(item, dict):
+            continue
+        quote = _clamp_str(item.get("quote"))
+        if quote:
+            written_lines.append(
+                {
+                    "topic_id": int(item.get("topic_id") or 0),
+                    "quote": quote,
+                    "spoken_fix": _clamp_str(item.get("spoken_fix")),
+                }
+            )
     grammar: list[dict[str, Any]] = []
     for item in raw.get("grammar") or []:
         if not isinstance(item, dict):
@@ -116,6 +146,14 @@ def normalize_flow_result(raw: Any) -> dict[str, Any]:
             "score": _clamp_int(natural_raw.get("score"), 1, 5, 3),
             "issue": _clamp_str(natural_raw.get("issue")),
         },
+        "spoken": {
+            "score": _clamp_int(spoken_raw.get("score"), 1, 5, 3),
+            "issue": _clamp_str(spoken_raw.get("issue")),
+        },
+        "written_lines": written_lines,
+        "signposting": _quotes("signposting"),
+        "hedging": _quotes("hedging"),
+        "name_drops": _quotes("name_drops"),
         "repetition": repetition,
         "grammar": grammar,
     }
@@ -132,6 +170,8 @@ def flow_passed(result: dict[str, Any]) -> bool:
     arc = int((result.get("arc") or {}).get("score") or 0)
     natural = int((result.get("naturalness") or {}).get("score") or 0)
     if arc < 3 or natural < 3:
+        return False
+    if int((result.get("spoken") or {}).get("score") or 0) < 4:
         return False
     if result.get("grammar"):
         return False
@@ -154,6 +194,9 @@ def flow_score(result: dict[str, Any]) -> float:
     natural = int((result.get("naturalness") or {}).get("score") or 0)
     parts.append(arc / 5.0)
     parts.append(natural / 5.0)
+    # Spoken English counts double: it is the main thing a listener notices.
+    spoken = int((result.get("spoken") or {}).get("score") or 0)
+    parts.extend([spoken / 5.0, spoken / 5.0])
     if result.get("grammar"):
         parts.append(0.2)
     else:
@@ -217,6 +260,37 @@ def flow_notes(result: dict[str, Any], limit: int = 8) -> list[str]:
                 "Repetition — each of these is said more than once. Say it once, in the section "
                 "where it lands best, and cut or replace the repeat: "
                 + "; ".join(f"({index}) {text}" for index, text in enumerate(repeats[:10], 1)),
+            )
+        )
+    spoken = result.get("spoken") or {}
+    if int(spoken.get("score") or 5) < 4:
+        scored.append(
+            (
+                0,
+                "This reads as written English read aloud, not speech"
+                + (f" ({spoken.get('issue')})" if spoken.get("issue") else "")
+                + ". Rewrite every section the way a person talks: short sentences, verbs up front, "
+                "no labels or colons, no announced transitions.",
+            )
+        )
+    for key, lead in (
+        ("signposting", "Announced transitions — cut these and start the section on its point"),
+        ("hedging", "Reflexive caveats — drop these unless a locked fact requires them"),
+        ("name_drops", "Names with no story — tell who they are and what happened, or drop the name"),
+    ):
+        quotes = [normalize_whitespace(str(q or "")) for q in result.get(key) or []]
+        quotes = [q for q in quotes if q]
+        if quotes:
+            scored.append((0, f"{lead}: " + "; ".join(f"«{q}»" for q in quotes[:8])))
+    for item in result.get("written_lines") or []:
+        if not isinstance(item, dict) or not item.get("quote"):
+            continue
+        fix = item.get("spoken_fix") or ""
+        scored.append(
+            (
+                1,
+                f"Section {item.get('topic_id')} sounds written: '{item['quote']}'"
+                + (f" → say it like: '{fix}'" if fix else ""),
             )
         )
     for item in result.get("grammar") or []:

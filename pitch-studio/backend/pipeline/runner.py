@@ -496,7 +496,7 @@ def _run_quality_loop(
         if flow_result is not None:
             scores.append(flow_score(flow_result))
             passed_flags.append(flow_passed(flow_result))
-            flow_list = flow_notes(flow_result, limit=8)
+            flow_list = flow_notes(flow_result, limit=10)
         if listener_result is not None:
             scores.append(listener_score(listener_result))
             passed_flags.append(listener_passed(listener_result))
@@ -504,7 +504,7 @@ def _run_quality_loop(
         notes: list[str] = []
         for pair in zip_longest(flow_list, listener_list):
             notes.extend(note for note in pair if note and note not in notes)
-        notes = notes[:10]
+        notes = notes[:12]
         score = (sum(scores) / len(scores)) if scores else 0.0
         passed = bool(passed_flags) and all(passed_flags)
 

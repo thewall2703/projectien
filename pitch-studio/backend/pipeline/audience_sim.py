@@ -16,6 +16,10 @@ SIM_SYSTEM = (
     "grammar_issue (quote of a garbled/broken line, or ''), robotic_line (quote no human would "
     "say out loud, or ''). Overall: followability, sounds_human, grammar (each 1-5), and "
     "takeaway in your own words.\n"
+    "sounds_human means SPOKEN English: does it sound like a person talking to you, or like an essay "
+    "or slide being read out? Score 3 or lower if it announces its own transitions ('the next question "
+    "is…', 'now let's look at…'), reads out labels or colons, stacks long clauses, keeps adding caveats, "
+    "or drops names without telling you who they are. Quote the worst such line as robotic_line.\n"
     "Return strict JSON:\n"
     '{"sections":[{"topic_id":0,"clarity":1,"lost_at":"","grammar_issue":"","robotic_line":""}],'
     '"followability":1,"sounds_human":1,"grammar":1,"takeaway":"..."}'

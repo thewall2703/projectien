@@ -30,6 +30,7 @@ from backend.pipeline.validator import (
     paragraphize_spoken_text,
     sentence_integrity_violations,
     split_spoken_sentences,
+    spoken_english_violations,
     trim_script_to_budget,
     validate_script,
 )
@@ -208,6 +209,40 @@ class ValidatorTests(unittest.TestCase):
             "You can see the work, meet the people and decide for yourself what's true."
         )
         self.assertEqual(self._integrity(text), [])
+
+    def _spoken(self, *texts: str) -> list[str]:
+        sections = [{"topic_title": f"T{n}", "text": text} for n, text in enumerate(texts, 1)]
+        return spoken_english_violations({"sections": sections, "cta": "Come and sit in on a class."})
+
+    def test_announced_transitions_are_flagged_past_the_limit(self):
+        gen84 = (
+            "If Learn by Doing is the answer, the next question is what problem needed a new institution.",
+            "The origin explains the idea. Now let's make it physical.",
+            "Once that institutional foundation is clear, the next question is what it produces.",
+            "With the three-part model named, let's zoom into the first part.",
+        )
+        violations = self._spoken(*gen84)
+        self.assertTrue(any("announces its own transitions 4 times" in item for item in violations))
+        self.assertEqual(self._spoken(*gen84[:2]), [])
+
+    def test_slashes_and_label_colons_are_flagged(self):
+        slash = self._spoken("The faculty mix is 40% practitioners / 30% full-time PhD / 30% visiting international.")
+        self.assertTrue(any("reads out a slash" in item for item in slash))
+        colons = self._spoken(
+            "External judgment matters: six startups pitched on Shark Tank India.",
+            "Here is the model: learn, act, observe.",
+        )
+        self.assertTrue(any("Colons read like slide labels" in item for item in colons))
+
+    def test_spoken_lines_are_not_flagged(self):
+        self.assertEqual(
+            self._spoken(
+                "Forty percent of the people teaching you are practitioners. We're open 24/7 during exams.",
+                "So what does that look like on a Tuesday? Class starts at 9:30 and you're pitching by noon.",
+                "Here's the thing: nobody cares where you studied.",
+            ),
+            [],
+        )
 
     def test_section_without_a_final_sentence_is_flagged(self):
         violations = self._integrity("We spent a year building the lab, testing it with students, and then")
