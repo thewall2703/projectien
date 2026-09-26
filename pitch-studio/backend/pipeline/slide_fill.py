@@ -64,7 +64,12 @@ from backend.generated_slides import (
     save_generated_slide_image,
 )
 from backend.models import GeneratedSlide, GeneratedSlideAttempt
-from backend.pipeline.claims import SLIDE_CLAIMS_RULES_PROMPT, claim_violations, pair_median_facts
+from backend.pipeline.claims import (
+    SLIDE_CLAIMS_RULES_PROMPT,
+    claim_violations,
+    pair_median_facts,
+    rounded_fact_note,
+)
 from backend.pipeline.brand_deck import (
     COVER_PAGE,
     MODULE_PAGES,
@@ -756,6 +761,7 @@ def _fill_payload(
             {
                 "fact": getattr(fact, "fact", "") or "",
                 "value": getattr(fact, "value", "") or "",
+                **({"note": note} if (note := rounded_fact_note(fact)) else {}),
             }
             for fact in source_facts
         ],

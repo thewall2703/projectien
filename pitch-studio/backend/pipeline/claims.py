@@ -165,6 +165,15 @@ def is_median_ctc_fact(fact: Any) -> bool:
     ))
 
 
+ROUNDED_FACT_NOTE = (
+    "rounded figure: never write 'N+'; say 'more than N' or prove it with a named example"
+)
+
+
+def rounded_fact_note(fact: Any) -> str:
+    return ROUNDED_FACT_NOTE if ROUNDED_AGGREGATE_RE.search(getattr(fact, "value", "") or "") else ""
+
+
 def fact_is_usable(fact: Any) -> bool:
     return (getattr(fact, "status", "") or "").strip() in _USABLE_FACT_STATUSES
 

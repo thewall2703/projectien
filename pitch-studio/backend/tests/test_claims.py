@@ -205,6 +205,12 @@ class MedianPairingTests(unittest.TestCase):
         self.assertEqual(len(paired), 2)
         self.assertTrue(any(item.fact == "Median CTC" for item in paired))
 
+    def test_rounded_locked_fact_carries_note(self):
+        cxo = fact(name="CXOs on campus", value="250+", module_ids="M07")
+        locked, _ = _format_facts([cxo], ["M07"])
+        self.assertIn("more than N", locked)
+        self.assertEqual(claim_violations("More than 250 CXOs came to campus.", unit_label="S"), [])
+
     def test_unusable_median_is_not_paired(self):
         average = fact(name="Average CTC", value="₹33.39 LPA", fid=1)
         median = fact(

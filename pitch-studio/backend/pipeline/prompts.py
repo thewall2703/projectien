@@ -10,6 +10,7 @@ from backend.pipeline.claims import (
     DISCLOSURE_RULE,
     disclosure_applies,
     pair_median_facts,
+    rounded_fact_note,
 )
 from backend.pipeline.resolver import MAX_SCRIPT_MINUTES, script_minutes_for_duration
 from backend.pipeline.validator import budget_range, count_script_words
@@ -169,7 +170,8 @@ def _format_facts(facts: list[LockedFact], sequence: list[str]) -> tuple[str, st
     locked = []
     for fact in locked_facts:
         value = UNIVERSITY_STATUS_LINE if fact.fact.strip().lower() == "university status" else fact.value
-        locked.append(f"- {fact.fact}: {value} (source: {fact.source})")
+        note = rounded_fact_note(fact)
+        locked.append(f"- {fact.fact}: {value} (source: {fact.source}{'; ' + note if note else ''})")
     return "\n".join(locked) or "(none)", "\n".join(forbidden) or "(none)"
 
 
