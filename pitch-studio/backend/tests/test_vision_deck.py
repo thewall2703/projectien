@@ -179,21 +179,16 @@ class PlanVisionPagesTests(unittest.TestCase):
         self.assertEqual(pages[1:-1], [2, 3, 6, 9, 10, 11, 55, 56, 57, 58, 64])
         self.assertEqual(len(pages), len(set(pages)))
 
-    def test_trim_keeps_every_section_within_ceiling(self):
-        result = plan_vision_pages(self._sections(), "T1", use_case="school_fair")
-        ceiling = slide_ceiling_for("T1")
-        self.assertLessEqual(len(result.slides), ceiling)
-        sections_present = {
-            getattr(slide, "section", "")
-            for slide in result.slides[1:-1]
-            if getattr(slide, "section", "")
-        }
-        self.assertIn("The Founding Story", sections_present)
-        self.assertIn("Purpose", sections_present)
-        self.assertIn("Outcomes", sections_present)
-        self.assertEqual(result.slides[-1].page, CLOSING_PAGE)
+    def test_keeps_every_sheet_page_regardless_of_duration(self):
+        short = plan_vision_pages(self._sections(), "T1", use_case="school_fair")
+        long = plan_vision_pages(self._sections(), "T5", use_case="school_fair")
+        short_body = [slide.page for slide in short.slides[1:-1]]
+        long_body = [slide.page for slide in long.slides[1:-1]]
+        self.assertEqual(short_body, long_body)
+        self.assertEqual(short_body, [2, 3, 6, 9, 10, 11, 55, 56, 57, 58, 64])
+        self.assertEqual(short.slides[-1].page, CLOSING_PAGE)
 
-    def test_authored_order_preserved_after_trim(self):
+    def test_authored_order_preserved_without_trim(self):
         sections = [
             VisionSectionPlan(
                 "Learning",
@@ -204,8 +199,8 @@ class PlanVisionPagesTests(unittest.TestCase):
         ]
         result = plan_vision_pages(sections, "T2", use_case="school_fair", ceiling=8)
         body = [slide.page for slide in result.slides[1:-1]]
-        # Kept pages stay in authored order (not re-sorted by rank).
-        self.assertEqual(body, sorted(body, key=lambda page: [19, 20, 21, 22, 23, 25, 26, 49, 28].index(page)))
+        # Ceiling is ignored: all authored pages kept in order.
+        self.assertEqual(body, [19, 20, 21, 22, 23, 25, 26, 49, 28])
 
     def test_design_only_instructions_dropped_from_result(self):
         result = plan_vision_pages(self._sections(), "T5", use_case="school_fair")

@@ -1,9 +1,10 @@
 """Deck planning from the Deck - Vision Mapping sheet.
 
 When a generation has a recognised ``deck_use_case``, the brand-deck spine is
-the sheet's section × use-case page lists (authored order), trimmed to the
-duration ceiling. Module round-robin in ``brand_deck.plan_pages`` remains the
-fallback for unmapped audiences (recruiters, investors, etc.).
+the sheet's section × use-case page lists (authored order). Every Relevant
+Slides page is kept — there is no duration-based trim. Module round-robin in
+``brand_deck.plan_pages`` remains the fallback for unmapped audiences
+(recruiters, investors, etc.).
 """
 
 from __future__ import annotations
@@ -25,7 +26,6 @@ from backend.pipeline.brand_deck import (
     BrandSlide,
     _assign_occurrences,
 )
-from backend.pipeline.deck import slide_ceiling_for
 
 VISION_SHEET_NAME = " Deck - Vision Mapping"
 
@@ -633,12 +633,11 @@ def plan_vision_pages(
     """Build a brand-deck plan from vision-mapping sections.
 
     Concatenates each section's pages in authored order, drops duplicate pages
-    on first occurrence, bookends with cover/closing, then trims to the duration
-    ceiling while keeping every non-empty section represented.
+    on first occurrence, and bookends with cover/closing. The sheet is the
+    source of truth: every Relevant Slides page is kept. ``duration`` and
+    ``ceiling`` are ignored for trimming (kept for call-site compatibility).
     """
-    budget = slide_ceiling_for(duration) if ceiling is None else max(3, ceiling)
-    # Body budget excludes cover + closing.
-    body_budget = max(1, budget - 2)
+    _ = duration, ceiling
 
     # Dedupe across sections (first occurrence wins).
     # Cover and closing are bookends, never body slots.
@@ -652,16 +651,7 @@ def plan_vision_pages(
                 pages.append(page)
         cleaned.append(replace(section, pages=pages, instructions=list(section.instructions)))
 
-    sizes = [len(item.pages) for item in cleaned]
-    total_body = sum(sizes)
-    if total_body <= body_budget:
-        kept = [list(item.pages) for item in cleaned]
-    else:
-        allotments = _allocate_slots(sizes, body_budget)
-        kept = [
-            _trim_section_pages(item.pages, allotments[index])
-            for index, item in enumerate(cleaned)
-        ]
+    kept = [list(item.pages) for item in cleaned]
 
     slides: list[BrandSlide] = [
         replace(COVER, section=cleaned[0].section if cleaned else ""),

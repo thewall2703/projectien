@@ -725,7 +725,7 @@ def generate_script_phase(
     vision_sections = load_vision_sections(db, deck_use_case) if deck_use_case else []
 
     if vision_sections:
-        # Vision spine: sheet pages in authored order, trimmed to the ceiling.
+        # Vision spine: every Relevant Slides page from the sheet, authored order.
         # For ug_dsai, DS & AI pages stand in for the sections left blank.
         blank = [section for section in vision_sections if not section.pages]
         dsai_slides = (
@@ -737,7 +737,6 @@ def generate_script_phase(
             vision_sections,
             target.duration,
             use_case=deck_use_case,
-            ceiling=ceiling - len(dsai_slides),
         )
         plan = order_by_headings(
             insert_at_section(
@@ -747,8 +746,8 @@ def generate_script_phase(
                 blank[0].section_order if blank else 0,
             )
         )
-        gap_ceiling = ceiling
-        # Script / validator follow the modules the deck actually carries.
+        # Gap fills may append (Q&A etc.) but must not replace sheet pages.
+        gap_ceiling = len(plan) + max(8, ceiling // 4)
         resolved = ResolvedRecipe(
             ref=resolved.ref,
             module_sequence=module_sequence_from_slides(plan),
