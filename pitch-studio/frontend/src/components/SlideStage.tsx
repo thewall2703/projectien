@@ -22,6 +22,16 @@ export default function SlideStage({ slides }: { slides: DeckSlide[] }) {
   useEffect(() => {
     if (!focused || total < 2) return;
     const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      // Never hijack typing in fields, editable regions, or modal dialogs
+      // (feedback forms open in a portal while the stage may still be "hovered").
+      if (
+        target?.closest(
+          'input, textarea, select, [contenteditable="true"], [role="dialog"]',
+        )
+      ) {
+        return;
+      }
       if (event.key === "ArrowRight" || event.key === "PageDown" || event.key === " ") {
         event.preventDefault();
         setIndex((value) => Math.min(value + 1, total - 1));
@@ -71,7 +81,6 @@ export default function SlideStage({ slides }: { slides: DeckSlide[] }) {
       onBlur={(event) => {
         if (!rootRef.current?.contains(event.relatedTarget as Node)) setFocused(false);
       }}
-      onMouseEnter={() => setFocused(true)}
     >
       <div className="stage relative aspect-[16/9] w-full overflow-hidden bg-black">
         <AnimatePresence mode="wait" initial={false}>

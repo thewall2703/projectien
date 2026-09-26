@@ -16,6 +16,14 @@ export default function DeckPreview({ slides }: { slides: DeckSlide[] }) {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        target?.closest(
+          'input, textarea, select, [contenteditable="true"], [role="dialog"]',
+        )
+      ) {
+        return;
+      }
       if (event.key === "ArrowRight") setCurrent((value) => Math.min(lastIndex, value + 1));
       if (event.key === "ArrowLeft") setCurrent((value) => Math.max(0, value - 1));
     };

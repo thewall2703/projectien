@@ -350,6 +350,7 @@ export function ScriptFeedbackProvider({
                 className="field mt-3 min-h-[120px]"
                 value={comment}
                 onChange={(event) => setComment(event.target.value)}
+                onKeyDown={(event) => event.stopPropagation()}
                 placeholder="What should change about this line?"
                 required
               />

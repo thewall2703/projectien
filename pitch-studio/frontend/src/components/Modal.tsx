@@ -69,6 +69,15 @@ export default function Modal({
         aria-modal="true"
         aria-labelledby={titleId}
         className="relative z-[1] flex max-h-[92dvh] w-full max-w-xl flex-col rounded-t-3xl border border-black/10 bg-white shadow-2xl sm:max-h-[85vh] sm:rounded-3xl"
+        onKeyDown={(event) => {
+          // Keep Space / arrows inside fields from bubbling to page shortcuts.
+          if (
+            event.target instanceof HTMLElement &&
+            event.target.closest("input, textarea, select, [contenteditable='true']")
+          ) {
+            event.stopPropagation();
+          }
+        }}
       >
         <div className="shrink-0 border-b border-black/8 px-5 py-4 sm:px-6">
           <h2 id={titleId} className="font-display text-2xl tracking-tight text-black">
