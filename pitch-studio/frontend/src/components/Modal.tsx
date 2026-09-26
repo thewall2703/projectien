@@ -32,7 +32,29 @@ export default function Modal({
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onCloseRef.current();
     };
+    // Capture-phase: stop Space/arrows reaching window slide shortcuts while
+    // typing in a field. React stopPropagation alone does not cancel other
+    // window listeners (SlideStage), so Space never reaches the textarea.
+    const onFieldKeyCapture = (event: KeyboardEvent) => {
+      if (
+        event.key !== " " &&
+        event.key !== "ArrowRight" &&
+        event.key !== "ArrowLeft" &&
+        event.key !== "PageDown" &&
+        event.key !== "PageUp" &&
+        event.key !== "Home" &&
+        event.key !== "End"
+      ) {
+        return;
+      }
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      if (!target.closest("input, textarea, select, [contenteditable='true']")) return;
+      if (!panelRef.current?.contains(target)) return;
+      event.stopImmediatePropagation();
+    };
     window.addEventListener("keydown", onKey);
+    window.addEventListener("keydown", onFieldKeyCapture, true);
 
     const focusFrame = requestAnimationFrame(() => {
       const root = panelRef.current;
@@ -48,6 +70,7 @@ export default function Modal({
     return () => {
       cancelAnimationFrame(focusFrame);
       window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keydown", onFieldKeyCapture, true);
       document.body.style.overflow = previousOverflow;
       previouslyFocused.current?.focus?.();
     };

@@ -21,15 +21,17 @@ export default function SlideStage({ slides }: { slides: DeckSlide[] }) {
 
   useEffect(() => {
     if (!focused || total < 2) return;
+    const fieldOrModal =
+      'input, textarea, select, [contenteditable="true"], [role="dialog"], [aria-modal="true"]';
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
-      // Never hijack typing in fields, editable regions, or modal dialogs
-      // (feedback forms open in a portal while the stage may still be "hovered").
-      if (
-        target?.closest(
-          'input, textarea, select, [contenteditable="true"], [role="dialog"]',
-        )
-      ) {
+      const active = document.activeElement as HTMLElement | null;
+      // Never hijack typing in fields or while a modal dialog is open
+      // (feedback opens in a portal; stage focus state can lag behind).
+      if (target?.closest(fieldOrModal) || active?.closest(fieldOrModal)) {
+        return;
+      }
+      if (rootRef.current && active && !rootRef.current.contains(active)) {
         return;
       }
       if (event.key === "ArrowRight" || event.key === "PageDown" || event.key === " ") {
