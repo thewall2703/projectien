@@ -57,6 +57,25 @@ class Settings(BaseSettings):
     listener_reasoning_effort: str = "medium"
     listener_verbosity: str = ""
     listener_timeout: float = 240.0
+    # Master Script three-engine mode (OpenRouter).
+    ms_planner_model: str = "openai/gpt-6-astra"
+    ms_planner_reasoning_effort: str = "high"
+    ms_planner_verbosity: str = "high"
+    ms_planner_timeout: float = 600.0
+    ms_evidence_model: str = "google/gemini-3.8-flash"
+    ms_evidence_reasoning_effort: str = "medium"
+    ms_evidence_verbosity: str = ""
+    ms_evidence_timeout: float = 300.0
+    ms_voice_model: str = "anthropic/claude-opus-5.5"
+    ms_voice_reasoning_effort: str = "high"
+    ms_voice_verbosity: str = "high"
+    ms_voice_timeout: float = 900.0
+    # Independent editorial pass. It receives the full draft and editorial memory;
+    # it does not share the voice writer's model role or request settings.
+    ms_editor_model: str = "openai/gpt-6-astra"
+    ms_editor_reasoning_effort: str = "high"
+    ms_editor_verbosity: str = "high"
+    ms_editor_timeout: float = 900.0
     script_plan_enabled: bool = True
     flow_check_enabled: bool = True
     listener_enabled: bool = True

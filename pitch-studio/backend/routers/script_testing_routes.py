@@ -10,6 +10,7 @@ from backend.database import get_db
 from backend.models import Recipe, ScriptTestFeedback, ScriptTestRating, ScriptTestRun, User, utc_now
 from backend.pipeline.resolver import is_valid_sequence, parse_sequence
 from backend.pipeline.vision_deck import normalize_use_case
+from backend.pipeline.vision_modules_flow import normalize_generation_mode
 from backend.schemas import (
     ScriptTestCreate,
     ScriptTestFeedbackCreate,
@@ -201,6 +202,13 @@ def create_script_test(
         context_note=payload.context_note,
         recipe_ref=recipe_ref,
         deck_use_case=normalize_use_case(payload.deck_use_case),
+        generation_mode=(
+            "classic"
+            if normalize_generation_mode(payload.generation_mode)
+            == "vision_modules"
+            and not normalize_use_case(payload.deck_use_case)
+            else normalize_generation_mode(payload.generation_mode)
+        ),
         status="queued",
     )
     db.add(run)

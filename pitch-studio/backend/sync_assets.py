@@ -17,7 +17,13 @@ from backend.config import REPO_ROOT
 from backend.database import SessionLocal, engine, ensure_schema
 from backend.models import Asset, Base, utc_now
 from backend.storage import save_file, save_file_from_path
-from backend.youtube_apify import download_caption_text, download_youtube, is_youtube_url
+from backend.youtube_apify import (
+    download_caption_text,
+    download_youtube,
+    fetch_youtube_transcript,
+    is_youtube_url,
+    youtube_video_id,
+)
 
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -253,6 +259,31 @@ def sync_youtube(asset: Asset) -> str:
         asset.notes = f"{asset.notes}; transcript captured from captions"
     if notice:
         asset.notes = f"{asset.notes}. {notice}"
+    return transcript
+
+
+def sync_youtube_transcript(asset: Asset) -> str:
+    """Store captions and a local thumbnail while leaving playback on YouTube."""
+    from backend.thumbnails import thumbnail_jpeg, thumbnail_key
+
+    transcript = fetch_youtube_transcript(asset.source_url)
+    video_id = youtube_video_id(asset.source_url)
+    thumbnail = b""
+    with httpx.Client(timeout=30.0, follow_redirects=True, headers={"User-Agent": USER_AGENT}) as client:
+        for quality in ("maxresdefault", "hqdefault"):
+            response = client.get(f"https://img.youtube.com/vi/{video_id}/{quality}.jpg")
+            if response.status_code < 400 and len(response.content) > 1000:
+                thumbnail = thumbnail_jpeg(response.content)
+                break
+    if not thumbnail:
+        raise RuntimeError("Could not fetch YouTube thumbnail")
+    save_file(thumbnail_key(asset), thumbnail, "image/jpeg")
+    asset.url = asset.source_url
+    asset.file_key = ""
+    asset.file_status = "processed"
+    asset.sync_error = ""
+    asset.synced_at = utc_now()
+    asset.notes = "Transcript captured from YouTube captions; thumbnail stored locally; video served from YouTube"
     return transcript
 
 

@@ -110,7 +110,7 @@ class VisionModulesPlan:
 
 def normalize_generation_mode(value: str) -> str:
     text = (value or "").strip().lower()
-    return text if text in {"classic", "vision_modules"} else "classic"
+    return text if text in {"classic", "vision_modules", "master_script"} else "classic"
 
 
 def allocate_quotas(module_sizes: dict[str, int], cap: int) -> dict[str, int]:

@@ -62,6 +62,53 @@ def ensure_thumbnail(asset: Asset, force: bool = False) -> str:
     return key
 
 
+def restore_thumbnail(asset: Asset) -> str:
+    """Return a readable thumbnail key, re-downloading from Drive when needed."""
+    existing = resolve_thumbnail_key(asset)
+    if existing:
+        try:
+            read_file(existing)
+            return existing
+        except Exception:
+            existing = None
+
+    if asset.file_key and (asset.content_type or "").startswith("image/"):
+        try:
+            return ensure_thumbnail(asset, force=True)
+        except Exception:
+            pass
+
+    source = (asset.source_url or "").strip()
+    if not source:
+        raise ValueError("No thumbnail source available")
+
+    # Preview-only assets keep no original bytes; pull the Drive file again.
+    from backend.sync_assets import sync_drive_file
+
+    previous_status = asset.file_status
+    previous_key = asset.file_key
+    asset.file_status = "gap"
+    try:
+        sync_drive_file(asset)
+        key = ensure_thumbnail(asset, force=True)
+        # Prefer keeping only the preview after a successful restore.
+        if asset.file_key:
+            from backend.storage import delete_file
+
+            try:
+                delete_file(asset.file_key)
+            except Exception:
+                pass
+            asset.file_key = ""
+        asset.file_status = "preview"
+        asset.url = f"/api/assets/{asset.id}/thumbnail.jpg"
+        return key
+    except Exception:
+        asset.file_status = previous_status
+        asset.file_key = previous_key
+        raise
+
+
 def ensure_thumbnails(
     assets: Iterable[Asset],
     on_progress: Callable[[int, int], None] | None = None,

@@ -34,6 +34,107 @@ const TIMELINE: { id: TimelineId; label: string; sectionId: string }[] = [
   { id: "qa", label: "Q&A", sectionId: "section-qa" },
 ];
 
+type MasterScriptTrace = {
+  version?: string;
+  models?: Record<string, string>;
+  route?: {
+    id?: string;
+    audience?: string;
+    length?: string;
+    sections?: string[];
+    match_reason?: string;
+  };
+  sections?: Array<{
+    section_id?: string;
+    the_one_thing?: string;
+    chosen_cards?: Array<{ card_id?: number; reason?: string }>;
+    cards?: Array<{ id?: number; claim?: string; figure?: string; figure_label?: string }>;
+    locked_slots?: Array<{ id?: string }>;
+  }>;
+  voice_drafts?: Array<{
+    section_id?: string;
+    card_ids_used?: number[];
+    lock_ids_used?: string[];
+    passage_ids?: number[];
+  }>;
+};
+
+function parseMasterScriptTrace(raw?: string): MasterScriptTrace | null {
+  if (!raw?.trim()) return null;
+  try {
+    const parsed = JSON.parse(raw) as MasterScriptTrace;
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function MasterScriptTracePanel({ trace }: { trace: MasterScriptTrace }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-2xl border border-black/10 bg-white/70">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+        onClick={() => setOpen((value) => !value)}
+      >
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-grey">
+            Master Script trace
+          </p>
+          <p className="mt-1 text-sm text-grey-dark">
+            {[
+              trace.route?.audience,
+              trace.route?.length,
+              trace.version ? `script ${trace.version}` : null,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </p>
+        </div>
+        <span className="text-xs uppercase tracking-[0.16em] text-grey">{open ? "Hide" : "Show"}</span>
+      </button>
+      {open && (
+        <div className="space-y-4 border-t border-black/5 px-4 py-4 text-sm text-grey-dark">
+          {trace.models && (
+            <p className="text-xs text-grey">
+              Models: {Object.entries(trace.models).map(([k, v]) => `${k}=${v}`).join(" · ")}
+            </p>
+          )}
+          {(trace.sections || []).map((section) => {
+            const voice = (trace.voice_drafts || []).find((row) => row.section_id === section.section_id);
+            return (
+              <div key={section.section_id || section.the_one_thing} className="space-y-1">
+                <p className="font-medium text-black">
+                  Section {section.section_id}
+                  {section.the_one_thing ? ` — ${section.the_one_thing}` : ""}
+                </p>
+                {!!section.cards?.length && (
+                  <ul className="list-disc pl-5 text-xs">
+                    {section.cards.map((card) => (
+                      <li key={card.id}>
+                        #{card.id}: {card.claim}
+                        {card.figure ? ` (${card.figure_label || "figure"} ${card.figure})` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {voice && (
+                  <p className="text-xs text-grey">
+                    Voice used cards [{(voice.card_ids_used || []).join(", ")}] · locks [
+                    {(voice.lock_ids_used || []).join(", ")}] · passages [
+                    {(voice.passage_ids || []).join(", ")}]
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function statusMessage(status: string): string {
   switch (status) {
     case "queued":
@@ -334,7 +435,11 @@ export default function Result({ currentUser }: { currentUser: User }) {
               axisNames.channel,
               axisNames.intent,
               axisNames.temperature,
-              generation.generation_mode === "vision_modules" ? "Vision modules" : null,
+              generation.generation_mode === "vision_modules"
+                ? "Vision modules"
+                : generation.generation_mode === "master_script"
+                  ? "Engine 3"
+                  : null,
             ]
               .filter(Boolean)
               .join(" · ")}
@@ -354,6 +459,11 @@ export default function Result({ currentUser }: { currentUser: User }) {
             )}
           </div>
         )}
+
+        {(() => {
+          const trace = parseMasterScriptTrace(generation.master_script_trace_json);
+          return trace ? <MasterScriptTracePanel trace={trace} /> : null;
+        })()}
 
         <section id="section-script" className="scroll-mt-28 space-y-16">
           <SectionHeading
@@ -806,90 +916,84 @@ function VideoCard({
     "";
   const [thumb, setThumb] = useState(initialThumb);
   const [thumbFailed, setThumbFailed] = useState(false);
+  const [playFailed, setPlayFailed] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
 
   useEffect(() => {
     setThumb(initialThumb);
     setThumbFailed(false);
+    setPlayFailed(false);
   }, [initialThumb, retryKey]);
 
   const retryPreview = () => {
     setThumbFailed(false);
+    setPlayFailed(false);
     setThumb(initialThumb);
     setRetryKey((value) => value + 1);
   };
 
+  const showError = playFailed || thumbFailed || (!embed && !thumb);
+
   return (
     <article className="glass-panel w-[calc((100%-1rem)/2)] shrink-0 snap-start overflow-hidden sm:w-[calc((100%-2rem)/3)] lg:w-[calc((100%-4rem)/5)]">
-      {playing && embed ? (
-        <div className="aspect-video bg-black">
+      <div className="relative aspect-video bg-grey-light">
+        {playing && embed && !playFailed ? (
           <iframe
             key={`${video.asset_id}-${retryKey}`}
-            className="h-full w-full"
+            className="h-full w-full bg-black"
             src={embed}
             title={video.title}
             allow="autoplay; fullscreen"
             allowFullScreen
+            onError={() => setPlayFailed(true)}
           />
-        </div>
-      ) : thumbFailed || (!embed && !thumb) ? (
-        <div className="relative flex aspect-video flex-col items-center justify-center gap-3 bg-grey-light/70 px-4 text-center">
-          <p className="text-sm font-medium text-black">Unable to load video</p>
-          <button type="button" className="btn text-xs" onClick={retryPreview}>
-            Try again
-          </button>
-          {video.source_url ? (
-            <a
-              className="absolute right-2 top-2 inline-flex h-8 w-8 items-center justify-center rounded-lg bg-black/50 text-offwhite"
-              href={video.source_url}
-              target="_blank"
-              rel="noreferrer"
-              aria-label="Open source"
-              onClick={() => onInteract("open_source")}
-            >
-              ↗
-            </a>
-          ) : null}
-        </div>
-      ) : embed || thumb ? (
-        <button
-          type="button"
-          className="relative aspect-video w-full bg-grey-light text-left"
-          onClick={() => {
-            if (!embed) return;
-            onInteract("play");
-            onPlay();
-          }}
-          aria-label={embed ? `Play ${video.title}` : video.title}
-        >
-          {thumb && !thumbFailed ? (
-            <img
-              key={retryKey}
-              src={thumb}
-              alt=""
-              className="h-full w-full object-cover"
-              referrerPolicy="no-referrer"
-              onError={() => {
-                const drive = driveThumbnail(video.source_url);
-                if (drive && thumb !== drive) {
-                  setThumb(drive);
-                  return;
-                }
-                setThumbFailed(true);
-              }}
-            />
-          ) : (
-            <span className="absolute inset-0 bg-black" />
-          )}
-          {embed && (
-            <span className="absolute inset-0 flex items-center justify-center bg-black/25">
-              <span className="flex h-12 w-12 items-center justify-center rounded-full bg-black/70 text-lg text-offwhite">
-                ▶
+        ) : showError ? (
+          <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-center">
+            <p className="text-sm font-medium text-black">Unable to load video</p>
+            <button type="button" className="btn text-xs" onClick={retryPreview}>
+              Try again
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="relative h-full w-full text-left"
+            onClick={() => {
+              if (!embed) return;
+              onInteract("play");
+              onPlay();
+            }}
+            aria-label={embed ? `Play ${video.title}` : video.title}
+          >
+            {thumb && !thumbFailed ? (
+              <img
+                key={retryKey}
+                src={thumb}
+                alt=""
+                className="h-full w-full object-cover"
+                referrerPolicy="no-referrer"
+                onError={() => {
+                  const drive = driveThumbnail(video.source_url);
+                  if (drive && thumb !== drive) {
+                    setThumb(drive);
+                    return;
+                  }
+                  setThumbFailed(true);
+                }}
+              />
+            ) : (
+              <span className="absolute inset-0 bg-black" />
+            )}
+            {embed && (
+              <span className="absolute inset-0 flex items-center justify-center bg-black/25">
+                <span className="flex h-12 w-12 items-center justify-center rounded-full bg-black/70 text-lg text-offwhite">
+                  ▶
+                </span>
               </span>
-            </span>
-          )}
-        </button>
-      ) : null}
+            )}
+          </button>
+        )}
+      </div>
       <div className="space-y-2 p-3">
         <h3 className="line-clamp-2 text-sm font-medium text-black">{video.title}</h3>
         {video.rationale ? <p className="line-clamp-2 text-xs text-grey">{video.rationale}</p> : null}

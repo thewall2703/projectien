@@ -402,14 +402,12 @@ def _media_source_url(asset: Asset | None) -> str:
     return (asset.source_url or asset.url or "").strip()
 
 
-def _video_thumbnail_url(url: str) -> str:
-    from backend.youtube_apify import VIDEO_ID_RE, is_youtube_url
+def _video_thumbnail_url(asset: Asset) -> str:
+    from backend.youtube_apify import is_youtube_url
 
+    url = _media_source_url(asset)
     if is_youtube_url(url):
-        match = VIDEO_ID_RE.search(url or "")
-        if match:
-            return f"https://img.youtube.com/vi/{match.group(1)}/hqdefault.jpg"
-        return ""
+        return f"/api/assets/{asset.id}/thumbnail.jpg"
     file_id = drive_file_id(url)
     if file_id:
         return f"https://drive.google.com/thumbnail?id={file_id}&sz=w1000"
@@ -425,7 +423,7 @@ def _recommended_video(asset: Asset, item: dict[str, Any]) -> RecommendedMediaOu
         title=asset.title,
         source_url=source,
         preview_url=source,
-        thumbnail_url=_video_thumbnail_url(source),
+        thumbnail_url=_video_thumbnail_url(asset),
         confidence=float(item.get("confidence") or 0.0),
         rationale=str(item.get("rationale") or ""),
     )
@@ -1043,7 +1041,7 @@ def get_or_create_media_index(db: Session, asset_id: int) -> MediaIndex:
 
 
 def prepare_media(db: Session, asset_id: int, on_stage: StageCallback | None = None) -> MediaIndex:
-    from backend.sync_assets import classify_link, sync_one, sync_youtube
+    from backend.sync_assets import classify_link, sync_one
     from backend.thumbnails import ensure_thumbnails
     from backend.transcription import analyze_video_asset
 
@@ -1060,8 +1058,10 @@ def prepare_media(db: Session, asset_id: int, on_stage: StageCallback | None = N
         if processed:
             _emit_stage(on_stage, "Video already analyzed")
         elif kind == "youtube" and not stored:
-            _emit_stage(on_stage, "Downloading YouTube video…")
-            transcript = sync_youtube(asset)
+            _emit_stage(on_stage, "Fetching YouTube transcript and thumbnail…")
+            from backend.sync_assets import sync_youtube_transcript
+
+            transcript = sync_youtube_transcript(asset)
             if transcript:
                 row.transcript = normalize_transcript(transcript)
         elif not stored:
@@ -1069,7 +1069,8 @@ def prepare_media(db: Session, asset_id: int, on_stage: StageCallback | None = N
             sync_one(db, asset)
         else:
             _emit_stage(on_stage, "Video already stored")
-        if not row.transcript.strip() or not row.visual_description.strip():
+        remote_youtube = kind == "youtube" and asset.file_status == "processed" and not asset.file_key
+        if (not row.transcript.strip() or not row.visual_description.strip()) and not remote_youtube:
             if asset.file_status != "stored" or not asset.file_key:
                 detail = asset.sync_error or "Video download did not complete"
                 raise MediaIndexError(detail)
@@ -1115,6 +1116,11 @@ def prepare_media(db: Session, asset_id: int, on_stage: StageCallback | None = N
         for image_asset in image_assets:
             resolved = resolve_thumbnail_key(image_asset)
             if resolved is None:
+                continue
+            try:
+                read_file(resolved)
+            except Exception:
+                # Never delete the original if the thumbnail object is unreadable.
                 continue
             retained_keys.append(resolved)
             if image_asset.file_key:

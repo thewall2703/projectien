@@ -39,6 +39,35 @@ def canonical_youtube_url(url: str) -> str:
     return text
 
 
+def youtube_video_id(url: str) -> str:
+    match = VIDEO_ID_RE.search((url or "").strip())
+    return match.group(1) if match else ""
+
+
+def fetch_youtube_transcript(url: str) -> str:
+    """Fetch public captions without downloading the video itself."""
+    video_id = youtube_video_id(url)
+    if not video_id:
+        raise YouTubeDownloadError("Could not parse YouTube video id")
+    try:
+        from youtube_transcript_api import YouTubeTranscriptApi
+
+        transcript = YouTubeTranscriptApi().fetch(video_id, languages=["en", "en-IN", "hi"])
+    except Exception:
+        # YouTube frequently blocks cloud and high-volume IPs. The configured
+        # actor uses its own network and returns a signed caption artifact. We
+        # intentionally do not download or store the media URL it also returns.
+        result = download_youtube(url, qualities=["360"])
+        text = download_caption_text(result.get("subtitles") or [])
+        if not text:
+            raise YouTubeDownloadError("Could not fetch YouTube captions")
+        return text
+    text = " ".join(str(item.text).strip() for item in transcript if str(item.text).strip())
+    if not text:
+        raise YouTubeDownloadError("YouTube returned an empty transcript")
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def _headers() -> dict[str, str]:
     token = (settings.apify_token or "").strip()
     if not token:
@@ -128,15 +157,27 @@ def _subtitle_entries(raw: Any) -> list[dict[str, str]]:
 
 
 def srt_to_text(raw: str) -> str:
-    lines: list[str] = []
-    for line in (raw or "").replace("\r\n", "\n").split("\n"):
-        text = line.strip()
-        if not text or text.isdigit() or "-->" in text:
-            continue
-        text = re.sub(r"<[^>]+>", "", text).strip()
-        if text:
-            lines.append(text)
-    return " ".join(lines)
+    cues: list[str] = []
+    for block in re.split(r"\n\s*\n", (raw or "").replace("\r\n", "\n")):
+        lines = []
+        for line in block.splitlines():
+            text = line.strip()
+            if not text or text.isdigit() or "-->" in text:
+                continue
+            text = re.sub(r"<[^>]+>", "", text).strip()
+            if text:
+                lines.append(text)
+        if lines:
+            cues.append(" ".join(lines))
+
+    merged: list[str] = []
+    for cue in cues:
+        words = cue.split()
+        overlap = min(len(merged), len(words))
+        while overlap and merged[-overlap:] != words[:overlap]:
+            overlap -= 1
+        merged.extend(words[overlap:])
+    return " ".join(merged)
 
 
 def pick_subtitle_url(subtitles: list[dict[str, str]]) -> str:

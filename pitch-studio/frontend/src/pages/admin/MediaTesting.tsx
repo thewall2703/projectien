@@ -59,7 +59,14 @@ function displayStatus(row: MediaIndexRow) {
 }
 
 function errMessage(err: unknown) {
-  return err instanceof Error ? err.message : "Something went wrong";
+  const raw = err instanceof Error ? err.message : "Something went wrong";
+  if (/unauthori[sz]ed|not signed in|session expired/i.test(raw)) {
+    return "Session expired. Please sign in again.";
+  }
+  if (/admin only/i.test(raw)) {
+    return "Admin access required.";
+  }
+  return raw;
 }
 
 export default function MediaTesting() {
@@ -72,6 +79,9 @@ export default function MediaTesting() {
   const [addRef, setAddRef] = useState("");
   const [addNote, setAddNote] = useState("");
   const [busy, setBusy] = useState("");
+  const [feedbackPending, setFeedbackPending] = useState<{ ref: string; verdict: "yes" | "no" } | null>(
+    null,
+  );
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [visionSaved, setVisionSaved] = useState(false);
@@ -150,6 +160,7 @@ export default function MediaTesting() {
       .catch(() => setRecipes([]));
     reloadList()
       .then((data) => {
+        setError("");
         const active = data.items.find((row) => isActiveJob(row));
         const first = active || data.items[0];
         if (first) applyCurrent(first);
@@ -157,6 +168,8 @@ export default function MediaTesting() {
         if (active) {
           const label = active.job_type === "media_describe" ? "describe" : "prepare";
           void watchJob(active.id, label);
+        } else if (first?.job_status === "error" && first.job_error) {
+          setError(errMessage(new Error(first.job_error)));
         }
       })
       .catch((err) => setError(errMessage(err)))
@@ -177,6 +190,7 @@ export default function MediaTesting() {
       setError(errMessage(err));
     } finally {
       setBusy("");
+      setFeedbackPending(null);
     }
   };
 
@@ -246,7 +260,8 @@ export default function MediaTesting() {
   }, [visionSaved]);
 
   const feedback = (ref: string, verdict: "yes" | "no") => {
-    if (!current) return;
+    if (!current || feedbackPending) return;
+    setFeedbackPending({ ref, verdict });
     run(`feedback-${ref}:${verdict}`, () => api.sendFeedback(current.id, ref, verdict));
   };
 
@@ -306,9 +321,17 @@ export default function MediaTesting() {
                 key={key}
                 type="button"
                 onClick={() => {
+                  setError("");
+                  setFeedbackPending(null);
                   setSelectedKey(key);
-                  if (item.kind === "indexed") applyCurrent(item.row);
-                  else setCurrent(null);
+                  if (item.kind === "indexed") {
+                    applyCurrent(item.row);
+                    if (item.row.job_status === "error" && item.row.job_error) {
+                      setError(errMessage(new Error(item.row.job_error)));
+                    }
+                  } else {
+                    setCurrent(null);
+                  }
                 }}
                 className={`mb-2 w-full rounded-xl border px-3 py-3 text-left ${
                   selectedKey === key ? "border-accent bg-accent/5" : "border-line"
@@ -365,7 +388,12 @@ export default function MediaTesting() {
                     <h2 className="font-display text-2xl">{current.asset_title}</h2>
                     <p className="mt-1 flex flex-wrap items-center gap-2 text-sm capitalize text-muted">
                       <span>
-                        {current.media_kind} · {current.asset_file_status || "pending"}
+                        {current.media_kind}
+                        {current.media_kind === "photo"
+                          ? ` · ${current.image_assets.length} image${current.image_assets.length === 1 ? "" : "s"}`
+                          : current.asset_file_status
+                            ? ` · ${current.asset_file_status}`
+                            : ""}
                       </span>
                       <StatusBadge status={displayStatus(current)} />
                     </p>
@@ -527,8 +555,11 @@ export default function MediaTesting() {
                   {current.recommendations.items.map((item) => {
                     const verdict = current.feedback.verdicts[item.recipe_ref]?.verdict;
                     const name = personaLabel(recipes, item.recipe_ref) || item.recipe_ref;
-                    const yesBusy = busy === `feedback-${item.recipe_ref}:yes`;
-                    const noBusy = busy === `feedback-${item.recipe_ref}:no`;
+                    const yesBusy =
+                      feedbackPending?.ref === item.recipe_ref && feedbackPending.verdict === "yes";
+                    const noBusy =
+                      feedbackPending?.ref === item.recipe_ref && feedbackPending.verdict === "no";
+                    const otherBusy = Boolean(feedbackPending) && !yesBusy && !noBusy;
                     return (
                       <div key={item.recipe_ref} className="rounded-xl border border-line p-4">
                         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -552,7 +583,7 @@ export default function MediaTesting() {
                           <Button
                             variant={verdict === "yes" ? "accent" : "default"}
                             loading={yesBusy}
-                            disabled={noBusy}
+                            disabled={noBusy || otherBusy}
                             onClick={() => feedback(item.recipe_ref, "yes")}
                           >
                             Yes
@@ -560,7 +591,7 @@ export default function MediaTesting() {
                           <Button
                             variant={verdict === "no" ? "accent" : "default"}
                             loading={noBusy}
-                            disabled={yesBusy}
+                            disabled={yesBusy || otherBusy}
                             onClick={() => feedback(item.recipe_ref, "no")}
                           >
                             No
@@ -954,6 +985,16 @@ function ImageThumb({
             aria-label={title}
             onClick={() => setOpen(false)}
           >
+            <button
+              type="button"
+              className="absolute right-4 top-4 z-[2] rounded-xl border border-white/20 bg-black/80 px-4 py-2 text-sm font-medium text-white hover:bg-black"
+              onClick={(event) => {
+                event.stopPropagation();
+                setOpen(false);
+              }}
+            >
+              Close
+            </button>
             {!fullLoaded && !fullFailed && <Spinner className="absolute h-8 w-8 text-white" />}
             {fullFailed && (
               <div className="rounded-xl bg-surface px-6 py-5 text-center" onClick={(event) => event.stopPropagation()}>
@@ -983,8 +1024,8 @@ function ImageThumb({
               }}
               onClick={(event) => event.stopPropagation()}
             />
-            <div className="absolute bottom-4 left-1/2 z-[1] flex -translate-x-1/2 gap-2">
-              {onToggleRecommended && (
+            {onToggleRecommended && (
+              <div className="absolute bottom-4 left-1/2 z-[1] flex -translate-x-1/2 gap-2">
                 <Button
                   className={`border ${
                     recommended
@@ -999,15 +1040,8 @@ function ImageThumb({
                 >
                   {recommended ? "✓ Recommended (click to remove)" : "Recommend photo"}
                 </Button>
-              )}
-              <button
-                type="button"
-                className="rounded-xl border border-white/20 bg-black px-4 py-2 text-sm font-medium text-white"
-                onClick={() => setOpen(false)}
-              >
-                Close
-              </button>
-            </div>
+              </div>
+            )}
           </div>,
           document.body,
         )}

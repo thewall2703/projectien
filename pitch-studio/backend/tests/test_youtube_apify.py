@@ -11,6 +11,7 @@ from backend.youtube_apify import (
     parse_download_item,
     pick_subtitle_url,
     srt_to_text,
+    youtube_video_id,
 )
 
 
@@ -26,6 +27,10 @@ class YouTubeUrlTests(unittest.TestCase):
             canonical_youtube_url("https://youtu.be/VIzWHj8FrXA?si=abc"),
             "https://www.youtube.com/watch?v=VIzWHj8FrXA",
         )
+
+    def test_extracts_video_id(self):
+        self.assertEqual(youtube_video_id("https://youtu.be/6XWLPtZq8kk?si=abc"), "6XWLPtZq8kk")
+        self.assertEqual(youtube_video_id("https://example.com/video"), "")
         self.assertEqual(
             canonical_youtube_url("https://www.youtube.com/shorts/abc123xyz01"),
             "https://www.youtube.com/watch?v=abc123xyz01",
@@ -71,6 +76,14 @@ class CaptionParseTests(unittest.TestCase):
     def test_srt_to_text_strips_timecodes(self):
         raw = "1\n00:00:00,000 --> 00:00:01,500\nWelcome to campus.\n\n2\n00:00:01,500 --> 00:00:03,000\nThis is the walk.\n"
         self.assertEqual(srt_to_text(raw), "Welcome to campus. This is the walk.")
+
+    def test_srt_to_text_merges_rolling_auto_captions(self):
+        raw = (
+            "1\n00:00:00,000 --> 00:00:02,000\nWelcome to campus\n\n"
+            "2\n00:00:02,000 --> 00:00:04,000\nWelcome to campus\nwhere learning happens\n\n"
+            "3\n00:00:04,000 --> 00:00:06,000\nwhere learning happens\nevery day\n"
+        )
+        self.assertEqual(srt_to_text(raw), "Welcome to campus where learning happens every day")
 
     def test_prefers_english_subtitle(self):
         url = pick_subtitle_url(

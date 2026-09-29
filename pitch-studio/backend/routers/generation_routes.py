@@ -47,7 +47,7 @@ from backend.schemas import (
     VideoClickOut,
 )
 from backend.storage import file_exists, get_url, read_file
-from backend.thumbnails import ensure_thumbnail, resolve_thumbnail_key
+from backend.thumbnails import restore_thumbnail
 
 router = APIRouter(prefix="/api", tags=["generations"], dependencies=[Depends(get_current_user)])
 
@@ -412,20 +412,16 @@ def download_asset_thumbnail(
     asset = db.get(Asset, asset_id)
     if asset is None:
         raise HTTPException(status_code=404, detail="File not found")
-    if not (asset.content_type or "").startswith("image/"):
-        raise HTTPException(status_code=400, detail="Thumbnails apply to images")
-
-    key = resolve_thumbnail_key(asset)
-    if key is None and not asset.file_key:
-        raise HTTPException(status_code=404, detail="Thumbnail not found")
+    before = (asset.file_key, asset.file_status, asset.url)
     try:
-        if key is None:
-            key = ensure_thumbnail(asset)
-        # Stream bytes through the API. Redirecting to a Spaces signed URL often
-        # fails in <img> tags even when the object is readable server-side.
+        key = restore_thumbnail(asset)
+        if (asset.file_key, asset.file_status, asset.url) != before:
+            db.add(asset)
+            db.commit()
         data = read_file(key)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail="Could not create thumbnail") from exc
+        db.rollback()
+        raise HTTPException(status_code=404, detail="Thumbnail not found") from exc
 
     return Response(
         content=data,

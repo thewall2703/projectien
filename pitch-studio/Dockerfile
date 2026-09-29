@@ -14,6 +14,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN playwright install --with-deps chromium
 COPY backend ./backend
 COPY workbooks ./workbooks
+COPY data/master_script ./data/master_script
 COPY --from=frontend /frontend/dist ./frontend/dist
 EXPOSE 8080
 CMD ["sh", "-c", "python -m backend.boot && uvicorn backend.main:app --host 0.0.0.0 --port 8080"]

@@ -38,6 +38,7 @@ from backend.media_index import (
     list_media_index,
     normalize_transcript,
     parse_feedback,
+    parse_recommendations,
     apply_recommendations,
     has_extract,
     require_editable,
@@ -1285,6 +1286,40 @@ def _save_feedback(db: Session, item: MediaIndex, payload: dict[str, Any]) -> Me
     return serialize(item, db)
 
 
+def _inject_added_usecase(
+    item: MediaIndex | DeckTopic,
+    recipe_ref: str,
+    note: str,
+    options: list,
+) -> None:
+    """Surface a manually added persona inside recommendations so the UI can show it."""
+    option = next((row for row in options if row.ref == recipe_ref), None)
+    if option is None:
+        return
+    rec = parse_recommendations(item.recommendations_json)
+    items = [row for row in rec["items"] if isinstance(row, dict)]
+    if any(str(row.get("recipe_ref") or "") == recipe_ref for row in items):
+        return
+    rationale = note.strip() or "Added manually as a missed usecase."
+    items.insert(
+        0,
+        {
+            "recipe_ref": recipe_ref,
+            "audience_cluster": option.audience_cluster,
+            "duration": option.duration,
+            "channel": option.channel,
+            "intent": option.intent,
+            "temperatures": [],
+            "confidence": 1.0,
+            "rationale": rationale,
+        },
+    )
+    rec["items"] = items
+    if not rec.get("generated_at"):
+        rec["generated_at"] = utc_now().isoformat()
+    item.recommendations_json = json.dumps(rec, ensure_ascii=False)
+
+
 @router.post("/assets/{asset_id}/sync", response_model=AssetOut)
 def sync_library_asset(
     asset_id: int,
@@ -1450,7 +1485,8 @@ def add_media_usecase(
     db: Session = Depends(get_db),
 ) -> MediaIndexOut:
     item = _get_media_index(db, media_id)
-    refs = {option.ref for option in list_recipe_options(db)}
+    options = list_recipe_options(db)
+    refs = {option.ref for option in options}
     if payload.recipe_ref not in refs:
         raise HTTPException(status_code=400, detail="Unknown recipe_ref")
     feedback = parse_feedback(item.feedback_json)
@@ -1463,6 +1499,7 @@ def add_media_usecase(
                 "at": utc_now().isoformat(),
             }
         )
+    _inject_added_usecase(item, payload.recipe_ref, payload.note, options)
     return _save_feedback(db, item, feedback)
 
 
@@ -1662,7 +1699,8 @@ def add_deck_topic_usecase(
     db: Session = Depends(get_db),
 ) -> DeckTopicOut:
     item = _get_deck_topic(db, topic_id)
-    refs = {option.ref for option in list_recipe_options(db)}
+    options = list_recipe_options(db)
+    refs = {option.ref for option in options}
     if payload.recipe_ref not in refs:
         raise HTTPException(status_code=400, detail="Unknown recipe_ref")
     feedback = parse_feedback(item.feedback_json)
@@ -1675,6 +1713,7 @@ def add_deck_topic_usecase(
                 "at": utc_now().isoformat(),
             }
         )
+    _inject_added_usecase(item, payload.recipe_ref, payload.note, options)
     return _save_deck_feedback(db, item, feedback)
 
 

@@ -60,6 +60,34 @@ class ThumbnailTests(unittest.TestCase):
                 self.assertEqual(ensure_thumbnail(asset), "thumbnails/assets/8.jpg")
         read.assert_not_called()
 
+    def test_restore_thumbnail_redownloads_missing_preview(self):
+        from backend.thumbnails import restore_thumbnail
+
+        asset = SimpleNamespace(
+            id=9,
+            synced_at=None,
+            file_key="",
+            file_status="preview",
+            content_type="image/jpeg",
+            source_url="https://drive.google.com/file/d/abc/view",
+            url="/api/assets/9/thumbnail.jpg",
+        )
+
+        def fake_sync(target):
+            target.file_key = "library/photos/9.jpg"
+            target.file_status = "stored"
+
+        with mock.patch("backend.thumbnails.resolve_thumbnail_key", return_value=None):
+            with mock.patch("backend.sync_assets.sync_drive_file", side_effect=fake_sync) as sync:
+                with mock.patch("backend.thumbnails.ensure_thumbnail", return_value="thumbnails/assets/9.jpg"):
+                    with mock.patch("backend.storage.delete_file") as delete:
+                        key = restore_thumbnail(asset)
+        self.assertEqual(key, "thumbnails/assets/9.jpg")
+        sync.assert_called_once_with(asset)
+        delete.assert_called_once_with("library/photos/9.jpg")
+        self.assertEqual(asset.file_status, "preview")
+        self.assertEqual(asset.file_key, "")
+
 
 if __name__ == "__main__":
     unittest.main()

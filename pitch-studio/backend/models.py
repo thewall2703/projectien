@@ -149,6 +149,7 @@ class Generation(Base):
     error: Mapped[str] = mapped_column(Text, default="")
     script_plan_json: Mapped[str] = mapped_column(Text, default="")
     quality_trace_json: Mapped[str] = mapped_column(Text, default="")
+    master_script_trace_json: Mapped[str] = mapped_column(Text, default="")
     cache_key: Mapped[str] = mapped_column(String(64), default="", index=True)
     cached_from_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
@@ -319,6 +320,7 @@ class ScriptTestRun(Base):
     context_note: Mapped[str] = mapped_column(Text, default="")
     recipe_ref: Mapped[str] = mapped_column(String(32), default="")
     deck_use_case: Mapped[str] = mapped_column(String(64), default="")
+    generation_mode: Mapped[str] = mapped_column(String(32), default="classic")
     module_sequence: Mapped[str] = mapped_column(String(500), default="")
     status: Mapped[str] = mapped_column(String(32), default="queued")
     script_json: Mapped[str] = mapped_column(Text, default="")
@@ -330,6 +332,7 @@ class ScriptTestRun(Base):
     report_passages_json: Mapped[str] = mapped_column(Text, default="")
     script_plan_json: Mapped[str] = mapped_column(Text, default="")
     quality_trace_json: Mapped[str] = mapped_column(Text, default="")
+    master_script_trace_json: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -748,3 +751,50 @@ class VisionModuleContent(Base):
     embedding_json: Mapped[str] = mapped_column(Text, default="")
     text_hash: Mapped[str] = mapped_column(String(64), default="", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class MasterNoun(Base):
+    """Approved proper nouns from the Master Script / brand deck noun register."""
+
+    __tablename__ = "master_nouns"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    canonical: Mapped[str] = mapped_column(String(255), index=True)
+    aliases_json: Mapped[str] = mapped_column(Text, default="[]")
+    noun_type: Mapped[str] = mapped_column(String(64), default="")
+    sections_json: Mapped[str] = mapped_column(Text, default="[]")
+    slides_json: Mapped[str] = mapped_column(Text, default="[]")
+    sources_json: Mapped[str] = mapped_column(Text, default="[]")
+    context: Mapped[str] = mapped_column(Text, default="")
+    mention_count: Mapped[int] = mapped_column(Integer, default=0)
+    approved: Mapped[bool] = mapped_column(Boolean, default=False)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    evidence_cards: Mapped[list[EvidenceCard]] = relationship(back_populates="noun")
+
+
+class EvidenceCard(Base):
+    """Curated claim cards for the Master Script Evidence engine."""
+
+    __tablename__ = "evidence_cards"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    noun_id: Mapped[int] = mapped_column(ForeignKey("master_nouns.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(16), default="fact")
+    claim: Mapped[str] = mapped_column(Text, default="")
+    figure: Mapped[str] = mapped_column(String(128), default="")
+    figure_label: Mapped[str] = mapped_column(String(64), default="")
+    speaker: Mapped[str] = mapped_column(String(255), default="")
+    source_type: Mapped[str] = mapped_column(String(64), default="")
+    source_ref: Mapped[str] = mapped_column(String(255), default="")
+    source_date: Mapped[str] = mapped_column(String(64), default="")
+    checkability: Mapped[str] = mapped_column(Text, default="")
+    consent_ok: Mapped[bool] = mapped_column(Boolean, default=True)
+    excluded: Mapped[bool] = mapped_column(Boolean, default=False)
+    exclusion_reason: Mapped[str] = mapped_column(Text, default="")
+    strength: Mapped[float] = mapped_column(Float, default=0.0)
+    embedding_json: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    noun: Mapped[MasterNoun] = relationship(back_populates="evidence_cards")

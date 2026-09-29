@@ -23,7 +23,13 @@ manifest.json
 node_modules/
 .pytest_cache/
 .mypy_cache/
-pitch-studio/data/
+pitch-studio/data/*
+!pitch-studio/data/master_script/
+pitch-studio/data/master_script/*
+!pitch-studio/data/master_script/master_script.v2.json
+!pitch-studio/data/master_script/editorial_agent_context.md
+!pitch-studio/data/master_script/editorial_profiles/
+!pitch-studio/data/master_script/editorial_profiles/**
 pitch-studio/frontend/dist/
 *.pdf
 *.mp4

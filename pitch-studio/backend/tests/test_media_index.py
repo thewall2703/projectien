@@ -225,11 +225,11 @@ class ContextIndexTests(unittest.TestCase):
 
 
 class PrepareMediaTests(unittest.TestCase):
-    def test_downloads_transcribes_and_stores_on_prepare(self):
+    def test_fetches_youtube_transcript_without_downloading_video(self):
         asset = SimpleNamespace(
             id=4,
             type="video",
-            source_url="https://www.youtube.com/watch?v=abc",
+            source_url="https://www.youtube.com/watch?v=IyMIGNBmRrg",
             file_status="pending",
             file_key="",
         )
@@ -247,13 +247,14 @@ class PrepareMediaTests(unittest.TestCase):
         db = mock.Mock()
         db.get.return_value = asset
 
-        def sync_youtube(stored_asset):
-            stored_asset.file_status = "stored"
-            stored_asset.file_key = "videos/campus.mp4"
+        def sync_youtube_transcript(stored_asset):
+            stored_asset.file_status = "processed"
             return "Welcome to campus."
 
         with mock.patch("backend.media_index.get_or_create_media_index", return_value=row):
-            with mock.patch("backend.sync_assets.sync_youtube", side_effect=sync_youtube) as sync:
+            with mock.patch(
+                "backend.sync_assets.sync_youtube_transcript", side_effect=sync_youtube_transcript
+            ) as sync:
                 with mock.patch("backend.sync_assets.classify_link", return_value="youtube"):
                     with mock.patch(
                         "backend.transcription.analyze_video_asset",
@@ -261,14 +262,15 @@ class PrepareMediaTests(unittest.TestCase):
                             transcript="Welcome to campus.",
                             visual_description="Students walk through campus.",
                         ),
-                    ):
+                    ) as analyze:
                         with mock.patch("backend.media_index.delete_file"):
                             with mock.patch("backend.media_index.apply_recommendations") as recommend:
                                 prepared = prepare_media(db, 4)
         sync.assert_called_once_with(asset)
         recommend.assert_called_once_with(db, row)
         self.assertEqual(prepared.transcript, "Welcome to campus.")
-        self.assertEqual(prepared.visual_description, "Students walk through campus.")
+        self.assertEqual(prepared.visual_description, "")
+        analyze.assert_not_called()
         db.commit.assert_called()
 
     def test_analyzes_already_stored_drive_video(self):
@@ -386,11 +388,15 @@ class PrepareMediaTests(unittest.TestCase):
                                     "backend.thumbnails.resolve_thumbnail_key",
                                     return_value="thumbnails/assets/11.jpg",
                                 ):
-                                    with mock.patch("backend.media_index.delete_file") as delete:
-                                        with mock.patch(
-                                            "backend.media_index.apply_recommendations"
-                                        ) as recommend:
-                                            prepare_media(db, 10)
+                                    with mock.patch(
+                                        "backend.media_index.read_file",
+                                        return_value=b"thumb",
+                                    ):
+                                        with mock.patch("backend.media_index.delete_file") as delete:
+                                            with mock.patch(
+                                                "backend.media_index.apply_recommendations"
+                                            ) as recommend:
+                                                prepare_media(db, 10)
         recommend.assert_called_once_with(db, row)
         delete.assert_called_once_with("library/photos/campus.jpg")
         self.assertEqual(child.file_key, "")

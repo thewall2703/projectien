@@ -319,8 +319,10 @@ class GenerationCreate(BaseModel):
     @classmethod
     def _validate_generation_mode(cls, value: str) -> str:
         text = (value or "classic").strip().lower()
-        if text not in {"classic", "vision_modules"}:
-            raise ValueError("generation_mode must be classic or vision_modules")
+        if text not in {"classic", "vision_modules", "master_script"}:
+            raise ValueError(
+                "generation_mode must be classic, vision_modules, or master_script"
+            )
         return text
 
 
@@ -391,6 +393,7 @@ class GenerationOut(BaseModel):
     error: str
     script_plan_json: str = ""
     quality_trace_json: str = ""
+    master_script_trace_json: str = ""
     cache_key: str = ""
     cached_from_id: int | None = None
     created_at: datetime
@@ -415,6 +418,17 @@ class ScriptTestCreate(BaseModel):
     context_note: str = ""
     recipe_ref: str = ""
     deck_use_case: str = ""
+    generation_mode: str = "classic"
+
+    @field_validator("generation_mode")
+    @classmethod
+    def _validate_generation_mode(cls, value: str) -> str:
+        text = (value or "classic").strip().lower()
+        if text not in {"classic", "vision_modules", "master_script"}:
+            raise ValueError(
+                "generation_mode must be classic, vision_modules, or master_script"
+            )
+        return text
 
 
 class ScriptTestSentenceOut(BaseModel):
@@ -547,6 +561,7 @@ class ScriptTestRunOut(BaseModel):
     context_note: str
     recipe_ref: str
     deck_use_case: str = ""
+    generation_mode: str = "classic"
     module_sequence: str
     status: str
     script_json: str = ""
@@ -558,6 +573,7 @@ class ScriptTestRunOut(BaseModel):
     report_passages_json: str = ""
     script_plan_json: str = ""
     quality_trace_json: str = ""
+    master_script_trace_json: str = ""
     created_at: datetime
     finished_at: datetime | None = None
     script: dict[str, Any] | None = None

@@ -20,6 +20,10 @@ _ROLE_ATTRS = {
     "voice_judge": "voice_judge",
     "flow_judge": "flow_judge",
     "listener": "listener",
+    "ms_planner": "ms_planner",
+    "ms_evidence": "ms_evidence",
+    "ms_voice": "ms_voice",
+    "ms_editor": "ms_editor",
 }
 
 
@@ -133,11 +137,11 @@ def _message_content(body: dict[str, Any]) -> str:
     return str(content)
 
 
-def _post_openrouter(payload: dict[str, Any], timeout: float) -> str:
+def _post_openrouter(payload: dict[str, Any], timeout: float, *, max_attempts: int = 2) -> str:
     if not settings.openrouter_api_key:
         raise LLMError("OPENROUTER_API_KEY is not set")
     last_error: Exception | None = None
-    for attempt in range(2):
+    for attempt in range(max_attempts):
         try:
             with httpx.Client(timeout=timeout) as client:
                 response = client.post(OPENROUTER_URL, headers=_headers(), json=payload)
@@ -151,14 +155,19 @@ def _post_openrouter(payload: dict[str, Any], timeout: float) -> str:
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             last_error = exc
             time.sleep(1)
-            if attempt == 1:
+            if attempt == max_attempts - 1:
                 raise LLMError(str(exc)) from exc
         except json.JSONDecodeError as exc:
             raise LLMError(f"Model did not return JSON: {exc}") from exc
     raise LLMError(str(last_error) if last_error else "OpenRouter request failed")
 
 
-def _multimodal_payload(text: str, images: list[bytes]) -> dict[str, Any]:
+def _multimodal_payload(
+    text: str,
+    images: list[bytes],
+    *,
+    model: str | None = None,
+) -> dict[str, Any]:
     parts: list[dict[str, Any]] = [{"type": "text", "text": text}]
     for data in images:
         encoded = base64.b64encode(data).decode("ascii")
@@ -169,7 +178,7 @@ def _multimodal_payload(text: str, images: list[bytes]) -> dict[str, Any]:
             }
         )
     return {
-        "model": settings.openrouter_model,
+        "model": model or settings.openrouter_model,
         "messages": [{"role": "user", "content": parts}],
         "reasoning": {"enabled": True},
         "verbosity": settings.openrouter_verbosity,
@@ -184,6 +193,7 @@ def chat_json(
     reasoning: bool = True,
     max_tokens: int | None = None,
     role: str | None = None,
+    max_attempts: int = 2,
 ) -> dict[str, Any]:
     if role is not None:
         defaults = role_defaults(role)
@@ -197,11 +207,22 @@ def chat_json(
         max_tokens=max_tokens,
         role=role,
     )
-    return _extract_json(_post_openrouter(payload, effective_timeout))
+    if max_attempts == 2:
+        return _extract_json(_post_openrouter(payload, effective_timeout))
+    return _extract_json(_post_openrouter(payload, effective_timeout, max_attempts=max_attempts))
 
 
-def chat_text_multimodal(text: str, images: list[bytes], timeout: float = 120.0) -> str:
-    content = _post_openrouter(_multimodal_payload(text, images), timeout)
+def chat_text_multimodal(
+    text: str,
+    images: list[bytes],
+    timeout: float = 120.0,
+    *,
+    model: str | None = None,
+) -> str:
+    content = _post_openrouter(
+        _multimodal_payload(text, images, model=model),
+        timeout,
+    )
     if not (content or "").strip():
         raise LLMError("Model returned an empty response")
     return content.strip()

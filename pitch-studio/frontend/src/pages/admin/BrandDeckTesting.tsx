@@ -45,7 +45,17 @@ function pageRange(row: DeckTopicRow) {
 }
 
 function errMessage(err: unknown) {
-  return err instanceof Error ? err.message : "Something went wrong";
+  const raw = err instanceof Error ? err.message : "Something went wrong";
+  if (/unauthori[sz]ed|not signed in|session expired/i.test(raw)) {
+    return "Session expired. Please sign in again.";
+  }
+  if (/admin only/i.test(raw)) {
+    return "Admin access required.";
+  }
+  if (/failed to fetch|networkerror|load failed/i.test(raw)) {
+    return "Could not reach the server. Check your connection and retry.";
+  }
+  return raw;
 }
 
 export default function BrandDeckTesting() {
@@ -57,6 +67,9 @@ export default function BrandDeckTesting() {
   const [addRef, setAddRef] = useState("");
   const [addNote, setAddNote] = useState("");
   const [busy, setBusy] = useState("");
+  const [feedbackPending, setFeedbackPending] = useState<{ ref: string; verdict: "yes" | "no" } | null>(
+    null,
+  );
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [visionSaved, setVisionSaved] = useState(false);
@@ -90,29 +103,32 @@ export default function BrandDeckTesting() {
     const token = ++pollRef.current;
     setBusy("prepare");
     setError("");
+    let failures = 0;
     try {
       while (pollRef.current === token) {
-        const data = await api.deckTopicList(deckRef.current);
-        if (pollRef.current !== token) return;
-        setList(data);
-        const next = data.items.find((row) => row.id === (keepId || selectedIdRef.current)) || data.items[0];
-        if (next) applyCurrent(next);
-        if (data.job_status === "error") {
-          setError(data.job_error || `${deckInfo(deckRef.current).name} indexing failed`);
-          return;
+        try {
+          const data = await api.deckTopicList(deckRef.current);
+          if (pollRef.current !== token) return;
+          failures = 0;
+          setError("");
+          setList(data);
+          const next = data.items.find((row) => row.id === (keepId || selectedIdRef.current)) || data.items[0];
+          if (next) applyCurrent(next);
+          if (data.job_status === "error") {
+            setError(data.job_error || `${deckInfo(deckRef.current).name} indexing failed`);
+            return;
+          }
+          if (!isActiveJob(data)) return;
+        } catch (err) {
+          if (pollRef.current !== token) return;
+          failures += 1;
+          if (failures >= 3) {
+            setError(errMessage(err));
+            return;
+          }
+          // Keep the last known stage visible while retrying transient network blips.
         }
-        if (!isActiveJob(data)) return;
         await new Promise((resolve) => window.setTimeout(resolve, 2000));
-      }
-    } catch (err) {
-      if (pollRef.current === token) {
-        setError(errMessage(err));
-        // Stop treating a dead poll as an active prepare so the UI can recover.
-        setList((prev) => ({
-          ...prev,
-          job_status: prev.job_status === "running" || prev.job_status === "queued" ? "" : prev.job_status,
-          job_stage: "",
-        }));
       }
     } finally {
       if (pollRef.current === token) setBusy("");
@@ -163,6 +179,7 @@ export default function BrandDeckTesting() {
       setError(errMessage(err));
     } finally {
       setBusy("");
+      setFeedbackPending(null);
     }
   };
 
@@ -207,7 +224,8 @@ export default function BrandDeckTesting() {
   }, [visionSaved]);
 
   const feedback = (ref: string, verdict: "yes" | "no") => {
-    if (!current) return;
+    if (!current || feedbackPending) return;
+    setFeedbackPending({ ref, verdict });
     run(`feedback-${ref}:${verdict}`, () => api.sendDeckTopicFeedback(current.id, ref, verdict));
   };
 
@@ -226,7 +244,8 @@ export default function BrandDeckTesting() {
     run("freeze", () => (current.vision_frozen ? api.unfreezeDeckTopic(current.id) : api.freezeDeckTopic(current.id)));
   };
 
-  const preparing = busy === "prepare" || isActiveJob(list);
+  const preparing = busy === "prepare" || (isActiveJob(list) && !error);
+  const jobStillRunning = isActiveJob(list);
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 px-6 py-10 md:px-10">
@@ -256,7 +275,7 @@ export default function BrandDeckTesting() {
       <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
         <aside className="card scrollbar-none max-h-[80vh] overflow-y-auto p-3">
           <div className="mb-3 space-y-2 px-1">
-            <Button variant="accent" loading={preparing} onClick={() => prepare(true)}>
+            <Button variant="accent" loading={busy === "prepare"} disabled={preparing} onClick={() => prepare(true)}>
               {list.items.length ? "Regroup topics" : "Prepare topics"}
             </Button>
             {preparing && (
@@ -265,9 +284,12 @@ export default function BrandDeckTesting() {
                 {list.job_stage || `Grouping ${deckName} pages…`}
               </p>
             )}
-            {error && !preparing && list.items.length > 0 && (
-              <Button className="w-full" onClick={() => prepare(true)}>
-                Retry prepare
+            {error && !preparing && (
+              <Button
+                className="w-full"
+                onClick={() => (jobStillRunning ? void watchJob(current?.id) : prepare(true))}
+              >
+                {jobStillRunning ? "Resume status check" : "Retry prepare"}
               </Button>
             )}
           </div>
@@ -430,8 +452,11 @@ export default function BrandDeckTesting() {
                   {current.recommendations.items.map((item) => {
                     const verdict = current.feedback.verdicts[item.recipe_ref]?.verdict;
                     const name = personaLabel(recipes, item.recipe_ref) || item.recipe_ref;
-                    const yesBusy = busy === `feedback-${item.recipe_ref}:yes`;
-                    const noBusy = busy === `feedback-${item.recipe_ref}:no`;
+                    const yesBusy =
+                      feedbackPending?.ref === item.recipe_ref && feedbackPending.verdict === "yes";
+                    const noBusy =
+                      feedbackPending?.ref === item.recipe_ref && feedbackPending.verdict === "no";
+                    const otherBusy = Boolean(feedbackPending) && !yesBusy && !noBusy;
                     return (
                       <div key={item.recipe_ref} className="rounded-xl border border-line p-4">
                         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -450,7 +475,7 @@ export default function BrandDeckTesting() {
                           <Button
                             variant={verdict === "yes" ? "accent" : "default"}
                             loading={yesBusy}
-                            disabled={noBusy}
+                            disabled={noBusy || otherBusy}
                             onClick={() => feedback(item.recipe_ref, "yes")}
                           >
                             Yes
@@ -458,7 +483,7 @@ export default function BrandDeckTesting() {
                           <Button
                             variant={verdict === "no" ? "accent" : "default"}
                             loading={noBusy}
-                            disabled={yesBusy}
+                            disabled={yesBusy || otherBusy}
                             onClick={() => feedback(item.recipe_ref, "no")}
                           >
                             No

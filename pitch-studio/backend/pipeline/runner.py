@@ -700,6 +700,16 @@ def generate_script_phase(
     set_status: Callable[[str], None],
 ) -> ScriptPhaseResult | None:
     """Shared script creation for production generation and Script Testing."""
+    generation_mode = normalize_generation_mode(
+        getattr(target, "generation_mode", "") or "classic"
+    )
+    if generation_mode == "master_script":
+        from backend.master_script.flow import (
+            generate_script_phase as master_script_generate,
+        )
+
+        return master_script_generate(db, target, set_status)
+
     resolved = resolve_recipe(
         db,
         target.audience_cluster,

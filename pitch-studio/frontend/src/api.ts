@@ -68,7 +68,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // keep raw text
     }
-    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+    const message = typeof detail === "string" ? detail : JSON.stringify(detail);
+    if (response.status === 403 || /unauthori[sz]ed|not signed in|admin only/i.test(message)) {
+      throw new Error(
+        response.status === 403 || /admin only/i.test(message)
+          ? "Admin access required."
+          : "Session expired. Please sign in again.",
+      );
+    }
+    throw new Error(message);
   }
   if (response.status === 204) {
     return undefined as T;

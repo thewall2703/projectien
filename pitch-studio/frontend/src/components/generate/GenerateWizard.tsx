@@ -49,7 +49,7 @@ export type GenerateWizardPayload = {
   context_note: string;
   recipe_ref?: string;
   deck_use_case?: string;
-  generation_mode?: "classic" | "vision_modules";
+  generation_mode?: "classic" | "vision_modules" | "master_script";
 };
 
 const DECK_USE_CASES: { code: string; label: string }[] = [
@@ -197,7 +197,7 @@ export default function GenerateWizard({
   const [intent, setIntent] = useState("");
   const [temperature, setTemperature] = useState("");
   const [deckUseCase, setDeckUseCase] = useState("");
-  const [generationMode, setGenerationMode] = useState<"classic" | "vision_modules">("classic");
+  const [generationMode, setGenerationMode] = useState<"classic" | "vision_modules" | "master_script">("classic");
   const [context, setContext] = useState("");
   const [interpretSummary, setInterpretSummary] = useState("");
   const [interpretNotes, setInterpretNotes] = useState("");
@@ -393,7 +393,7 @@ export default function GenerateWizard({
         context_note,
         ...(selected ? { recipe_ref: selected } : {}),
         ...(deckUseCase ? { deck_use_case: deckUseCase } : {}),
-        generation_mode: deckUseCase ? generationMode : "classic",
+        generation_mode: generationMode === "master_script" || deckUseCase ? generationMode : "classic",
       };
       await onSubmit(body);
     } catch (err) {
@@ -603,7 +603,9 @@ export default function GenerateWizard({
                         onChange={(e) => {
                           const next = e.target.value;
                           setDeckUseCase(next);
-                          if (!next) setGenerationMode("classic");
+                          if (!next && generationMode !== "classic") {
+                            setGenerationMode("classic");
+                          }
                         }}
                       >
                         {DECK_USE_CASES.map((row) => (
@@ -616,7 +618,7 @@ export default function GenerateWizard({
 
                     <fieldset className="block">
                       <legend className="kicker">Script mode</legend>
-                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      <div className="mt-3 grid gap-2 sm:grid-cols-3">
                         {(
                           [
                             {
@@ -629,10 +631,17 @@ export default function GenerateWizard({
                               label: "Vision modules",
                               hint: "Narrate a quota of slides per vision section",
                             },
+                            {
+                              code: "master_script" as const,
+                              label: "Engine 3",
+                              hint: "Master Script — Planner, Evidence, Voice",
+                            },
                           ] as const
                         ).map((row) => {
-                          const disabled = row.code === "vision_modules" && !deckUseCase;
-                          const active = (deckUseCase ? generationMode : "classic") === row.code;
+                          const disabled =
+                            (row.code === "vision_modules" || row.code === "master_script") &&
+                            !deckUseCase;
+                          const active = (generationMode === "master_script" || deckUseCase ? generationMode : "classic") === row.code;
                           return (
                             <button
                               key={row.code}

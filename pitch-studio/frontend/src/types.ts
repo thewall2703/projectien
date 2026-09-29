@@ -221,6 +221,7 @@ export type Generation = {
   recipe_ref: string;
   deck_use_case?: string;
   generation_mode?: string;
+  master_script_trace_json?: string;
   module_sequence: string;
   status: string;
   script_json: string;

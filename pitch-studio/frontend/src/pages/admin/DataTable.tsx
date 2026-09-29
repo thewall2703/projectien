@@ -105,10 +105,32 @@ export default function DataTable({
 
   useEffect(() => {
     if (!draft) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const html = document.documentElement;
+    const body = document.body;
+    const previousHtmlOverflow = html.style.overflow;
+    const previousBodyOverflow = body.style.overflow;
+    const previousBodyPosition = body.style.position;
+    const previousBodyTop = body.style.top;
+    const previousBodyLeft = body.style.left;
+    const previousBodyRight = body.style.right;
+    const previousBodyWidth = body.style.width;
+    const scrollY = window.scrollY;
+    html.style.overflow = "hidden";
+    body.style.overflow = "hidden";
+    body.style.position = "fixed";
+    body.style.top = `-${scrollY}px`;
+    body.style.left = "0";
+    body.style.right = "0";
+    body.style.width = "100%";
     return () => {
-      document.body.style.overflow = previousOverflow;
+      html.style.overflow = previousHtmlOverflow;
+      body.style.overflow = previousBodyOverflow;
+      body.style.position = previousBodyPosition;
+      body.style.top = previousBodyTop;
+      body.style.left = previousBodyLeft;
+      body.style.right = previousBodyRight;
+      body.style.width = previousBodyWidth;
+      window.scrollTo(0, scrollY);
     };
   }, [draft]);
 
@@ -179,7 +201,7 @@ export default function DataTable({
               value={query}
               placeholder={searchPlaceholder}
               onChange={(event) => setQuery(event.target.value)}
-              aria-label={searchPlaceholder}
+              aria-label={entityLabel ? `Search ${entityLabel}s` : searchPlaceholder}
             />
           )}
           {extra}
@@ -270,7 +292,7 @@ export default function DataTable({
 
       <Modal
         open={Boolean(pendingDelete)}
-        title={`Delete ${noun}?`}
+        title={`Delete ${noun.charAt(0).toUpperCase()}${noun.slice(1)}?`}
         onClose={() => {
           if (!removing) setPendingDelete(null);
         }}

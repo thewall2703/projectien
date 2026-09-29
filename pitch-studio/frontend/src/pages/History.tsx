@@ -60,7 +60,11 @@ export default function History({ currentUser }: { currentUser: User }) {
                         labels.duration,
                         labels.channel,
                         labels.intent,
-                        row.generation_mode === "vision_modules" ? "Vision modules" : null,
+                        row.generation_mode === "vision_modules"
+                          ? "Vision modules"
+                          : row.generation_mode === "master_script"
+                            ? "Engine 3"
+                            : null,
                       ]
                         .filter(Boolean)
                         .join(" · ")}

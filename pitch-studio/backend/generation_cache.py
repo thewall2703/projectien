@@ -179,5 +179,11 @@ def compute_cache_key(
         "deploy_version": deploy_version(),
         "content_version": get_content_version(db),
     }
+    if generation_mode == 'master_script':
+        from backend.master_script.source import DEFAULT_JSON_PATH
+        payload['master_script_source_hash'] = (
+            hashlib.sha256(DEFAULT_JSON_PATH.read_bytes()).hexdigest()
+            if DEFAULT_JSON_PATH.exists() else 'missing'
+        )
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode()).hexdigest()
