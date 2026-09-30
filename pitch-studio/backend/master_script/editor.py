@@ -7,6 +7,7 @@ import json
 import re
 
 from backend.master_script.editorial import load_editorial_context, STAGE_VOICE
+from backend.config import settings
 from backend.pipeline.llm import chat_json, LLMError
 
 EDIT = """Edit the complete presentation using the editorial memory and supplied authorities.
@@ -58,13 +59,32 @@ def compact_authorities(doc, section_ids):
 
 
 def _call(name, role, system, payload, tokens):
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ]
     try:
-        return chat_json([
-            {"role": "system", "content": system},
-            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-        ], role=role, max_tokens=tokens, timeout=240, max_attempts=2)
+        return chat_json(
+            messages, role=role, max_tokens=tokens, timeout=240, max_attempts=1
+        )
     except LLMError as exc:
-        raise LLMError(f"{name} ({role}) failed: {exc}") from exc
+        fallback = settings.ms_editor_fallback_model.strip()
+        provider_rejected = "provider returned error" in str(exc).lower()
+        if role != "ms_editor" or not provider_rejected or not fallback or fallback == settings.ms_editor_model:
+            raise LLMError(f"{name} ({role}) failed: {exc}") from exc
+        try:
+            return chat_json(
+                messages,
+                role=role,
+                model=fallback,
+                max_tokens=tokens,
+                timeout=240,
+                max_attempts=1,
+            )
+        except LLMError as fallback_exc:
+            raise LLMError(
+                f"{name} ({role}) failed on primary ({exc}) and fallback ({fallback_exc})"
+            ) from fallback_exc
 
 
 def apply_edits(sections, cta, response):

@@ -73,6 +73,7 @@ class Settings(BaseSettings):
     # Independent editorial pass. It receives the full draft and editorial memory;
     # it does not share the voice writer's model role or request settings.
     ms_editor_model: str = "openai/gpt-6-astra"
+    ms_editor_fallback_model: str = "anthropic/claude-opus-5.5"
     ms_editor_reasoning_effort: str = "high"
     ms_editor_verbosity: str = "high"
     ms_editor_timeout: float = 900.0

@@ -111,6 +111,20 @@ class EditorTests(unittest.TestCase):
         with self.assertRaisesRegex(LLMError, r"editor_0 \(ms_editor\) failed"):
             _call("editor_0", "ms_editor", "system", {}, 100)
 
+    @patch(
+        "backend.master_script.editor.chat_json",
+        side_effect=[LLMError("400 Provider returned error"), {"edits": [], "unresolved": []}],
+    )
+    def test_editor_uses_cross_provider_fallback_for_provider_rejection(self, chat):
+        result = _call("editor_0", "ms_editor", "system", {}, 100)
+        self.assertEqual(result, {"edits": [], "unresolved": []})
+        self.assertEqual(chat.call_count, 2)
+        self.assertNotIn("model", chat.call_args_list[0].kwargs)
+        self.assertEqual(
+            chat.call_args_list[1].kwargs["model"],
+            "anthropic/claude-opus-5.5",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
