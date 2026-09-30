@@ -527,6 +527,63 @@ class VisionModulesPlanTests(unittest.TestCase):
         self.assertEqual(result.trace["mode"], "vision_modules")
         self.assertIn("quotas", result.trace)
 
+    def test_topic_keys_preserve_plan_order_when_a_module_is_split(self):
+        generated = SimpleNamespace(
+            source="generated",
+            page=None,
+            slide_key="generated:venture-proof",
+            title="Venture proof",
+            module_id="M06",
+            recipe_modules=("M06",),
+            summary="One generated proof slide",
+            vision="",
+            gap_kind="context",
+            evidence_page=None,
+        )
+        external = SimpleNamespace(
+            source="dsai",
+            page=4,
+            slide_key="dsai:p4",
+            label="DSAI proof",
+            title="DSAI proof",
+            module_id="M06",
+            section="Funded Ventures",
+        )
+        plan = [
+            BrandSlide(1, "", "Cover"),
+            BrandSlide(44, "M06", "Ventures intro"),
+            generated,
+            BrandSlide(45, "M06", "Eat Atlas and PlaySuper"),
+            external,
+            BrandSlide(46, "M06", "Other venture"),
+            BrandSlide(92, "M14", "Closing"),
+        ]
+
+        result = build_vision_modules_plan(
+            self.db,
+            plan,
+            ["M06", "M14"],
+            duration="T4",
+            embed_fn=fake_embed,
+        )
+
+        self.assertEqual(
+            [key for topic in result.topics for key in topic.slide_keys],
+            [slide.slide_key for slide in plan],
+        )
+        self.assertEqual(
+            [topic.slide_keys for topic in result.topics],
+            [
+                ["brand:p1"],
+                ["brand:p44"],
+                ["generated:venture-proof"],
+                ["brand:p45"],
+                ["dsai:p4"],
+                ["brand:p46"],
+                ["brand:p92"],
+            ],
+        )
+
 
 class RunnerBranchTests(unittest.TestCase):
     def test_fallback_to_classic_when_no_vision_rows(self):

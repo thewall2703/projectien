@@ -451,14 +451,31 @@ export default function Result({ currentUser }: { currentUser: User }) {
           )}
         </header>
 
-        {generation.status === "failed" && (
-          <div className="rounded-2xl border border-danger/20 bg-danger/5 p-4 text-sm text-danger">
-            <p className="font-medium">{generation.error || "Generation failed"}</p>
-            {generation.validation_report && (
-              <pre className="mt-2 whitespace-pre-wrap">{generation.validation_report}</pre>
-            )}
-          </div>
-        )}
+        {generation.status === "failed" && (() => {
+          const deckAssemblyFailed = Boolean(
+            generation.error?.includes("Cannot reconcile script topics"),
+          );
+          return (
+            <div className="rounded-2xl border border-danger/20 bg-danger/5 p-4 text-sm text-danger">
+              <p className="font-medium">
+                {deckAssemblyFailed
+                  ? "The script was generated, but deck assembly failed."
+                  : generation.error || "Generation failed"}
+              </p>
+              {deckAssemblyFailed && (
+                <p className="mt-2 text-xs text-danger/80">{generation.error}</p>
+              )}
+              {generation.validation_report && (
+                <div className="mt-3 border-t border-danger/15 pt-3">
+                  <p className="text-xs font-medium uppercase tracking-[0.12em]">
+                    {deckAssemblyFailed ? "Separate script review notes" : "Validation details"}
+                  </p>
+                  <pre className="mt-2 whitespace-pre-wrap">{generation.validation_report}</pre>
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {(() => {
           const trace = parseMasterScriptTrace(generation.master_script_trace_json);

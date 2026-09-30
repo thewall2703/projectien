@@ -684,30 +684,15 @@ def build_vision_modules_plan(
     apply_word_cap(all_briefs, word_cap=word_cap)
     brief_by_page = {brief.page: brief for brief in all_briefs}
 
-    topics: list[ScriptTopic] = []
-    seen_vms: set[str] = set()
-    for slide in plan:
-        if getattr(slide, "source", BRAND_SOURCE) == GENERATED_SOURCE:
-            topics.append(_generated_topic(slide, sequence_set))
-            continue
-        page = getattr(slide, "page", None)
-        if page == COVER_PAGE:
-            if not any(t.pages == [COVER_PAGE] for t in topics):
-                topics.append(_bookend_topic(slide, vm_id="VM01", sequence_set=sequence_set))
-            continue
-        if page == CLOSING_PAGE:
-            if not any(t.pages == [CLOSING_PAGE] for t in topics):
-                topics.append(_bookend_topic(slide, vm_id="VM15", sequence_set=sequence_set))
-            continue
-        if not _is_body_brand(slide):
-            continue
-        vm_id = vision_module_for_page(int(slide.page))
-        if not vm_id or vm_id in seen_vms:
-            continue
-        seen_vms.add(vm_id)
-        slides = by_vm[vm_id]
+    def body_topic(slides: list[Any], vm_id: str) -> ScriptTopic:
+        """Build one spoken topic for a contiguous run within a vision module.
+
+        A generated or external slide can split a module in the realised plan.
+        Keeping each contiguous run separate preserves the exact deck order.
+        """
         pages = [int(s.page) for s in slides]
-        narrated = list(narrated_by_vm.get(vm_id) or [])
+        page_set = set(pages)
+        narrated = [page for page in (narrated_by_vm.get(vm_id) or []) if page in page_set]
         shown = [p for p in pages if p not in set(narrated)]
         labels = [
             s.label or PAGE_LABELS.get(int(s.page), f"Page {s.page}") for s in slides
@@ -746,26 +731,103 @@ def build_vision_modules_plan(
                     "ranked": _ranked_dicts(live.ranked),
                 }
             )
-        topics.append(
-            ScriptTopic(
-                topic_id=0,
-                title=vm_title(vm_id),
-                pages=pages,
-                slide_keys=[s.slide_key for s in slides],
-                labels=labels,
-                summary=" ".join(summary_parts),
-                vision=" ".join(vision_parts),
-                module_ids=module_ids,
-                recipe_modules=recipe_modules,
-                section=vm_title(vm_id),
-                narrated_pages=list(narrated),
-                narrated_slide_keys=[
-                    s.slide_key for s in slides if int(s.page) in set(narrated)
-                ],
-                shown_not_narrated=shown,
-                slide_briefs=slide_brief_dicts,
-            )
+        return ScriptTopic(
+            topic_id=0,
+            title=vm_title(vm_id),
+            pages=pages,
+            slide_keys=[s.slide_key for s in slides],
+            labels=labels,
+            summary=" ".join(summary_parts),
+            vision=" ".join(vision_parts),
+            module_ids=module_ids,
+            recipe_modules=recipe_modules,
+            section=vm_title(vm_id),
+            narrated_pages=list(narrated),
+            narrated_slide_keys=[
+                s.slide_key for s in slides if int(s.page) in set(narrated)
+            ],
+            shown_not_narrated=shown,
+            slide_briefs=slide_brief_dicts,
         )
+
+    def external_topic(slide: Any) -> ScriptTopic:
+        """Keep a non-brand planned slide in the spoken/deck ordering."""
+        page = getattr(slide, "page", None)
+        label = getattr(slide, "label", "") or getattr(slide, "title", "") or "Slide"
+        module_id = getattr(slide, "module_id", "") or ""
+        recipe_modules = [module_id] if module_id and module_id in sequence_set else []
+        return ScriptTopic(
+            topic_id=0,
+            title=label,
+            pages=[int(page)] if page is not None else [],
+            slide_keys=[str(getattr(slide, "slide_key", "") or "")],
+            labels=[label],
+            module_ids=[module_id] if module_id else [],
+            recipe_modules=recipe_modules,
+            section=getattr(slide, "section", "") or label,
+            narrated_pages=[int(page)] if page is not None else [],
+            narrated_slide_keys=[str(getattr(slide, "slide_key", "") or "")],
+            shown_not_narrated=[],
+            slide_briefs=[],
+        )
+
+    topics: list[ScriptTopic] = []
+    index = 0
+    while index < len(plan):
+        slide = plan[index]
+        if getattr(slide, "source", BRAND_SOURCE) == GENERATED_SOURCE:
+            topic = _generated_topic(slide, sequence_set)
+            evidence_page = getattr(slide, "evidence_page", None)
+            if evidence_page is not None and index + 1 < len(plan):
+                evidence = plan[index + 1]
+                if getattr(evidence, "page", None) == evidence_page:
+                    topic.pages.append(int(evidence.page))
+                    topic.slide_keys.append(str(evidence.slide_key))
+                    topic.labels.append(
+                        getattr(evidence, "label", "")
+                        or PAGE_LABELS.get(int(evidence.page), f"Page {evidence.page}")
+                    )
+                    module_id = getattr(evidence, "module_id", "") or ""
+                    if module_id and module_id in sequence_set and module_id not in topic.recipe_modules:
+                        topic.recipe_modules.append(module_id)
+                    index += 1
+            topics.append(topic)
+            index += 1
+            continue
+
+        page = getattr(slide, "page", None)
+        if page == COVER_PAGE:
+            topics.append(_bookend_topic(slide, vm_id="VM01", sequence_set=sequence_set))
+            index += 1
+            continue
+        if page == CLOSING_PAGE:
+            topics.append(_bookend_topic(slide, vm_id="VM15", sequence_set=sequence_set))
+            index += 1
+            continue
+        if not _is_body_brand(slide):
+            topics.append(external_topic(slide))
+            index += 1
+            continue
+
+        vm_id = vision_module_for_page(int(slide.page))
+        if not vm_id:
+            topics.append(external_topic(slide))
+            index += 1
+            continue
+
+        run = [slide]
+        cursor = index + 1
+        while cursor < len(plan):
+            candidate = plan[cursor]
+            if not _is_body_brand(candidate):
+                break
+            candidate_vm = vision_module_for_page(int(candidate.page))
+            if candidate_vm != vm_id:
+                break
+            run.append(candidate)
+            cursor += 1
+        topics.append(body_topic(run, vm_id))
+        index = cursor
 
     for index, topic in enumerate(topics, start=1):
         topic.topic_id = index
