@@ -59,6 +59,16 @@ def _error_message(response: httpx.Response) -> str:
     error = body.get("error") if isinstance(body, dict) else None
     if isinstance(error, dict):
         message = error.get("message") or error.get("code") or json.dumps(error)
+        metadata = error.get("metadata") or {}
+        raw = metadata.get("raw") if isinstance(metadata, dict) else None
+        if isinstance(raw, str):
+            try:
+                upstream = json.loads(raw)
+                detail = upstream.get("error", {})
+                if isinstance(detail, dict) and detail.get("message"):
+                    message = f"{message}: {str(detail['message'])[:800]}"
+            except (ValueError, AttributeError):
+                pass
         return f"{response.status_code} {message}"
     if isinstance(error, str):
         return f"{response.status_code} {error}"
@@ -102,6 +112,7 @@ def _request_payload(
         return payload
 
     defaults = role_defaults(role)
+    messages = [{"role": "system", "content": "Return a valid JSON object."}, *messages]
     payload = {
         "model": model or defaults["model"],
         "messages": messages,

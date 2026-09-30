@@ -5,7 +5,7 @@ from unittest.mock import patch
 import httpx
 
 from backend.master_script.editor import edit_and_review, apply_edits, compact_authorities, _call
-from backend.pipeline.llm import chat_json, _post_openrouter, LLMError
+from backend.pipeline.llm import chat_json, _post_openrouter, LLMError, _error_message, _request_payload
 
 
 class EditorTests(unittest.TestCase):
@@ -86,6 +86,38 @@ class EditorTests(unittest.TestCase):
         result = compact_authorities(doc, {"1"})
         self.assertEqual(result["sections"], [{"id": "1", "source_text": "Full text", "locked": ["lock"]}])
         self.assertEqual(result["open_items"], ["pending"])
+
+    def test_json_mode_always_has_explicit_json_instruction(self):
+        payload = _request_payload([{"role": "user", "content": "Edit this."}], role="ms_editor")
+        self.assertIn("JSON", payload["messages"][0]["content"])
+
+    def test_upstream_validation_detail_is_preserved(self):
+        response = httpx.Response(400, json={"error": {"message": "Provider returned error",
+            "metadata": {"raw": '{"error":{"message":"Input must contain the word json"}}'}}})
+        self.assertIn("Input must contain the word json", _error_message(response))
+
+    def test_batches_keep_local_sources_and_global_delivery(self):
+        calls = []
+        sections = [{"section_id": str(i), "text": "Draft"} for i in range(7)]
+        def call(name, role, system, payload, tokens):
+            calls.append((role, payload))
+            self.assertIn("JSON", system)
+            if role == "ms_editor":
+                self.assertLessEqual(len(payload["sections"]), 3)
+                self.assertEqual({s["id"] for s in payload["authorities"]["sections"]},
+                                 {s["section_id"] for s in payload["sections"]})
+                return {"edits": [], "unresolved": []}
+            checked = [s["section_id"] for s in sections] + ["cta"]
+            if role == "ms_evidence":
+                return {"checked_sections": checked, "passed": True, "issues": []}
+            self.assertEqual(len(payload["sections"]), 7)
+            return {"checked_sections": checked, "clarity": {"passed": True, "issues": []},
+                    "screenplay": {"passed": True, "issues": []}}
+        result = edit_and_review(sections, brief={}, authorities={"sections": [
+            {"id": str(i), "source_text": "Complete source"} for i in range(7)]},
+            evidence={}, references=["voice"], plan={}, call=call)
+        self.assertTrue(result["passed"])
+        self.assertEqual(result["logical_calls"], 5)
 
     @patch("backend.pipeline.llm._post_openrouter", return_value='{"edits": []}')
     def test_single_attempt_is_forwarded_to_transport(self, post):
