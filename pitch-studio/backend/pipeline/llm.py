@@ -145,12 +145,18 @@ def _post_openrouter(payload: dict[str, Any], timeout: float, *, max_attempts: i
         try:
             with httpx.Client(timeout=timeout) as client:
                 response = client.post(OPENROUTER_URL, headers=_headers(), json=payload)
-            if response.status_code >= 500:
-                last_error = LLMError(_error_message(response))
-                time.sleep(1)
+            error_message = _error_message(response) if response.status_code >= 400 else ""
+            retryable_provider_error = (
+                response.status_code == 400
+                and "provider returned error" in error_message.lower()
+            )
+            if response.status_code >= 500 or response.status_code in (408, 409, 425, 429) or retryable_provider_error:
+                last_error = LLMError(error_message)
+                if attempt < max_attempts - 1:
+                    time.sleep(1)
                 continue
             if response.status_code >= 400:
-                raise LLMError(_error_message(response))
+                raise LLMError(error_message)
             return _message_content(response.json())
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             last_error = exc

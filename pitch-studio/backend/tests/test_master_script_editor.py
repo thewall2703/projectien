@@ -2,8 +2,10 @@ import unittest
 from copy import deepcopy
 from unittest.mock import patch
 
-from backend.master_script.editor import edit_and_review, apply_edits, compact_authorities
-from backend.pipeline.llm import chat_json
+import httpx
+
+from backend.master_script.editor import edit_and_review, apply_edits, compact_authorities, _call
+from backend.pipeline.llm import chat_json, _post_openrouter, LLMError
 
 
 class EditorTests(unittest.TestCase):
@@ -89,6 +91,25 @@ class EditorTests(unittest.TestCase):
     def test_single_attempt_is_forwarded_to_transport(self, post):
         chat_json([], role="ms_editor", timeout=240, max_attempts=1)
         self.assertEqual(post.call_args.kwargs["max_attempts"], 1)
+
+    @patch("backend.pipeline.llm.time.sleep")
+    @patch("backend.pipeline.llm.settings.openrouter_api_key", "test-key")
+    @patch("backend.pipeline.llm.httpx.Client")
+    def test_provider_400_is_retried_once(self, client, sleep):
+        post = client.return_value.__enter__.return_value.post
+        post.side_effect = [
+            httpx.Response(400, json={"error": {"message": "Provider returned error"}}),
+            httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]}),
+        ]
+
+        self.assertEqual(_post_openrouter({"model": "test"}, 1, max_attempts=2), "{}")
+        self.assertEqual(post.call_count, 2)
+        sleep.assert_called_once_with(1)
+
+    @patch("backend.master_script.editor.chat_json", side_effect=LLMError("400 bad request"))
+    def test_editor_error_names_the_failed_call(self, _chat):
+        with self.assertRaisesRegex(LLMError, r"editor_0 \(ms_editor\) failed"):
+            _call("editor_0", "ms_editor", "system", {}, 100)
 
 
 if __name__ == "__main__":

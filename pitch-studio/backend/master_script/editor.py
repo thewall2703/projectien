@@ -7,7 +7,7 @@ import json
 import re
 
 from backend.master_script.editorial import load_editorial_context, STAGE_VOICE
-from backend.pipeline.llm import chat_json
+from backend.pipeline.llm import chat_json, LLMError
 
 EDIT = """Edit the complete presentation using the editorial memory and supplied authorities.
 Read the whole argument before editing. Preserve narrative development, facts, qualifications,
@@ -58,10 +58,13 @@ def compact_authorities(doc, section_ids):
 
 
 def _call(name, role, system, payload, tokens):
-    return chat_json([
-        {"role": "system", "content": system},
-        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-    ], role=role, max_tokens=tokens, timeout=240, max_attempts=1)
+    try:
+        return chat_json([
+            {"role": "system", "content": system},
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+        ], role=role, max_tokens=tokens, timeout=240, max_attempts=2)
+    except LLMError as exc:
+        raise LLMError(f"{name} ({role}) failed: {exc}") from exc
 
 
 def apply_edits(sections, cta, response):
