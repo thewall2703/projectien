@@ -146,6 +146,9 @@ def fetch_openrouter_prices(models: list[str], *, http_get: Callable | None = No
                 raise ValueError("No pricing endpoints")
             # Route only at the cheapest available base text price. Do not
             # change models or allow a premium endpoint to consume the allowance.
+            endpoints = [e for e in endpoints if str(e.get("tag", "")).rsplit("/", 1)[-1] not in {"flex", "fast", "ultrafast", "priority"}]
+            if not endpoints:
+                raise ValueError("No standard-tier endpoints")
             cheapest = min(endpoints, key=lambda e: _amount(e["pricing"]["prompt"], "prompt") + _amount(e["pricing"]["completion"], "completion"))
             ceiling = {k: _amount(cheapest["pricing"][k], k) for k in ("prompt", "completion")}
             eligible = [e for e in endpoints if all(_amount(e["pricing"][k], k) <= ceiling[k] for k in ceiling)]
@@ -379,7 +382,12 @@ class BudgetedTransport:
                 metadata = provider_error.get("metadata") if isinstance(provider_error, dict) else None
                 if response.status_code == 402 and isinstance(metadata, dict) and metadata.get("limit_source") == "openrouter_key_limit":
                     failure_detail += "; OpenRouter API-key spending limit exhausted; increase that key's allowance before retrying"
-                raise TransportError("HTTP failure; reservation retained")
+                if (response.status_code == 404 and isinstance(provider_error, dict)
+                        and provider_error.get("message") == "No endpoints found that satisfy the max price for this request"
+                        and isinstance(metadata, dict)
+                        and metadata.get("failed_routing_step") == "Filter by Max Price"):
+                    status, cost = "routing_rejected", Decimal(0)
+                raise TransportError("HTTP failure; consult ledger")
             if cost is None:
                 status = "missing_cost"
                 raise TransportError("Missing valid numeric usage.cost; reservation retained")

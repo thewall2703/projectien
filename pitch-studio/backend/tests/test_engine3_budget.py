@@ -40,3 +40,12 @@ def test_text_pricing_includes_long_context_and_cache_tiers():
     assert rates["prompt"] == "0.003"
     assert rates["completion"] == "0.004"
     assert rates["input_cache_write"] == "0.005"
+
+
+def test_pricing_excludes_opt_in_tiers():
+    import httpx
+    from backend.master_script.budget_transport import fetch_openrouter_prices
+    endpoints = [{"tag": "openai/flex", "pricing": {"prompt": "0.000005", "completion": "0.000025"}},
+                 {"tag": "openai", "pricing": {"prompt": "0.00001", "completion": "0.00005"}}]
+    catalog = fetch_openrouter_prices(["test/model"], http_get=lambda *a, **k: httpx.Response(200, json={"data": {"endpoints": endpoints}}))
+    assert catalog["models"]["test/model"]["max_price"] == {"prompt": 10, "completion": 50}
