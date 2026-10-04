@@ -393,7 +393,7 @@ class PilotTransportTests(unittest.TestCase):
             self.call(transport)
         self.assertFalse(self.calls)
 
-    def test_live_price_discovery_takes_endpoint_maxima_without_auth(self):
+    def test_live_price_discovery_bounds_eligible_endpoints_without_auth(self):
         calls = []
         def get(url, **kwargs):
             calls.append((url, kwargs))
@@ -403,7 +403,8 @@ class PilotTransportTests(unittest.TestCase):
             ]}})
         catalog = pilot.fetch_openrouter_prices([MODEL], http_get=get)
         price = catalog["models"][MODEL]
-        self.assertEqual(price["pricing"]["prompt"], "0.003")
+        self.assertEqual(price["pricing"]["prompt"], "0.001")
+        self.assertEqual(price["max_price"], {"prompt": 1000.0, "completion": 4000.0})
         self.assertEqual(price["pricing"]["completion"], "0.004")
         self.assertEqual(price["pricing"]["input_cache_write"], "0.005")
         self.assertTrue(price["verified_max_rates"])
@@ -412,7 +413,7 @@ class PilotTransportTests(unittest.TestCase):
         self.transport(prices=catalog)
 
     def test_discovery_rejects_missing_or_unsupported_prices(self):
-        for endpoints in ([], [{"pricing": {"prompt": "0"}}], [{"pricing": {"prompt": "0", "completion": "0", "web_search": "1"}}]):
+        for endpoints in ([], [{"pricing": {"prompt": "0"}}], [{"pricing": {"prompt": "0", "completion": "0", "unknown_charge": "1"}}]):
             with self.subTest(endpoints=endpoints), self.assertRaises(pilot.TransportError):
                 pilot.fetch_openrouter_prices([MODEL], http_get=lambda *a, **k: httpx.Response(200, json={"data": {"endpoints": endpoints}}))
 

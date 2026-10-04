@@ -30,3 +30,13 @@ def test_unknown_format_keeps_everything():
 def test_compact_rules_preserves_intro_and_entire_appendix():
     doc = {"source_globals": "RULES\nThe case on one page\nDUPLICATE SECTIONS\nDelivery notes and open items\nALL RESTRICTIONS"}
     assert compact_global_rules(doc) == "RULES\n\nDelivery notes and open items\nALL RESTRICTIONS"
+
+
+def test_text_pricing_includes_long_context_and_cache_tiers():
+    from backend.master_script.budget_transport import _text_endpoint_rates
+    rates = _text_endpoint_rates({"prompt": "0.001", "completion": "0.002",
+        "web_search": "1", "discount": 0.5, "input_cache_write_1h": "0.005",
+        "overrides": [{"min_prompt_tokens": 100, "prompt": "0.003", "completion": "0.004"}]})
+    assert rates["prompt"] == "0.003"
+    assert rates["completion"] == "0.004"
+    assert rates["input_cache_write"] == "0.005"

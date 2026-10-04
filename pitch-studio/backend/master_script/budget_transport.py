@@ -110,6 +110,20 @@ def _rates(pricing: dict) -> dict[str, str]:
     return {key: str(_amount(pricing.get(key, 0), "pricing rate")) for key in sorted(_RATE_KEYS)}
 
 
+def _text_endpoint_rates(pricing):
+    """Rates for text-only calls; include every long-context tier conservatively."""
+    ignored = {"web_search", "image", "audio", "input_audio_cache", "discount"}
+    base = {k: v for k, v in pricing.items() if k not in ignored | {"overrides", "input_cache_write_1h"}}
+    if "input_cache_write_1h" in pricing:
+        base["input_cache_write"] = str(max(_amount(base.get("input_cache_write", 0), "cache"),
+                                             _amount(pricing["input_cache_write_1h"], "cache")))
+    tiers = [_rates(base)]
+    for override in pricing.get("overrides", []):
+        extra = {k: v for k, v in override.items() if k != "min_prompt_tokens"}
+        tiers.append(_rates({**base, **extra}))
+    return {k: str(max(Decimal(t[k]) for t in tiers)) for k in _RATE_KEYS}
+
+
 def fetch_openrouter_prices(models: list[str], *, http_get: Callable | None = None) -> dict:
     """GET live endpoint maxima without credentials or paid inference calls.
 
@@ -130,12 +144,18 @@ def fetch_openrouter_prices(models: list[str], *, http_get: Callable | None = No
             endpoints = response.json()["data"]["endpoints"]
             if not isinstance(endpoints, list) or not endpoints:
                 raise ValueError("No pricing endpoints")
-            rates = [_rates(endpoint["pricing"]) for endpoint in endpoints]
+            # Route only at the cheapest available base text price. Do not
+            # change models or allow a premium endpoint to consume the allowance.
+            cheapest = min(endpoints, key=lambda e: _amount(e["pricing"]["prompt"], "prompt") + _amount(e["pricing"]["completion"], "completion"))
+            ceiling = {k: _amount(cheapest["pricing"][k], k) for k in ("prompt", "completion")}
+            eligible = [e for e in endpoints if all(_amount(e["pricing"][k], k) <= ceiling[k] for k in ceiling)]
+            rates = [_text_endpoint_rates(endpoint["pricing"]) for endpoint in eligible]
         except (KeyError, TypeError, ValueError):
             raise TransportError("Unusable endpoint pricing catalog") from None
         catalog["models"][model] = {
             "currency": "USD", "verified_max_rates": True, "source": url,
-            "retrieved_at": catalog["retrieved_at"], "endpoint_count": len(endpoints),
+            "retrieved_at": catalog["retrieved_at"], "endpoint_count": len(eligible),
+            "max_price": {k: float(v * 1000000) for k, v in ceiling.items()},
             "pricing": {key: str(max(Decimal(rate[key]) for rate in rates)) for key in _RATE_KEYS},
         }
     return catalog
@@ -298,6 +318,11 @@ class BudgetedTransport:
         price = self.prices.get(model)
         if price is None:
             raise BudgetError("Model has no verified maximum pricing")
+        if price.get("max_price"):
+            request["provider"]["max_price"] = price["max_price"]
+        # This transport prices text only, with no paid search/tools or media.
+        if request.get("tools") or request.get("plugins") or any(not isinstance(m.get("content"), str) for m in request["messages"]):
+            raise BudgetError("Budgeted Engine 3 requests must be text-only without tools")
         rates = {key: Decimal(value) for key, value in price["pricing"].items()}
         # Entire UTF-8 JSON plus framing allowance, not characters or token heuristics.
         input_bound = len(_json(request).encode("utf-8")) + 1024
