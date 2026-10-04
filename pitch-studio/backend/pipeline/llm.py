@@ -224,6 +224,13 @@ def chat_json(
         max_tokens=max_tokens,
         role=role,
     )
+    from backend.master_script.budget import active_budget, OUTPUT_LIMITS
+    budget = active_budget.get()
+    if budget is not None:
+        limit = min(max_tokens or 8000, OUTPUT_LIMITS.get(role, 8000))
+        return budget.call(role or "deck_planner", role or "ms_planner", "", {},
+                           tokens=limit, request_override=payload,
+                           timeout_override=effective_timeout)
     if max_attempts == 2:
         return _extract_json(_post_openrouter(payload, effective_timeout))
     return _extract_json(_post_openrouter(payload, effective_timeout, max_attempts=max_attempts))

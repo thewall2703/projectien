@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from backend.master_script.budget import submit_with_context
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable
 
@@ -238,7 +239,7 @@ def write_sections_parallel(
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = [
-            pool.submit(job, index, section)
+            submit_with_context(pool, job, index, section)
             for index, section in enumerate(sections)
         ]
         for future in as_completed(futures):

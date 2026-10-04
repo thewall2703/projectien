@@ -1,6 +1,7 @@
 """Whole-script editorial pass with two independent gates and one repair round."""
 from __future__ import annotations
 
+from backend.master_script.budget import submit_with_context, compact_global_rules
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 import json
@@ -50,11 +51,12 @@ Separate errors from acceptable alternatives. Failed verdicts require mandatory 
 def compact_authorities(doc, section_ids):
     """Keep complete selected section text and global restrictions, omit duplicate extraction."""
     return {
+        "source_globals": compact_global_rules(doc),
         "sections": [
             {k: s[k] for k in ("id", "title", "source_text", "premises", "locked", "blocked", "modulate") if k in s}
             for s in doc.get("sections", []) if str(s.get("id")) in section_ids
         ],
-        **{k: doc[k] for k in ("never_say", "open_items", "numbers_you_may_say", "source_globals", "user_overrides") if k in doc},
+        **{k: doc[k] for k in ("never_say", "open_items", "numbers_you_may_say", "user_overrides") if k in doc},
     }
 
 
@@ -207,8 +209,8 @@ def edit_and_review(sections, *, cta="", brief, authorities, evidence, reference
         delivery_payload = {k: v for k, v in source_payload.items() if k not in ("authorities", "evidence")}
         delivery_payload["voice_references"] = references
         with ThreadPoolExecutor(max_workers=2) as pool:
-            source_future = pool.submit(call, f"source_{round_no}", "ms_evidence", SOURCE, source_payload, 4500)
-            delivery_future = pool.submit(call, f"delivery_{round_no}", "ms_voice", DELIVERY + "\n" + STAGE_VOICE,
+            source_future = submit_with_context(pool, call, f"source_{round_no}", "ms_evidence", SOURCE, source_payload, 4500)
+            delivery_future = submit_with_context(pool, call, f"delivery_{round_no}", "ms_voice", DELIVERY + "\n" + STAGE_VOICE,
                                           delivery_payload, 12000)
             source, delivery = source_future.result(), delivery_future.result()
         for report in (source, delivery):

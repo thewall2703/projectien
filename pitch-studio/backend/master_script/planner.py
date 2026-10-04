@@ -1,6 +1,7 @@
 """Engine 1 — Planner grounded in the Master Script."""
 
 from __future__ import annotations
+from backend.master_script.budget import compact_global_rules
 
 import json
 from typing import Any
@@ -235,7 +236,7 @@ def plan_sections(
         "available_evidence": available_evidence or [],
         "section_briefs": briefs,
         "deck_topics": _topic_map(topic_flow),
-        "global_rules": doc.raw.get("source_globals") or "",
+        "global_rules": compact_global_rules(doc.raw),
     }
     try:
         result = chat_json(

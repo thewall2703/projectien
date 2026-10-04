@@ -8,6 +8,7 @@ from typing import Any, Callable
 from sqlalchemy.orm import Session
 
 from backend.config import settings
+from backend.master_script.budget import budgeted_generation
 from backend.extract import pick_report_passages
 from backend.master_script import MASTER_SCRIPT_VERSION
 from backend.master_script.editor import edit_and_review, compact_authorities
@@ -125,6 +126,7 @@ def _build_vision_spine(
     return resolved, plan, vm_plan.topics, dict(vm_plan.trace)
 
 
+@budgeted_generation
 def generate_script_phase(
     db: Session,
     target: ScriptTarget,

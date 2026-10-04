@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from backend.master_script.budget import submit_with_context
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
@@ -296,7 +297,7 @@ def fulfil_requests(
     def run_round(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         batches = [(req, retrieve_candidates(db, req, embed_fn=embed_fn)) for req in items]
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = [pool.submit(_rerank, req, cards, dry_run=dry_run) for req, cards in batches]
+            futures = [submit_with_context(pool, _rerank, req, cards, dry_run=dry_run) for req, cards in batches]
             return [future.result() for future in futures]
 
     results: list[dict[str, Any]] = []
