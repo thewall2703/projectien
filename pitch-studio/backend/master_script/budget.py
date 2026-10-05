@@ -27,7 +27,7 @@ def budgeted_generation(function):
         # Re-entry for the same generation shares its persisted allowance and cache.
         directory = DATA_DIR / "engine3_runs" / (type(target).__name__ + "-" + str(target.id))
         try:
-            transport = BudgetedTransport(directory, budget_usd=12,
+            transport = BudgetedTransport(directory, budget_usd=12, reservation_wait_seconds=250,
                 prices=fetch_openrouter_prices(sorted(models)))
         except Exception as exc:
             target.error = "Engine 3 budget setup failed: " + str(exc)

@@ -119,7 +119,11 @@ def write_section(
             "claim": c.get("claim"),
             "figure": c.get("figure"),
             "figure_label": c.get("figure_label"),
-            "checkability": c.get("checkability"),
+            "checkability": (
+                c.get("checkability") if len(str(c.get("checkability") or "")) <= 2000
+                else {"evidence_card_id": c.get("id"),
+                      "provenance": "Full source material retained in the evidence/source audit. Write only from the supplied claim and figures; do not add facts."}
+            ),
         }
         for c in cards
     ]

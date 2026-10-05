@@ -49,3 +49,52 @@ def test_pricing_excludes_opt_in_tiers():
                  {"tag": "openai", "pricing": {"prompt": "0.00001", "completion": "0.00005"}}]
     catalog = fetch_openrouter_prices(["test/model"], http_get=lambda *a, **k: httpx.Response(200, json={"data": {"endpoints": endpoints}}))
     assert catalog["models"]["test/model"]["max_price"] == {"prompt": 10, "completion": 50}
+
+
+def test_parallel_calls_wait_for_reservations_to_settle(tmp_path):
+    import threading
+    import httpx
+    from backend.master_script.budget_transport import BudgetedTransport
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+    prices = {"test/model": {"currency": "USD", "verified_max_rates": True,
+        "source": "test", "pricing": {"prompt": "0", "completion": "0.006"}}}
+    def post(*args, **kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            entered.set()
+            assert release.wait(3)
+        return httpx.Response(200, json={"choices": [{"message": {"content": '{"ok":true}'}, "finish_reason": "stop"}], "usage": {"cost": 0.1}})
+    transport = BudgetedTransport(tmp_path, budget_usd=1, prices=prices,
+        http_post=post, reservation_wait_seconds=2)
+    with patch.object(llm, "role_defaults", return_value={"model": "test/model", "effort": "high", "verbosity": "", "timeout": 1}):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(transport.call, "first", "ms_voice", "system", {"n": 1}, 100)
+            assert entered.wait(2)
+            second = pool.submit(transport.call, "second", "ms_voice", "system", {"n": 2}, 100)
+            # The first call consumes most of the allowance until it settles.
+            assert transport.report()["committed_usd"] == "0.600"
+            import time
+            time.sleep(0.15)
+            assert not second.done()
+            assert len(calls) == 1
+            release.set()
+            assert first.result() == {"ok": True}
+            assert second.result() == {"ok": True}
+    assert len(calls) == 2
+    assert float(transport.report()["committed_usd"]) == 0.2
+
+
+def test_writer_omits_large_provenance_but_preserves_claims():
+    import json
+    from backend.master_script import voice
+    card = {"id": 4, "claim": "Approved story", "figure": "12", "figure_label": "terminals",
+            "checkability": "source material" * 10000}
+    original = dict(card)
+    with patch.object(voice, "chat_json", return_value={"text": "Draft"}) as chat:
+        voice.write_section({"section_id": "4D"}, cards=[card], locked={}, style_guide="", pratham_block="")
+    payload = json.loads(chat.call_args.args[0][-1]["content"])
+    assert len(json.dumps(payload)) < 2000
+    assert payload["cards"][0]["claim"] == card["claim"]
+    assert payload["cards"][0]["figure"] == "12"
+    assert card == original  # Full provenance remains intact for the source auditor.

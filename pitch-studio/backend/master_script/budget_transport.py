@@ -165,10 +165,13 @@ def fetch_openrouter_prices(models: list[str], *, http_get: Callable | None = No
 
 
 class BudgetedTransport:
-    def __init__(self, directory, budget_usd=None, *, prices: dict, http_post: Callable | None = None):
+    def __init__(self, directory, budget_usd=None, *, prices: dict, http_post: Callable | None = None, reservation_wait_seconds: float = 0):
         self.directory = Path(directory)
         self.directory.mkdir(parents=True, exist_ok=True)
         self.http_post = http_post or httpx.post
+        self.reservation_wait_seconds = float(reservation_wait_seconds)
+        if not math.isfinite(self.reservation_wait_seconds) or self.reservation_wait_seconds < 0:
+            raise ValueError("Invalid reservation wait")
         cap = None if budget_usd is None else _amount(budget_usd, "budget cap")
         if cap is not None and cap > HARD_CAP_USD:
             raise BudgetError("Use an explicit audited authorization to exceed $25")
@@ -339,22 +342,39 @@ class BudgetedTransport:
         timeout = min(timeout, 240.0)
         attempt_id = uuid.uuid4().hex
         started = time.monotonic()
-        with self._locked():
-            ledger = self._load()
-            result = self._cached(cache, fingerprint, ledger)
-            if result is not None:
-                ledger["cache_hits"].append({"name": str(name), "role": role, "fingerprint": fingerprint, "cost_usd": "0", "latency_seconds": time.monotonic() - started})
-                self._save(ledger)
-                return result
-            if ledger["halted"] or self._total(ledger) + reserve > Decimal(ledger["cap_usd"]):
-                raise BudgetError("Budget exhausted or halted; no request sent")
-            ledger["attempts"].append({
-                "id": attempt_id, "name": str(name), "role": role, "model": model,
-                "fingerprint": fingerprint, "status": "reserved", "charged_usd": str(reserve),
-                "reservation_usd": str(reserve), "input_token_bound": input_bound,
-                "max_tokens": tokens, "price": price, "started_at": datetime.now(timezone.utc).isoformat(),
-            })
-            self._save(ledger)  # Must be durable BEFORE any network call.
+        deadline = time.monotonic() + self.reservation_wait_seconds
+        while True:
+            with self._locked():
+                ledger = self._load()
+                result = self._cached(cache, fingerprint, ledger)
+                if result is not None:
+                    ledger["cache_hits"].append({"name": str(name), "role": role, "fingerprint": fingerprint, "cost_usd": "0", "latency_seconds": time.monotonic() - started})
+                    self._save(ledger)
+                    return result
+                remaining = Decimal(ledger["cap_usd"]) - self._total(ledger)
+                pending = sum((Decimal(a["charged_usd"]) for a in ledger["attempts"] if a["status"] == "reserved"), Decimal(0))
+                if ledger["halted"]:
+                    raise BudgetError("Budget halted; no request sent")
+                if reserve <= remaining:
+                    ledger["attempts"].append({
+                        "id": attempt_id, "name": str(name), "role": role, "model": model,
+                        "fingerprint": fingerprint, "status": "reserved", "charged_usd": str(reserve),
+                        "reservation_usd": str(reserve), "input_token_bound": input_bound,
+                        "max_tokens": tokens, "price": price, "started_at": datetime.now(timezone.utc).isoformat(),
+                    })
+                    self._save(ledger)  # Must be durable BEFORE any network call.
+                    break
+                if not pending or reserve > remaining + pending or time.monotonic() >= deadline:
+                    rejection = {"name": str(name), "role": role, "required_usd": str(reserve),
+                                 "remaining_usd": str(remaining), "pending_usd": str(pending),
+                                 "input_token_bound": input_bound, "max_tokens": tokens}
+                    ledger.setdefault("budget_rejections", []).append(rejection)
+                    self._save(ledger)
+                    raise BudgetError(f"Request needs ${reserve:.2f} reserved; ${remaining:.2f} available "
+                                      f"(${pending:.2f} pending). No request sent")
+            # Release the file lock while outstanding calls settle. Never release
+            # ambiguous charges or send a request without an atomic reservation.
+            time.sleep(min(0.1, max(0, deadline - time.monotonic())))
         status, usage, cost, content, result = "ambiguous", {}, None, None, None
         failure_detail = ""
         error = None
